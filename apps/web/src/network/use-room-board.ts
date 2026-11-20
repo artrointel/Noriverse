@@ -10,7 +10,7 @@ import { initialFlickRound, readFlick, readFlickRound, readLayout, settledStatus
 import type { Flick, FlickPower, FlickRound, StonePosition } from '../games/alkkagi/rules.ts';
 import { connectToRoom } from './room-connection.ts';
 import type { ConnectionState } from './room-connection.ts';
-import { forgetGuestSeat, readGuestRoom, readGuestSeat, saveGuestSeat, writeGuestRoom } from './guest-seat.ts';
+import { forgetGuestSeat, readGuestRoom, readGuestSeat, rememberRecentRoom, saveGuestSeat, writeGuestRoom } from './guest-seat.ts';
 import { apiFetch } from './api.ts';
 import type { Stone } from '../games/table.ts';
 import { oppositeStone } from '../games/table.ts';
@@ -45,6 +45,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const [assignedSeat, setAssignedSeat] = useState<Seat>();
   const [guestRoom, setGuestRoom] = useState(readGuestRoom);
   const [changingGame, setChangingGame] = useState(false);
+  const [rematchNotice, setRematchNotice] = useState<{ id: string; kind: 'incoming' | 'sent' }>();
   const [remoteTouch, setRemoteTouch] = useState<TouchPoint & { matchId: string; receivedAt: number }>();
   const lastIncomingTouch = useRef(-Infinity);
   const lastOutgoingTouch = useRef(-Infinity);
@@ -90,6 +91,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function update(next: Match) {
     const currentSeat = seat.current;
     const previous = match.current;
+    if (currentSeat && next.startedAt && (previous.id !== next.id || !previous.startedAt)) rememberRecentRoom(currentSeat.code, next.game);
     if (currentSeat?.role === 'guest' && next.id && (previous.id !== next.id || previous.startedAt !== next.startedAt || previous.finishedAt !== next.finishedAt)) {
       rememberGuestRoom(currentSeat.code, next.startedAt && !next.finishedAt ? next.game : undefined);
     }
@@ -206,6 +208,10 @@ export function useRoomBoard(profile?: ProfileSummary) {
           return;
         }
         if (seat.current?.role === 'host') {
+          if (raw.type === 'request-rematch' && 'id' in raw && raw.id === current.id && current.finishedAt) {
+            setRematchNotice(previous => previous?.id === current.id ? previous : { id: current.id, kind: 'incoming' });
+            return;
+          }
           if (!('id' in raw) || raw.id !== current.id || !current.startedAt || current.finishedAt) return;
           const guestColor = oppositeStone(current.hostColor);
           if (raw.type === 'surrender') {
@@ -382,7 +388,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   return {
     code, role, state, game, hostColor, playerColor, history, started, matchId, startedAt, finishedAt, surrendered, timedOut, timeoutPending, turnLimit,
-    guestRoom, changeGame, changingGame,
+    guestRoom, changeGame, changingGame, rematchNotice: rematchNotice?.id === matchId ? rematchNotice.kind : undefined,
     displayDeadline: deadline ? deadline + (round.clockOffset ?? 0) : 0,
     allowDoubleThree, overline, participants, create, join, leave, move, physics: round.physics, power: round.power ?? 1, flick, settleFlick,
     winner: matchWinner(round), turn: matchTurn(round),
@@ -433,6 +439,11 @@ export function useRoomBoard(profile?: ProfileSummary) {
         allowDoubleThree: current.allowDoubleThree, overline: current.overline, turnLimit: current.turnLimit, deadline: nextDeadline(current.turnLimit, now),
         physics: current.physics ? initialFlickRound : undefined, power: current.power });
       snapshot();
+    },
+    requestRematch() {
+      const current = match.current;
+      if (seat.current?.role !== 'guest' || !ready.current || !current.finishedAt || rematchNotice?.id === current.id) return;
+      if (link.current?.send({ type: 'request-rematch', id: current.id })) setRematchNotice({ id: current.id, kind: 'sent' });
     },
     surrender() {
       if (!ready.current || !match.current.startedAt || match.current.finishedAt) return false;

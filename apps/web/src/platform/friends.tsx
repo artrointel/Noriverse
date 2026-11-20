@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
-import type { FriendSummary } from '../../../../packages/protocol/profile.ts';
+import type { FriendAction, FriendList, FriendRoom, FriendSummary } from '../../../../packages/protocol/profile.ts';
 import type { ReactNode } from 'react';
 import { apiAvailable, apiFetch } from '../network/api.ts';
 import { avatars } from './avatars.ts';
+import { games } from './game-catalog.ts';
+import { socialChangeEvent } from './invitations.tsx';
 import { RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 
-const endpoint = '/api/profiles/me/friends';
+const endpoint = '/api/profiles/me/social';
 
-export function useFriends(owner: string | undefined, active: boolean, presence: boolean) {
-  const [friends, setFriends] = useState<FriendSummary[]>();
+export function useFriends(owner: string | undefined, presence: boolean) {
+  const [list, setList] = useState<FriendList>();
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const revision = useRef(0);
@@ -19,12 +21,12 @@ export function useFriends(owner: string | undefined, active: boolean, presence:
   async function load(request: number, signal?: AbortSignal) {
     const response = await apiFetch(endpoint + (presence ? '?presence=1' : ''), { signal });
     if (!response.ok) throw new Error('Friends unavailable');
-    const list = await response.json() as FriendSummary[];
-    if (request === revision.current && !signal?.aborted) setFriends(list);
+    const list = await response.json() as FriendList;
+    if (request === revision.current && !signal?.aborted) setList(list);
   }
 
   useEffect(() => {
-    if (!owner || !active || !apiAvailable) return;
+    if (!owner || !apiAvailable) return;
     const controller = new AbortController();
     function refresh() {
       const version = ++revision.current;
@@ -37,20 +39,22 @@ export function useFriends(owner: string | undefined, active: boolean, presence:
     const visibleRefresh = () => { if (!document.hidden) refresh(); };
     refresh();
     const timer = presence ? window.setInterval(visibleRefresh, 15_000) : undefined;
+    window.addEventListener(socialChangeEvent, refresh);
     if (presence) document.addEventListener('visibilitychange', visibleRefresh);
     return () => {
       controller.abort();
       window.clearInterval(timer);
+      window.removeEventListener(socialChangeEvent, refresh);
       document.removeEventListener('visibilitychange', visibleRefresh);
     };
-  }, [owner, active, presence]);
+  }, [owner, presence]);
 
-  async function change(id: string, added: boolean) {
+  async function change(id: string, action: FriendAction) {
     if (!owner || !apiAvailable || owner === id || busy) return false;
     setBusy(true);
     try {
       const response = await apiFetch(endpoint, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, added }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action }),
       });
       if (!response.ok) return false;
       await load(++revision.current);
@@ -60,7 +64,7 @@ export function useFriends(owner: string | undefined, active: boolean, presence:
     finally { setBusy(false); }
   }
 
-  return { owner, friends, failed, busy, change };
+  return { owner, friends: list?.friends, incoming: list?.incoming ?? [], outgoing: list?.outgoing ?? [], failed, busy, change };
 }
 
 export type Friends = ReturnType<typeof useFriends>;
@@ -84,7 +88,7 @@ function FriendGroups({ friends, navigate, action }: { friends: FriendSummary[];
 
 export function InviteDialog({ owner, navigate, invite, close }: { owner: string | undefined; navigate: Navigate; invite: (id: string) => Promise<boolean>; close: () => void }) {
   const { t } = useTranslation();
-  const model = useFriends(owner, true, true);
+  const model = useFriends(owner, true);
   const dialog = useRef<HTMLDialogElement>(null);
   const [sent, setSent] = useState<string[]>([]);
   const [sending, setSending] = useState<string>();
@@ -120,10 +124,12 @@ export function FriendButton({ id, model }: { id: string; model: Friends }) {
   const [failed, setFailed] = useState(false);
   if (!apiAvailable || !model.owner || model.owner === id || !model.friends) return null;
   const added = model.friends.some(friend => friend.id === id);
+  const received = model.incoming.some(friend => friend.id === id);
+  const sent = model.outgoing.some(friend => friend.id === id);
   return <>
     <button type="button" className="button button-secondary" disabled={model.busy} onClick={async () => {
-      setFailed(!await model.change(id, !added));
-    }}>{t(added ? 'removeFriend' : 'addFriend')}</button>
+      setFailed(!await model.change(id, added ? 'remove' : received ? 'accept' : sent ? 'cancel' : 'request'));
+    }}>{t(added ? 'removeFriend' : received ? 'acceptFriend' : sent ? 'cancelFriend' : 'addFriend')}</button>
     {failed && <small role="alert">{t('friendError')}</small>}
   </>;
 }
@@ -138,10 +144,12 @@ function profileIdFromInput(input: string) {
   } catch { /* The form displays an invalid link message. */ }
 }
 
-export function FriendsPage({ model, navigate, openProfile }: { model: Friends; navigate: Navigate; openProfile: () => void }) {
+export function FriendsPage({ model, navigate, openProfile, follow }: { model: Friends; navigate: Navigate; openProfile: () => void; follow: (room: FriendRoom) => void }) {
   const { t } = useTranslation();
   const [input, setInput] = useState('');
   const [failed, setFailed] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [actionFailed, setActionFailed] = useState(false);
   const [copiedId, setCopiedId] = useState<string>();
   const ownIdField = useRef<HTMLInputElement>(null);
   const owner = model.owner;
@@ -175,18 +183,40 @@ export function FriendsPage({ model, navigate, openProfile }: { model: Friends; 
         <form className="room-form" onSubmit={async event => {
           event.preventDefault();
           const id = profileIdFromInput(input);
-          const saved = Boolean(id && profileIdPattern.test(id) && await model.change(id, true));
+          const saved = Boolean(id && profileIdPattern.test(id) && await model.change(id, 'request'));
           setFailed(!saved);
+          setSent(saved);
           if (saved) setInput('');
         }}>
           <label htmlFor="friend-link">{t('friendLink')}</label>
           <div><input id="friend-link" required value={input} maxLength={300} onChange={event => setInput(event.target.value)} />
             <button className="button button-primary" disabled={model.busy} type="submit">{t('addFriend')}</button></div>
           {failed && <p role="alert">{t('friendError')}</p>}
+          {sent && <p role="status">{t('friendRequestSent')}</p>}
         </form>
+        {(model.incoming.length > 0 || model.outgoing.length > 0) && <section className="friend-requests" aria-label={t('friendRequests')}>
+          {(['incoming', 'outgoing'] as const).map(group => model[group].length > 0 && <div key={group}>
+            <h2>{t(group === 'incoming' ? 'incomingFriends' : 'outgoingFriends')}</h2>
+            <ul className="people-list">{model[group].map(profile => <li key={profile.id}>
+              <RouteLink href={'/profiles/' + profile.id} navigate={navigate} className="person-link">
+                <img src={avatars[profile.avatar]} alt="" width="38" height="38" /><strong>{profile.name}</strong>
+              </RouteLink>
+              <div className="panel-actions">{(group === 'incoming' ? ['accept', 'decline'] as const : ['cancel'] as const).map(action => <button
+                key={action} className={'button ' + (action === 'accept' ? 'button-primary' : 'button-secondary')} type="button" disabled={model.busy}
+                onClick={async () => setActionFailed(!await model.change(profile.id, action))}>
+                {t(action === 'accept' ? 'acceptFriend' : action === 'decline' ? 'declineFriend' : 'cancelFriend')}</button>)}</div>
+            </li>)}</ul>
+          </div>)}
+          {actionFailed && <p role="alert">{t('friendError')}</p>}
+        </section>}
         {model.failed ? <p role="alert">{t('friendsUnavailable')}</p> : !model.friends ? <p role="status">{t('profileLoading')}</p>
           : model.friends.length === 0 ? <p>{t('emptyFriends')}</p>
-          : <FriendGroups friends={model.friends} navigate={navigate} action={friend => <FriendButton id={friend.id} model={model} />} />}
+          : <FriendGroups friends={model.friends} navigate={navigate} action={friend => <div className="friend-actions">
+            {friend.room && <div className="friend-room"><span>{t(friend.room.game)}</span>
+              <button type="button" className="button button-primary" disabled={!friend.room.joinable} onClick={() => { if (friend.room) follow(friend.room); }}>
+                {t(friend.room.joinable ? 'followFriend' : 'friendRoomFull')}</button></div>}
+            <FriendButton id={friend.id} model={model} />
+          </div>} />}
       </>}
     </section>
   </div>;

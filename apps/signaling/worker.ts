@@ -3,10 +3,12 @@ import { createRoomCode, readSignal, roomCapacity, roomCodePattern } from '../..
 import type { Participant, Role, RoomMessage } from '../../packages/protocol/rooms.ts';
 import { isProfileGame, profileIdPattern } from '../../packages/protocol/profile.ts';
 import type { ProfileGame, ProfileSummary } from '../../packages/protocol/profile.ts';
-import { profileRequest, profileSession, readBody, ProfileStore } from './profiles.ts';
+import { notifyFriends, profileRequest, profileSession, readBody, ProfileStore, verifiedFriends } from './profiles.ts';
+import { FriendGraph } from './friend-graph.ts';
 export { ProfileStore };
+export { FriendGraph };
 
-interface Env { ROOMS: DurableObjectNamespace<Room>; PROFILES: DurableObjectNamespace<ProfileStore>; APP_ORIGIN?: string }
+interface Env { ROOMS: DurableObjectNamespace<Room>; PROFILES: DurableObjectNamespace<ProfileStore>; FRIENDS: DurableObjectNamespace<FriendGraph>; APP_ORIGIN?: string }
 interface Reservation { host: string; hostJoined?: boolean; guest?: string; game?: ProfileGame; expires: number; profiles?: Partial<Record<Role, ProfileSummary>> }
 type AttachedSeat = { role: Role; token?: string };
 const roomLifetime = 30 * 60 * 1000;
@@ -17,7 +19,7 @@ function send(socket: WebSocket, message: RoomMessage) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin');
     const external = Boolean(origin && origin !== url.origin);
@@ -55,8 +57,8 @@ export default {
         return cors(new Response(null, { status: 400 }));
       }
       const sender = env.PROFILES.getByName(session.id);
-      const friends = await sender.friendIds(session.secret);
-      if (!friends?.includes(body.friend)) return cors(new Response(null, { status: 403 }));
+      const links = await verifiedFriends(env, session.id, session.secret);
+      if (!links?.friends.includes(body.friend)) return cors(new Response(null, { status: 403 }));
       const [profile, room] = await Promise.all([
         sender.summary(session.secret), env.ROOMS.getByName(inviteCode).inviteDetails(body.seat),
       ]);
@@ -77,6 +79,10 @@ export default {
       const profile = await env.PROFILES.getByName(session.id).summary(session.secret);
       if (!profile) return cors(new Response(null, { status: 401 }));
       const saved = await env.ROOMS.getByName(rosterCode).identify(body.seat, profile);
+      if (saved) {
+        await env.PROFILES.getByName(profile.id).setCurrentRoom(rosterCode);
+        ctx.waitUntil(notifyFriends(env, profile.id).catch(() => {}));
+      }
       return cors(new Response(null, { status: saved ? 204 : 404 }));
     }
 
@@ -88,6 +94,20 @@ export default {
       }
       const changed = await env.ROOMS.getByName(gameRoomCode).changeGame(input.seat, input.game);
       return cors(new Response(null, { status: changed ? 204 : 409 }));
+    }
+
+    if (url.pathname === '/api/rooms/recent' && request.method === 'POST') {
+      const input = await readBody(request);
+      if (!Array.isArray(input) || input.length > 8) return cors(new Response(null, { status: 400 }));
+      const rooms = await Promise.all(input.map(async (value: { code?: unknown; seat?: unknown } | null) => {
+        const code = value?.code;
+        const seat = value?.seat;
+        if (typeof code !== 'string' || !roomCodePattern.test(code)
+          || (seat !== undefined && (typeof seat !== 'string' || !profileIdPattern.test(seat)))) return null;
+        const game = await env.ROOMS.getByName(code).joinableGame(seat);
+        return game ? { code, game } : null;
+      }));
+      return cors(Response.json(rooms.filter(room => room !== null), { headers: { 'Cache-Control': 'no-store' } }));
     }
 
     if (url.pathname === '/api/rooms' && request.method === 'POST') {
@@ -133,8 +153,24 @@ export class Room extends DurableObject<Env> {
       if (!reservation || reservation.host !== seat || reservation.expires <= Date.now() || !this.socketFor('host')) return false;
       if ((this.socketFor('guest') ? 2 : 1) > roomCapacity[game]) return false;
       await this.ctx.storage.put('reservation', { ...reservation, game });
+      this.notifyRoomChange(reservation);
       return true;
     });
+  }
+
+  async joinableGame(seat?: string) {
+    const reservation = await this.ctx.storage.get<Reservation>('reservation');
+    if (!reservation || reservation.expires <= Date.now() || !this.socketFor('host')) return null;
+    if (seat ? seat !== reservation.guest : Boolean(reservation.guest)) return null;
+    return reservation.game ?? 'omok';
+  }
+
+  async friendRoom(id: string, viewer: string) {
+    const reservation = await this.ctx.storage.get<Reservation>('reservation');
+    if (!reservation || reservation.expires <= Date.now() || !this.socketFor('host')) return null;
+    const profiles = reservation.profiles;
+    if (profiles?.host?.id !== id && !(profiles?.guest?.id === id && this.socketFor('guest'))) return null;
+    return { game: reservation.game ?? 'omok', joinable: !reservation.guest || profiles?.guest?.id === viewer || profiles?.host?.id === viewer };
   }
 
   async inviteDetails(seat: string) {
@@ -152,6 +188,7 @@ export class Room extends DurableObject<Env> {
       reservation.profiles = { ...reservation.profiles, [role]: profile };
       await this.ctx.storage.put('reservation', reservation);
       this.sendRoster(reservation);
+      this.notifyRoomChange(reservation);
       return true;
     });
   }
@@ -189,6 +226,7 @@ export class Room extends DurableObject<Env> {
         send(server, { type: 'paired' });
       }
       this.sendRoster(reservation);
+      this.notifyRoomChange(reservation);
     }
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -224,6 +262,7 @@ export class Room extends DurableObject<Env> {
         await this.ctx.storage.delete('reservation');
         await this.ctx.storage.deleteAlarm();
         this.closeRoomSockets();
+        this.notifyRoomChange(reservation);
       });
       return;
     }
@@ -231,7 +270,10 @@ export class Room extends DurableObject<Env> {
     if (other) {
       send(other, { type: 'peer-left' });
       const reservation = await this.ctx.storage.get<Reservation>('reservation');
-      if (reservation) this.sendRoster(reservation, socket);
+      if (reservation) {
+        this.sendRoster(reservation, socket);
+        this.notifyRoomChange(reservation);
+      }
     }
   }
 
@@ -243,6 +285,11 @@ export class Room extends DurableObject<Env> {
     }
     this.closeRoomSockets();
     await this.ctx.storage.delete('reservation');
+    if (reservation) this.notifyRoomChange(reservation);
+  }
+
+  private notifyRoomChange(reservation: Reservation) {
+    this.ctx.waitUntil(Promise.all(Object.values(reservation.profiles ?? {}).map(profile => notifyFriends(this.env, profile.id))).catch(() => {}));
   }
 
   private closeRoomSockets() {

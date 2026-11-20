@@ -7,6 +7,7 @@ import type { RoomInvite } from '../../../../packages/protocol/rooms.ts';
 import { apiAvailable, apiFetch, apiUrl } from '../network/api.ts';
 
 const readEndpoint = '/api/profiles/me/invites/read';
+export const socialChangeEvent = 'noriverse:friends-changed';
 
 export function useInvitations(profile?: string) {
   const [invites, setInvites] = useState<RoomInvite[]>([]);
@@ -17,21 +18,25 @@ export function useInvitations(profile?: string) {
     let retry: number | undefined;
     let ping: number | undefined;
     let delay = 1000;
+    let paused = !navigator.onLine;
+    let connecting = false;
 
     function reconnect() {
       window.clearInterval(ping);
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || paused) return;
       retry = window.setTimeout(() => void connect(), delay);
       delay = Math.min(30_000, delay * 2);
     }
 
     async function connect() {
+      if (paused || connecting || socket || controller.signal.aborted) return;
+      connecting = true;
       try {
         const response = await apiFetch('/api/profiles/me/presence', { method: 'POST', signal: controller.signal });
         if (response.status === 404 || response.status === 401) return;
         if (!response.ok) throw new Error('Presence unavailable');
         const { ticket } = await response.json() as { ticket?: string };
-        if (controller.signal.aborted || !ticket || !profileIdPattern.test(ticket)) return;
+        if (controller.signal.aborted || paused || !ticket || !profileIdPattern.test(ticket)) return;
         const url = apiUrl('/api/presence/' + profile);
         url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
         url.searchParams.set('ticket', ticket);
@@ -39,27 +44,55 @@ export function useInvitations(profile?: string) {
         socket = connection;
         connection.onopen = () => {
           delay = 1000;
-          ping = window.setInterval(() => { if (connection.readyState === WebSocket.OPEN) connection.send('ping'); }, 45_000);
+          const heartbeat = () => { if (connection.readyState === WebSocket.OPEN) connection.send('ping'); };
+          heartbeat();
+          ping = window.setInterval(heartbeat, 8000);
+          window.dispatchEvent(new Event(socialChangeEvent));
         };
-        connection.onclose = reconnect;
+        connection.onclose = () => {
+          if (socket !== connection) return;
+          socket = undefined;
+          reconnect();
+        };
         connection.onmessage = event => {
           if (controller.signal.aborted || typeof event.data !== 'string' || event.data === 'pong') return;
           try {
             const message = JSON.parse(event.data);
+            if (message.type === 'friends-changed') { window.dispatchEvent(new Event(socialChangeEvent)); return; }
             if (message.type !== 'invites' || !Array.isArray(message.invites)) return;
             const valid = message.invites.map(readInvite).filter((invite: RoomInvite | undefined): invite is RoomInvite => !!invite && invite.expires > Date.now());
             setInvites(valid);
           } catch { /* Ignore malformed notifications. */ }
         };
       } catch { reconnect(); }
+      finally { connecting = false; }
     }
 
-    void connect();
-    return () => {
-      controller.abort();
+    function suspend() {
+      paused = true;
       window.clearTimeout(retry);
       window.clearInterval(ping);
-      socket?.close();
+      const previous = socket;
+      socket = undefined;
+      previous?.close();
+    }
+    function resume() {
+      paused = !navigator.onLine;
+      window.clearTimeout(retry);
+      void connect();
+    }
+    void connect();
+    window.addEventListener('offline', suspend);
+    window.addEventListener('pagehide', suspend);
+    window.addEventListener('online', resume);
+    window.addEventListener('pageshow', resume);
+    return () => {
+      controller.abort();
+      suspend();
+      window.removeEventListener('offline', suspend);
+      window.removeEventListener('pagehide', suspend);
+      window.removeEventListener('online', resume);
+      window.removeEventListener('pageshow', resume);
     };
   }, [profile]);
 

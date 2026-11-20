@@ -40,8 +40,7 @@ function App() {
   const { route, path, navigate } = useNavigation();
   const profile = useProfile();
   const room = useRoomBoard(profile.profile);
-  const friends = useFriends(profile.profile?.id, route.page === 'friends' || route.page === 'publicProfile' || route.page === 'room',
-    route.page === 'friends');
+  const friends = useFriends(profile.profile?.id, route.page === 'friends');
   const invitations = useInvitations(profile.profile?.id);
   const [localBoards, setLocalBoards] = useState(() => ({ omok: createLocalBoard(), othello: createLocalBoard(), chess: createLocalBoard() }));
   const [power, setPower] = useState<Power>('standard');
@@ -226,7 +225,16 @@ function App() {
         return <ProfilePage own={route.page === 'profile'} id={route.profileId} model={profile} friends={friends} navigate={navigate}
           edit={() => setEditName(true)} />;
       case 'friends':
-        return <FriendsPage model={friends} navigate={navigate} openProfile={() => setEditName(true)} />;
+        return <FriendsPage model={friends} navigate={navigate} openProfile={() => setEditName(true)} follow={target => {
+          if (room.code === target.code && room.state === 'connected' && room.started) {
+            navigate(gamePath(room.game, 'play', 'online'));
+            return;
+          }
+          if (room.code !== target.code || room.state === 'missing' || room.state === 'closed' || room.state === 'full' || room.state === 'disconnected' || room.state === 'failed') {
+            room.join(target.code);
+          }
+          navigate('/room?room=' + target.code);
+        }} />;
       case 'detail':
         return <GameDetail id={route.id} navigate={navigate} />;
       case 'setup':
@@ -311,6 +319,9 @@ function App() {
         if (room.code !== invite.code) room.join(invite.code);
         navigate('/room?room=' + invite.code);
       }} />
+      {route.page !== 'friends' && friends.incoming.length > 0 && <div className="friend-request-toast surface" role="status">
+        <RouteLink href="/friends" navigate={navigate}>{t('reviewFriendRequests', { count: friends.incoming.length })}</RouteLink>
+      </div>}
       {(editName || (profile.status === 'missing' && !nameDismissed)) && (
         <NameDialog name={profile.profile?.name} close={() => {
           setNameDismissed(true); setEditName(false); setPendingFavorite(undefined);

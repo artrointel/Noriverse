@@ -4,8 +4,26 @@ import { roomCodePattern } from '../../../../packages/protocol/rooms.ts';
 
 const prefix = 'noriverse.guest-seat.';
 const resumeKey = 'noriverse.active-guest-room';
+const recentKey = 'noriverse.recent-rooms';
 const lifetime = 30 * 60 * 1000;
 export type GuestRoom = { code: string; game: ProfileGame };
+
+export function readRecentRooms(): GuestRoom[] {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(recentKey) ?? '[]');
+    const rooms = Array.isArray(saved) ? saved.filter((room): room is GuestRoom => room && typeof room.code === 'string'
+      && roomCodePattern.test(room.code) && isProfileGame(room.game)) : [];
+    const previous = readGuestRoom();
+    return (previous && !rooms.some(room => room.code === previous.code) ? [previous, ...rooms] : rooms).slice(0, 8);
+  } catch { return []; }
+}
+
+export function rememberRecentRoom(code: string, game: ProfileGame) {
+  try {
+    const rooms = [{ code, game }, ...readRecentRooms().filter(room => room.code !== code)].slice(0, 8);
+    localStorage.setItem(recentKey, JSON.stringify(rooms));
+  } catch { /* Recent rooms are optional when storage is unavailable. */ }
+}
 
 export function readGuestRoom(): GuestRoom | undefined {
   try {

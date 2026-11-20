@@ -1,16 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
 import { oppositeStone, sideLabel } from '../games/table.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
-import { apiAvailable } from '../network/api.ts';
+import { apiAvailable, apiFetch } from '../network/api.ts';
+import { isProfileGame } from '../../../../packages/protocol/profile.ts';
+import { readGuestSeat, readRecentRooms } from '../network/guest-seat.ts';
+import type { GuestRoom } from '../network/guest-seat.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { gameIds, games } from './game-catalog.ts';
 import type { GameId } from '../games/scenes.ts';
 import { avatars } from './avatars.ts';
 import { FriendButton, InviteDialog } from './friends.tsx';
 import type { Friends } from './friends.tsx';
-import { gamePath, routeHref, RouteLink } from './navigation.tsx';
+import { routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 
 type Room = ReturnType<typeof useRoomBoard>;
@@ -24,6 +27,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const [inviteOpen, setInviteOpen] = useState(false);
   const [gameChoice, setGameChoice] = useState<GameId>();
   const [gameError, setGameError] = useState(false);
+  const [recent, setRecent] = useState<GuestRoom[]>([]);
   const activeGame = room.matchId ? room.game : 'omok';
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
   const connected = room.state === 'connected';
@@ -31,6 +35,28 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const participants = (['host', 'guest'] as const).map(role => room.participants.find(participant => participant.role === role)
     ?? (room.role === role || connected ? { role, profile: undefined } : undefined)).filter(participant => participant !== undefined);
   const gameChoices = gameIds.filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
+
+  useEffect(() => {
+    if (hasRoom || !apiAvailable) return;
+    const candidates = readRecentRooms().map(({ code }) => ({ code, seat: readGuestSeat(code) }));
+    if (!candidates.length) { setRecent([]); return; }
+    const controller = new AbortController();
+    let revision = 0;
+    async function check() {
+      const current = ++revision;
+      try {
+        const response = await apiFetch('/api/rooms/recent', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(candidates), signal: controller.signal });
+        const rooms: unknown = response.ok ? await response.json() : [];
+        if (!controller.signal.aborted && current === revision) setRecent(Array.isArray(rooms) ? rooms.filter(room => room
+          && candidates.some(candidate => candidate.code === room.code) && isProfileGame(room.game)) : []);
+      } catch { if (!controller.signal.aborted && current === revision) setRecent([]); }
+    }
+    void check();
+    const timer = window.setInterval(() => { if (!document.hidden) void check(); }, 12_000);
+    document.addEventListener('visibilitychange', check);
+    return () => { controller.abort(); window.clearInterval(timer); document.removeEventListener('visibilitychange', check); };
+  }, [hasRoom, room.state]);
 
   async function copyInvite() {
     try {
@@ -44,7 +70,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   return (
     <div className="site-width subpage">
       <RouteLink href="/games" navigate={navigate} className="back-link">{t('backToGames')}</RouteLink>
-      <div className="setup-layout">
+      <div className={hasRoom ? 'setup-layout' : 'setup-layout join-layout'}>
         <section className="surface setup-form room-page">
           <h1 tabIndex={-1}>{t(hasRoom ? 'room' : 'joinRoom')}</h1>
           {hasRoom ? (
@@ -116,6 +142,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                 {(room.state === 'failed' || room.state === 'disconnected') && (
                   <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>
                 )}
+              {room.rematchNotice === 'incoming' && <p role="status">{t('rematchIncoming')}</p>}
                 <button type="button" className="button button-secondary" onClick={() => { room.leave(); setCopyState('idle'); setInviteOpen(false); }}>{t('leave')}</button>
               </div>
             </>
@@ -131,15 +158,21 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                 </div>
               </form>
               {room.state && <p className="connection" role="status">{t(room.state)}</p>}
-              <RouteLink href={gamePath('omok', 'setup', 'online')} navigate={navigate} className="button button-secondary">{t('newRoom')}</RouteLink>
+              {recent.length > 0 && <section className="recent-rooms" aria-label={t('recentPlayableRooms')}>
+                <h2>{t('recentPlayableRooms')}</h2>
+                <ul className="people-list">{recent.map(item => <li key={item.code}>
+                  <span><strong>{t(item.game)}</strong> <code>{item.code}</code></span>
+                  <button type="button" className="button button-secondary" onClick={() => room.join(item.code)}>{t('join')}</button>
+                </li>)}</ul>
+              </section>}
             </>
           )}
           {inviteOpen && hasRoom && room.role === 'host' && <InviteDialog owner={friends.owner} navigate={navigate} invite={room.invite} close={() => setInviteOpen(false)} />}
         </section>
-        <aside className="surface setup-summary">
+        {hasRoom && <aside className="surface setup-summary">
           <img src={games[activeGame].art} alt="" width="880" height="587" />
           <div><h2>{t(activeGame)}</h2><p>{t(games[activeGame].description)}</p></div>
-        </aside>
+        </aside>}
       </div>
     </div>
   );

@@ -49,7 +49,10 @@ export interface PublicProfile {
 }
 
 export type ProfileSummary = Pick<PublicProfile, 'id' | 'name' | 'avatar' | 'level'>;
-export type FriendSummary = ProfileSummary & { online?: boolean };
+export type FriendRoom = { code: string; game: ProfileGame; joinable: boolean };
+export type FriendSummary = ProfileSummary & { online?: boolean; room?: FriendRoom };
+export type FriendAction = 'request' | 'accept' | 'decline' | 'remove' | 'cancel';
+export type FriendList = { friends: FriendSummary[]; incoming: ProfileSummary[]; outgoing: ProfileSummary[] };
 
 export function readFriendUpdate(value: unknown) {
   if (!value || typeof value !== 'object' || !('id' in value) || !('added' in value)

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { playSound } from '../../platform/audio.ts';
 import { addStoneShadow, createBoardArt, preloadBoard, stoneTexture } from '../board-art.ts';
 import { paintGoldRing } from '../board-marks.ts';
+import { createPieceSelection } from '../piece-selection.ts';
 import { tableSize } from '../table.ts';
 import type { Stone } from '../table.ts';
 import type { GameView } from '../scenes.ts';
@@ -27,6 +28,7 @@ export function alkkagiScene(view: () => GameView) {
   let status = initialAlkkagi;
   let board: ReturnType<typeof createBoardArt>;
   let aim: Phaser.GameObjects.Graphics;
+  let showSelection: ReturnType<typeof createPieceSelection>;
   let stage: Phaser.Scene;
   let group: Phaser.Physics.Arcade.Group;
   let selection: Piece | undefined;
@@ -85,6 +87,7 @@ export function alkkagiScene(view: () => GameView) {
     selection = undefined;
     pointer = undefined;
     aim.clear();
+    showSelection();
   }
 
   function shoot(dx: number, dy: number) {
@@ -186,6 +189,7 @@ export function alkkagiScene(view: () => GameView) {
       dark = view().dark;
       board.paint(dark);
       aim = this.add.graphics().setDepth(2);
+      showSelection = createPieceSelection(this);
       group = this.physics.add.group({ classType: Phaser.Physics.Arcade.Image });
       initialFlickRound.layout.forEach((point, index) => {
         if (point) addPiece(pieceOwner(index), point[0], point[1]);
@@ -270,6 +274,8 @@ export function alkkagiScene(view: () => GameView) {
         }
         previousRound = online;
       }
+      if (selection && !available(selection)) clearAim();
+      showSelection(selection?.sprite);
       if (view().finished) {
         if (!stage.physics.world.isPaused) {
           stage.physics.world.pause();

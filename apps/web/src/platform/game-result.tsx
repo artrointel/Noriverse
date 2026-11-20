@@ -13,7 +13,7 @@ export function GameResult({ report, winner, surrendered, timedOut, scores, visi
   surrendered?: Stone;
   timedOut?: Stone;
   scores?: readonly [number, number]; visible: boolean; onClose: () => void;
-  room?: { canRematch: boolean; reconnect?: () => void };
+  room?: { canRematch: boolean; reconnect?: () => void; request?: () => void; notice?: 'sent' | 'incoming' };
   record?: (report: MatchReport) => Promise<boolean>;
   rematch: () => void; back: string; navigate: Navigate;
 }) {
@@ -53,10 +53,12 @@ export function GameResult({ report, winner, surrendered, timedOut, scores, visi
       </div>
       {record && <p className="muted" role="status">{t(saved === 'saved' ? 'savedResult' : saved === 'failed' ? 'failedResult' : 'savingResult')}</p>}
       {record && report.mode === 'local' && <p className="muted result-note">{t(report.game === 'omok' ? 'localOmokRecord' : report.game === 'chess' ? 'localChessRecord' : 'localRecord')}</p>}
+      {room?.notice && <p role="status">{t(room.notice === 'incoming' ? 'rematchIncoming' : 'rematchSent')}</p>}
       <div className="panel-actions">
         {(!room || room.canRematch) && <button type="button" className="button button-primary" onClick={rematch}>
           {t('rematch')}
         </button>}
+        {room?.request && <button type="button" className="button button-primary" disabled={room.notice === 'sent'} onClick={room.request}>{t('requestRematch')}</button>}
         {room?.reconnect && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}
         <RouteLink href={back} navigate={navigate} className="button button-secondary">{t(room ? 'goToRoom' : 'backToGames')}</RouteLink>
         {saved === 'failed' && <button type="button" className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>{t('saveResult')}</button>}

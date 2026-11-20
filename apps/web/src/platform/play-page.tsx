@@ -216,13 +216,13 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   }
 
   const restart = () => {
-    if (!isBoard) setLocalRound(createLocalRound(localRound.turnLimit));
     setRejected(false);
     setConfirmSurrender(false);
-    if (isBoard) {
+    if (room || isBoard) {
       reset();
       return;
     }
+    setLocalRound(createLocalRound(localRound.turnLimit));
     setAlkkagi(initialAlkkagi);
   };
 
@@ -296,7 +296,8 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   </>;
   const resultPanel = outcome && report && <GameResult key={report.id} report={report} winner={outcome} surrendered={surrendered} timedOut={timedOut}
     scores={othello?.scores} visible={resultVisible} onClose={() => setClosedResult(report.id)} record={record} rematch={restart}
-    room={room && { canRematch: canReset, reconnect: room.state === 'disconnected' || room.state === 'failed' ? room.reconnect : undefined }}
+    room={room && { canRematch: canReset, reconnect: room.state === 'disconnected' || room.state === 'failed' ? room.reconnect : undefined,
+      request: room.role === 'guest' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
     back={room ? '/room' : '/games'} navigate={navigate} />;
 
   const deadlineDecision = pending && !outcome && <TimeoutDecision key={pending.at}
@@ -329,6 +330,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
           <h1 tabIndex={-1}>{t(id)}</h1>
           <p>{t(room ? 'online' : 'local')}</p>
         </div>
+        {room?.rematchNotice === 'incoming' && !resultVisible && <p role="status">{t('rematchIncoming')}</p>}
         {room?.code && <div className="play-room-code"><span>{t('code')}</span><code>{room.code}</code></div>}
       </div>
       <div className="play-layout">

@@ -354,6 +354,14 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .custom-turn-limit input { width: min(100%, 160px); min-height: 42px; padding: 6px 10px; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 9px; }
 .room-participants h2 { margin: 0 0 10px; font-size: 1.05rem; }
 .room-participants h2 small { color: var(--muted); }
+.join-layout { grid-template-columns: minmax(0, 660px); justify-content: center; }
+.recent-rooms h2, .friend-requests h2 { margin: 0 0 8px; font-size: 1rem; }
+.recent-rooms code { color: var(--muted); margin-inline-start: 4px; white-space: nowrap; }
+.friend-requests { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+.friend-actions, .friend-room { display: flex; align-items: center; flex-wrap: wrap; justify-content: end; gap: 5px; }
+.friend-room span { color: var(--muted); font-size: .79rem; }
+.friend-request-toast { position: fixed; inset-inline-end: 16px; inset-block-end: 16px; z-index: 15; padding: 10px 14px; box-shadow: 0 8px 24px #24193435; }
+.friend-request-toast a { color: var(--primary); font-weight: 750; }
 .resume-room { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; margin: 16px 0; padding: 10px; }
 .resume-room img { width: 56px; height: 46px; border-radius: 8px; object-fit: cover; }
 .resume-room div { display: grid; gap: 2px; }

@@ -1,11 +1,32 @@
 import { DurableObject } from 'cloudflare:workers';
 import { avatarLevel, defaultAvatar, levelFromPlayTime, profileGames, profileIdPattern, readFriendUpdate, readName, readProfilePreferences, readReport } from '../../packages/protocol/profile.ts';
-import type { AvatarId, GameStats, MatchReport, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
+import type { AvatarId, FriendAction, GameStats, MatchReport, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
 import type { RoomInvite } from '../../packages/protocol/rooms.ts';
+import type { Room } from './worker.ts';
+import type { FriendGraph } from './friend-graph.ts';
 
 const cookieName = 'noriverse_profile';
 type Identity = { id: string; secret: string; name: string; avatar?: AvatarId; favorites?: ProfileGame[]; friends?: string[]; touchEffect?: TouchEffect };
-interface Env { PROFILES: DurableObjectNamespace<ProfileStore> }
+interface Env { PROFILES: DurableObjectNamespace<ProfileStore>; FRIENDS: DurableObjectNamespace<FriendGraph>; ROOMS: DurableObjectNamespace<Room> }
+const presenceLease = 25_000;
+const friendActions = ['request', 'accept', 'decline', 'remove', 'cancel'] as const satisfies readonly FriendAction[];
+const friendGraph = (env: Env) => env.FRIENDS.getByName('relationships');
+
+export async function verifiedFriends(env: Env, id: string, secret: string) {
+  const graph = friendGraph(env);
+  const legacy = await env.PROFILES.getByName(id).friendIds(secret);
+  if (!legacy) return null;
+  if (await graph.needsImport(id)) {
+    const mutual = await Promise.all(legacy.map(async other => (await env.PROFILES.getByName(other).hasLegacyFriend(id)) ? other : null));
+    await graph.importMutual(id, mutual.filter(other => other !== null));
+  }
+  return graph.list(id);
+}
+
+export async function notifyFriends(env: Env, id: string) {
+  const { friends } = await friendGraph(env).list(id);
+  await Promise.all(friends.map(other => env.PROFILES.getByName(other).sendSocialChange()));
+}
 
 function json(data: unknown, status: number, headers?: HeadersInit) {
   const responseHeaders = new Headers(headers);
@@ -67,20 +88,29 @@ export async function profileRequest(request: Request, env: Env, url: URL, exter
     const profile = await store.record(auth.secret, report);
     return profile ? json(profile, 200) : json(null, 401);
   }
-  if (path === '/api/profiles/me/friends' && (request.method === 'GET' || request.method === 'POST')) {
+  if ((path === '/api/profiles/me/friends' || path === '/api/profiles/me/social') && (request.method === 'GET' || request.method === 'POST')) {
     if (!store) return json(null, 401);
-    const ids = await store.friendIds(auth.secret);
-    if (!ids) return json(null, 401);
+    const links = await verifiedFriends(env, auth.id, auth.secret);
+    if (!links) return json(null, 401);
     if (request.method === 'POST') {
-      const update = readFriendUpdate(await readBody(request));
-      if (!update || update.id === auth.id) return json(null, 400);
-      if (update.added && !await env.PROFILES.getByName(update.id).summary()) return json(null, 404);
-      const updated = await store.setFriend(auth.secret, update.id, update.added);
-      return json(null, updated ? 200 : 409);
+      const input = await readBody(request) as { id?: unknown; action?: unknown } | undefined;
+      const legacy = readFriendUpdate(input);
+      const action = legacy ? legacy.added ? 'request' : 'remove' : friendActions.find(candidate => candidate === input?.action);
+      const id = input?.id;
+      if (typeof id !== 'string' || !profileIdPattern.test(id) || id === auth.id || !action) return json(null, 400);
+      const other = env.PROFILES.getByName(id);
+      if (action === 'request' && !await other.summary()) return json(null, 404);
+      const updated = await friendGraph(env).change(auth.id, id, action);
+      if (!updated) return json(null, 409);
+      await Promise.allSettled([store.sendSocialChange(), other.sendSocialChange()]);
+      return json(null, 200);
     }
     const presence = url.searchParams.get('presence') === '1';
-    const friends = await Promise.all(ids.map(id => presence ? env.PROFILES.getByName(id).friendSummary() : env.PROFILES.getByName(id).summary()));
-    return json(friends.filter(friend => friend !== null), 200);
+    const summaries = async (ids: string[], full = false) => (await Promise.all(ids.map(id => full
+      ? env.PROFILES.getByName(id).friendSummary(auth.id) : env.PROFILES.getByName(id).summary()))).filter(friend => friend !== null);
+    if (path.endsWith('/friends')) return json(await summaries(links.friends, presence), 200);
+    const [friends, incoming, outgoing] = await Promise.all([summaries(links.friends, presence), summaries(links.incoming), summaries(links.outgoing)]);
+    return json({ friends, incoming, outgoing }, 200);
   }
   if (path === '/api/profiles/me/presence' && request.method === 'POST') {
     const ticket = store && await store.issuePresenceTicket(auth.secret);
@@ -142,9 +172,23 @@ export class ProfileStore extends DurableObject<Env> {
     return { id: identity.id, name: identity.name, avatar: identity.avatar ?? defaultAvatar, level: levelFromPlayTime(seconds) };
   }
 
-  async friendSummary() {
+  async friendSummary(viewer: string) {
     const profile = await this.summary();
-    return profile ? { ...profile, online: this.ctx.getWebSockets().some(socket => socket.readyState === WebSocket.OPEN) } : null;
+    if (!profile) return null;
+    const online = Boolean(this.presenceUntil());
+    const code = await this.ctx.storage.get<string>('currentRoom');
+    const room = code && await this.env.ROOMS.getByName(code).friendRoom(profile.id, viewer);
+    return { ...profile, online, room: room && code ? { code, ...room } : undefined };
+  }
+
+  async setCurrentRoom(code: string) {
+    await this.ctx.storage.put('currentRoom', code);
+  }
+
+  sendSocialChange() {
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket.readyState === WebSocket.OPEN) socket.send('{"type":"friends-changed"}');
+    }
   }
 
   async issuePresenceTicket(secret: string) {
@@ -162,9 +206,13 @@ export class ProfileStore extends DurableObject<Env> {
     if (!ticket || !profileIdPattern.test(ticket) || request.headers.get('Upgrade') !== 'websocket') return new Response(null, { status: 400 });
     const valid = this.ctx.storage.sql.exec('DELETE FROM presence_tickets WHERE id = ? AND expires > ? RETURNING id', ticket, Date.now()).toArray();
     if (valid.length === 0) return new Response(null, { status: 401 });
+    const wasOnline = Boolean(this.presenceUntil());
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ openedAt: Date.now() });
     this.sendInvites([server], await this.pendingInvites());
+    if (!wasOnline || !await this.ctx.storage.getAlarm()) await this.ctx.storage.setAlarm(Date.now() + presenceLease);
+    if (!wasOnline) this.notifyPresence();
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -172,6 +220,40 @@ export class ProfileStore extends DurableObject<Env> {
 
   webSocketClose(socket: WebSocket, code: number) {
     socket.close(code === 1006 || code === 1005 ? 1000 : code);
+    if (!this.presenceUntil(socket)) this.notifyPresence();
+  }
+
+  async alarm() {
+    const now = Date.now();
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket.readyState === WebSocket.OPEN && this.presenceDeadline(socket) <= now) socket.close(4000, 'Presence expired');
+    }
+    const until = this.presenceUntil();
+    if (until) await this.ctx.storage.setAlarm(until);
+    else this.notifyPresence();
+  }
+
+  private presenceDeadline(socket: WebSocket) {
+    const attached = socket.deserializeAttachment() as { openedAt?: number } | null;
+    return (this.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime() ?? attached?.openedAt ?? 0) + presenceLease;
+  }
+
+  private presenceUntil(excluded?: WebSocket) {
+    let until = 0;
+    const now = Date.now();
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket === excluded || socket.readyState !== WebSocket.OPEN) continue;
+      const expires = this.presenceDeadline(socket);
+      if (expires > now) until = Math.max(until, expires);
+    }
+    return until;
+  }
+
+  private notifyPresence() {
+    this.ctx.waitUntil((async () => {
+      const identity = await this.ctx.storage.get<Identity>('identity');
+      if (identity) await notifyFriends(this.env, identity.id);
+    })().catch(() => {}));
   }
 
   async receiveInvite(invite: RoomInvite) {
@@ -209,17 +291,8 @@ export class ProfileStore extends DurableObject<Env> {
     return identity?.secret === secret ? identity.friends ?? [] : null;
   }
 
-  async setFriend(secret: string, id: string, added: boolean) {
-    return this.ctx.blockConcurrencyWhile(async () => {
-      const identity = await this.ctx.storage.get<Identity>('identity');
-      if (identity?.secret !== secret) return false;
-      const friends = new Set(identity.friends);
-      if (added && friends.size >= 64 && !friends.has(id)) return false;
-      if (added) friends.add(id);
-      else friends.delete(id);
-      await this.ctx.storage.put('identity', { ...identity, friends: [...friends] });
-      return true;
-    });
+  async hasLegacyFriend(id: string) {
+    return (await this.ctx.storage.get<Identity>('identity'))?.friends?.includes(id) ?? false;
   }
 
   async rename(secret: string, name: string) {
