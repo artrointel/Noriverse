@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { avatarIds, avatarLevel, readName, secondsPerLevel, winRate } from '../../../../packages/protocol/profile.ts';
-import type { MatchReport, ProfilePreferences, PublicProfile } from '../../../../packages/protocol/profile.ts';
+import { avatarIds, avatarLevel, readName, secondsPerLevel, touchEffects, winRate } from '../../../../packages/protocol/profile.ts';
+import type { MatchReport, ProfilePreferences, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import { apiAvailable, apiFetch } from '../network/api.ts';
 import { avatars } from './avatars.ts';
-import { readBrowserProfile, saveBrowserProfile } from './browser-profile.ts';
+import { readBrowserProfile, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { randomPlayerName } from './player-names.ts';
 import { FriendButton } from './friends.tsx';
 import type { Friends } from './friends.tsx';
+import { TouchBurst } from './touch-burst.tsx';
 
 const recordCount = (profile: PublicProfile) => Object.values(profile.games).reduce((sum, game) => sum + game.sessions, 0);
 
@@ -57,13 +58,19 @@ export function useProfile() {
   }
 
   async function setPreferences(preferences: ProfilePreferences) {
+    if (!apiAvailable && 'touchEffect' in preferences) {
+      saveBrowserTouchEffect(preferences.touchEffect);
+      const saved = readBrowserProfile();
+      if (saved) setProfile(saved);
+      return;
+    }
     const response = await apiFetch('/api/profiles/me/preferences', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preferences),
     });
     if (!response.ok) throw new Error();
     const next = await response.json() as PublicProfile;
     setProfile(current => current?.id === next.id && recordCount(current) > recordCount(next)
-      ? { ...current, avatar: next.avatar, favorites: next.favorites } : next);
+      ? { ...current, avatar: next.avatar, favorites: next.favorites, touchEffect: next.touchEffect } : next);
   }
 
   const record = useCallback(async (match: MatchReport) => {
@@ -254,6 +261,45 @@ function GameHistory({ profile }: { profile: PublicProfile }) {
   );
 }
 
+function TouchEffectDialog({ selected, save, close }: { selected: TouchEffect; save: (effect: TouchEffect) => Promise<void>; close: () => void }) {
+  const { t } = useTranslation();
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [effect, setEffect] = useState(selected);
+  const [preview, setPreview] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => { element?.close(); };
+  }, []);
+  return <dialog className="surface profile-dialog" ref={dialog} aria-labelledby="touch-effect-title"
+    onCancel={event => { event.preventDefault(); if (!saving) close(); }}>
+    <form onSubmit={async event => {
+      event.preventDefault();
+      if (saving) return;
+      setSaving(true); setFailed(false);
+      try { await save(effect); close(); } catch { setSaving(false); setFailed(true); }
+    }}>
+      <h2 id="touch-effect-title">{t('touchEffects')}</h2>
+      <p className="muted">{t('touchProfileHelp')}</p>
+      {touchEffects.map(value => <label className="choice" key={value}>
+        <input type="radio" name="profile-touch-effect" value={value} checked={value === effect} disabled={saving}
+          onChange={() => { setEffect(value); setPreview(key => key + 1); }} />
+        {t(value === 'soft' ? 'touchSoft' : 'disabled')}
+      </label>)}
+      <button className="button button-secondary touch-preview" type="button" onClick={() => setPreview(key => key + 1)}>
+        {t('previewTouch')}{effect === 'soft' && preview > 0 && <TouchBurst key={preview} />}
+      </button>
+      {failed && <p role="alert">{t('profileError')}</p>}
+      <div className="panel-actions">
+        <button className="button button-primary" type="submit" disabled={saving}>{t('saveSettings')}</button>
+        <button className="button button-secondary" type="button" onClick={close} disabled={saving}>{t('cancel')}</button>
+      </div>
+    </form>
+  </dialog>;
+}
+
 export function ProfilePage({ own, id, model, friends, navigate, edit }: {
   own: boolean; id?: string; model: ReturnType<typeof useProfile>; friends: Friends; navigate: Navigate; edit: () => void;
 }) {
@@ -262,6 +308,7 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
   const [copied, setCopied] = useState(false);
   const [showLink, setShowLink] = useState(false);
   const [avatarOpen, setAvatarOpen] = useState(false);
+  const [touchOpen, setTouchOpen] = useState(false);
 
   useEffect(() => {
     if (!id || own) return;
@@ -304,6 +351,7 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
         {own && !loading && <div className="panel-actions">
           <button type="button" className="button button-primary" onClick={edit}>{t(profile ? 'editName' : 'saveName')}</button>
           {profile && apiAvailable && <button type="button" className="button button-secondary" onClick={() => setAvatarOpen(true)}>{t('chooseAvatar')}</button>}
+          {profile && <button type="button" className="button button-secondary" onClick={() => setTouchOpen(true)}>{t('touchEffects')}</button>}
           {profile && apiAvailable && <button type="button" className="button button-secondary" onClick={() => void share()}>
             {t(copied ? 'copied' : 'shareProfile')}
           </button>}
@@ -312,6 +360,8 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
         {!own && profile && <div className="panel-actions"><FriendButton id={profile.id} model={friends} /></div>}
         {showLink && <input aria-label={t('shareProfile')} readOnly value={shareUrl} onFocus={event => event.currentTarget.select()} />}
       </section>
+      {own && profile && touchOpen && <TouchEffectDialog selected={profile.touchEffect ?? 'soft'} save={touchEffect => model.setPreferences({ touchEffect })}
+        close={() => setTouchOpen(false)} />}
       {profile && apiAvailable && (
         <>
           {own && avatarOpen && <AvatarDialog profile={profile} save={model.setPreferences} close={() => setAvatarOpen(false)} />}

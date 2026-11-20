@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import heroArt from '../assets/hero-orbit.jpg';
 import { apiAvailable } from '../network/api.ts';
 import type { GameId } from '../games/scenes.ts';
-import { isTurnLimit, turnLimits } from '../games/turn-clock.ts';
+import { isTurnLimit, maxTurnLimit, turnLimits } from '../games/turn-clock.ts';
 import type { TurnLimit } from '../games/turn-clock.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { cardsPerPage, pageNumbers } from './library-pagination.ts';
@@ -260,6 +260,12 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
   const { t } = useTranslation();
   const roomUnavailable = !apiAvailable ? 'roomUnavailable' : undefined;
   const [mode, setMode] = useState<GameMode>(online && !roomUnavailable ? 'online' : 'local');
+  const preset = turnLimits.some(limit => limit === turnLimit);
+  const [customLimit, setCustomLimit] = useState(!preset);
+  const [customSeconds, setCustomSeconds] = useState(preset ? '' : String(turnLimit));
+  const customValue = Number(customSeconds);
+  const validCustom = customValue > 0 && isTurnLimit(customValue);
+  const showLimit = mode === 'local' || !activeGame;
   return (
     <div className="site-width subpage">
       <RouteLink href={gamePath(id)} navigate={navigate} className="back-link">{t(id)}</RouteLink>
@@ -278,14 +284,28 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
             </label>
           </fieldset>
           {mode === 'online' && activeGame && activeGame !== id && <p className="muted">{t('otherGameRoom', { game: t(activeGame) })}</p>}
-          {(mode === 'local' || !activeGame) && <fieldset>
+          {showLimit && <fieldset>
             <legend>{t('turnLimit')}</legend>
-            <select aria-label={t('turnLimit')} value={turnLimit} onChange={event => {
+            <select aria-label={t('turnLimit')} value={customLimit ? 'custom' : turnLimit} onChange={event => {
+              if (event.target.value === 'custom') {
+                setCustomLimit(true);
+                if (validCustom) onTurnLimit(customValue);
+                return;
+              }
               const seconds = Number(event.target.value);
-              if (isTurnLimit(seconds)) onTurnLimit(seconds);
+              if (isTurnLimit(seconds)) { setCustomLimit(false); onTurnLimit(seconds); }
             }}>
               {turnLimits.map(limit => <option key={limit} value={limit}>{t(limit ? 'turnSeconds' : 'unlimitedTurns', { count: limit })}</option>)}
+              <option value="custom">{t('customTurnLimit')}</option>
             </select>
+            {customLimit && <label className="custom-turn-limit">
+              <span>{t('customTurnSeconds')}</span><input type="number" min={1} max={maxTurnLimit} step={1} value={customSeconds}
+                aria-invalid={Boolean(customSeconds && !validCustom)} onChange={event => {
+                  const value = event.target.valueAsNumber;
+                  setCustomSeconds(event.target.value);
+                  if (value > 0 && isTurnLimit(value)) onTurnLimit(value);
+                }} />
+            </label>}
             <p className="muted">{t('turnLimitHelp')}</p>
           </fieldset>}
           {id === 'omok' && (mode === 'local' || !activeGame) && (
@@ -311,7 +331,7 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
               ))}
             </fieldset>
           )}
-          <button type="button" className="button button-primary" onClick={() => onStart(mode)}>
+          <button type="button" className="button button-primary" disabled={showLimit && customLimit && !validCustom} onClick={() => onStart(mode)}>
             {t(mode === 'online' ? (activeGame ? 'goToRoom' : 'newRoom') : 'start')}
           </button>
         </section>

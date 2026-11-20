@@ -33,7 +33,7 @@ export async function apiFetch(path: string, init?: RequestInit) {
   if (!external) return fetch(path, init);
   const headers = new Headers(init?.headers);
   const profilePath = path === '/api/profiles/me' || path.startsWith('/api/profiles/me/');
-  if (profilePath || /^\/api\/rooms\/[A-Z0-9]{8}\/participants$/.test(path)) {
+  if (profilePath || /^\/api\/rooms\/[A-Z0-9]{8}\/(?:participants|invites)$/.test(path)) {
     const session = readSession();
     if (session) headers.set('Authorization', 'Bearer ' + session);
   }

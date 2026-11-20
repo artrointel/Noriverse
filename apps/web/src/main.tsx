@@ -22,6 +22,7 @@ import type { GameMode } from './platform/navigation.tsx';
 import { createLocalRound, PlayPage } from './platform/play-page.tsx';
 import { RoomPage } from './platform/room-page.tsx';
 import { FriendsPage, useFriends } from './platform/friends.tsx';
+import { InvitationToasts, useInvitations } from './platform/invitations.tsx';
 import { usePreferences } from './platform/preferences.ts';
 import { SettingsMenu } from './platform/settings-menu.tsx';
 import { NameDialog, ProfileNav, ProfilePage, useProfile } from './platform/profiles.tsx';
@@ -37,7 +38,9 @@ function App() {
   const { route, path, navigate } = useNavigation();
   const profile = useProfile();
   const room = useRoomBoard(profile.profile);
-  const friends = useFriends(profile.profile?.id, route.page === 'friends' || route.page === 'publicProfile' || route.page === 'room');
+  const friends = useFriends(profile.profile?.id, route.page === 'friends' || route.page === 'publicProfile' || route.page === 'room',
+    route.page === 'friends');
+  const invitations = useInvitations(profile.profile?.id);
   const [localBoards, setLocalBoards] = useState(() => ({ omok: createLocalBoard(), othello: createLocalBoard(), chess: createLocalBoard() }));
   const [power, setPower] = useState<Power>('standard');
   const [allowDoubleThree, setAllowDoubleThree] = useState(true);
@@ -53,7 +56,7 @@ function App() {
   const lastAwayResult = useRef('');
 
   useEffect(bindPageAudio, []);
-  useEffect(() => { setAudioLevels(audioLevels); }, [audioLevels]);
+  useEffect(() => { setAudioLevels(preferences.muted ? { music: 0, effects: 0 } : audioLevels); }, [audioLevels, preferences.muted]);
 
   useEffect(() => {
     if (path === lastPath.current) return;
@@ -206,6 +209,7 @@ function App() {
           return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite="" navigate={navigate} onPlay={enterRoomGame} />;
         }
         return <PlayPage id={id} dark={preferences.dark} antialias={preferences.antialias} power={power} turnLimit={turnLimit} navigate={navigate}
+          showTouches={preferences.showTouches} onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
           room={online ? room : undefined} history={online ? room.history : local?.history ?? []}
           boardRound={online ? undefined : local}
           allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true} record={apiAvailable && profile.profile ? profile.record : undefined}
@@ -263,6 +267,10 @@ function App() {
         </div>
         <div className="site-width footer-meta"><small>© {new Date().getFullYear()} Noriverse</small></div>
       </footer>
+      <InvitationToasts model={invitations} accept={invite => {
+        if (room.code !== invite.code) room.join(invite.code);
+        navigate('/room?room=' + invite.code);
+      }} />
       {(editName || (profile.status === 'missing' && !nameDismissed)) && (
         <NameDialog name={profile.profile?.name} close={() => {
           setNameDismissed(true); setEditName(false); setPendingFavorite(undefined);

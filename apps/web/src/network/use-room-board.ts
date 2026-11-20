@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { roomCodePattern } from '../../../../packages/protocol/rooms.ts';
-import type { Participant, Role } from '../../../../packages/protocol/rooms.ts';
+import { readTouch, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import type { Participant, Role, TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import { isProfileGame } from '../../../../packages/protocol/profile.ts';
 import type { ProfileGame, ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { boardRules, isBoardGame, rematchFirstColor } from '../games/board-rules.ts';
@@ -38,6 +38,9 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const [round, setRound] = useState(blankMatch);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [assignedSeat, setAssignedSeat] = useState<Seat>();
+  const [remoteTouch, setRemoteTouch] = useState<TouchPoint & { matchId: string; receivedAt: number }>();
+  const lastIncomingTouch = useRef(-Infinity);
+  const lastOutgoingTouch = useRef(-Infinity);
   const { id: matchId, game, hostColor, startedAt, finishedAt, allowDoubleThree, history, surrendered, timedOut, turnLimit, deadline } = round;
   const playerColor = role === 'host' ? hostColor : role === 'guest' ? oppositeStone(hostColor) : undefined;
   const started = startedAt > 0;
@@ -148,6 +151,17 @@ export function useRoomBoard(profile?: ProfileSummary) {
       receive(raw) {
         if (!raw || typeof raw !== 'object' || !('type' in raw)) return;
         const current = match.current;
+        if (raw.type === 'touch') {
+          const now = performance.now();
+          if (!current.startedAt || current.finishedAt || !('id' in raw) || raw.id !== current.id || !('point' in raw)
+            || now - lastIncomingTouch.current < 60) return;
+          const point = readTouch(raw.point);
+          if (point) {
+            lastIncomingTouch.current = now;
+            setRemoteTouch({ ...point, matchId: current.id, receivedAt: now });
+          }
+          return;
+        }
         if (seat.current?.role === 'host') {
           if (!('id' in raw) || raw.id !== current.id || !current.startedAt || current.finishedAt) return;
           const guestColor = oppositeStone(current.hostColor);
@@ -212,7 +226,9 @@ export function useRoomBoard(profile?: ProfileSummary) {
     const attempt = ++operation.current;
     setState('joining');
     try {
-      const response = await apiFetch('/api/rooms', { method: 'POST' });
+      const response = await apiFetch('/api/rooms', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ game }),
+      });
       if (!response.ok) throw new Error();
       const room = await response.json() as { code: string; token: string };
       if (attempt !== operation.current) return;
@@ -279,6 +295,23 @@ export function useRoomBoard(profile?: ProfileSummary) {
     displayDeadline: deadline ? deadline + (round.clockOffset ?? 0) : 0,
     allowDoubleThree, participants, create, join, leave, move, physics: round.physics, power: round.power ?? 1, flick, settleFlick,
     winner: matchWinner(round), turn: matchTurn(round),
+    remoteTouch: remoteTouch?.matchId === matchId && performance.now() - remoteTouch.receivedAt < 500 ? remoteTouch : undefined,
+    sendTouch(point: TouchPoint) {
+      const now = performance.now();
+      if (!match.current.startedAt || match.current.finishedAt || !ready.current || now - lastOutgoingTouch.current < 90) return;
+      lastOutgoingTouch.current = now;
+      link.current?.send({ type: 'touch', id: match.current.id, point });
+    },
+    async invite(friend: string) {
+      const current = seat.current;
+      if (current?.role !== 'host') return false;
+      try {
+        const response = await apiFetch('/api/rooms/' + current.code + '/invites', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seat: current.token, friend }),
+        });
+        return response.ok;
+      } catch { return false; }
+    },
     canMove: state === 'connected' && started && !finishedAt && playerColor !== undefined
       && matchTurn(round) === playerColor,
     reconnect() { if (code) connect(code, seat.current?.token); },

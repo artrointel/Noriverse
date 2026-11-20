@@ -1,10 +1,31 @@
-import type { ProfileSummary } from './profile.ts';
+import { isProfileGame, profileIdPattern, readName } from './profile.ts';
+import type { ProfileGame, ProfileSummary } from './profile.ts';
 
 const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 export const roomCodePattern = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
 
 export type Role = 'host' | 'guest';
 export interface Participant { role: Role; profile?: ProfileSummary }
+export type TouchPoint = { x: number; y: number };
+export const touchResolution = 1000;
+
+export function readTouch(value: unknown): TouchPoint | undefined {
+  if (!value || typeof value !== 'object' || !('x' in value) || !('y' in value)) return;
+  const { x, y } = value;
+  if (typeof x === 'number' && typeof y === 'number' && Number.isInteger(x) && Number.isInteger(y)
+    && x >= 0 && x <= touchResolution && y >= 0 && y <= touchResolution) return { x, y };
+}
+
+export type RoomInvite = { id: string; sender: string; name: string; game: ProfileGame; code: string; expires: number };
+
+export function readInvite(value: unknown): RoomInvite | undefined {
+  if (!value || typeof value !== 'object') return;
+  const { id, sender, name, game, code, expires } = value as Partial<RoomInvite>;
+  if (typeof id !== 'string' || !profileIdPattern.test(id) || typeof sender !== 'string' || !profileIdPattern.test(sender)
+    || typeof name !== 'string' || !readName(name) || !isProfileGame(game) || typeof code !== 'string' || !roomCodePattern.test(code)
+    || typeof expires !== 'number' || !Number.isSafeInteger(expires)) return;
+  return { id, sender, name, game, code, expires };
+}
 interface IceCandidate {
   candidate?: string;
   sdpMid?: string | null;

@@ -8,6 +8,8 @@ export function isProfileGame(value: unknown): value is ProfileGame {
 export const avatarIds = ['mint', 'amber', 'lunar', 'ink', 'violet'] as const;
 export type AvatarId = (typeof avatarIds)[number];
 export const defaultAvatar: AvatarId = 'mint';
+export const touchEffects = ['soft', 'none'] as const;
+export type TouchEffect = typeof touchEffects[number];
 export const avatarLevel: Record<AvatarId, number> = { mint: 1, amber: 1, lunar: 1, ink: 1, violet: 1 };
 export const secondsPerLevel = 3600;
 
@@ -38,6 +40,7 @@ export interface PublicProfile {
   name: string;
   avatar: AvatarId;
   favorites: ProfileGame[];
+  touchEffect?: TouchEffect;
   level: number;
   xp: number;
   totalSeconds: number;
@@ -46,6 +49,7 @@ export interface PublicProfile {
 }
 
 export type ProfileSummary = Pick<PublicProfile, 'id' | 'name' | 'avatar' | 'level'>;
+export type FriendSummary = ProfileSummary & { online?: boolean };
 
 export function readFriendUpdate(value: unknown) {
   if (!value || typeof value !== 'object' || !('id' in value) || !('added' in value)
@@ -55,11 +59,13 @@ export function readFriendUpdate(value: unknown) {
 
 export type ProfilePreferences =
   | { avatar: AvatarId }
+  | { touchEffect: TouchEffect }
   | { favorite: { game: ProfileGame; selected: boolean } };
 
 export function readProfilePreferences(value: unknown): ProfilePreferences | undefined {
   if (!value || typeof value !== 'object') return;
   if ('avatar' in value && avatarIds.includes(value.avatar as AvatarId)) return { avatar: value.avatar as AvatarId };
+  if ('touchEffect' in value && (value.touchEffect === 'soft' || value.touchEffect === 'none')) return { touchEffect: value.touchEffect };
   if (!('favorite' in value) || !value.favorite || typeof value.favorite !== 'object') return;
   const favorite = value.favorite as { game?: unknown; selected?: unknown };
   if (isProfileGame(favorite.game) && typeof favorite.selected === 'boolean') {

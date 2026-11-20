@@ -71,6 +71,13 @@ const ko = {
   playerOne: '1번 플레이어', playerTwo: '2번 플레이어',
   turnLimit: '턴 제한시간', turnSeconds: '{{count}}초', unlimitedTurns: '제한 없음', turnClockPaused: '일시 정지',
   turnLimitHelp: '제한시간이 지나면 그 차례의 플레이어가 패배합니다.', turnTimeout: '{{stone}} 시간 초과',
+  customTurnLimit: '직접 입력', customTurnSeconds: '턴 제한시간(초) · 1~3600',
+  enabled: '켜짐', disabled: '꺼짐', saveSettings: '저장', inGameSettings: '경기 중 설정',
+  touchEffects: '터치 효과', touchSoft: '은은한 파티클', previewTouch: '효과 미리보기',
+  touchProfileHelp: '내 터치에 사용할 효과를 고르세요. 온라인 상대도 이 효과를 볼 수 있습니다.',
+  inviteFriend: '친구 초대', inviteSent: '초대 보냄', inviteError: '초대를 보내지 못했습니다. 방에 빈자리가 있는지 확인하세요.',
+  invites: '게임 초대', inviteMessage: '{{player}}로부터 {{game}} 게임에 초대를 받았습니다.', acceptInvite: '클릭해서 방에 입장', dismissInvite: '초대 닫기',
+  friendOnline: '온라인', friendOffline: '오프라인', emptyOnline: '접속 중인 친구가 없습니다.', emptyOffline: '오프라인 친구가 없습니다.',
   graphics: '그래픽', antialias: '안티에일리어싱', graphicsHelp: '켜면 보드와 돌의 가장자리가 부드러워집니다. 다음 경기부터 적용됩니다.',
   friends: '친구 목록', addFriend: '친구 추가', removeFriend: '친구 삭제', friendLink: '친구의 프로필 링크 또는 ID',
   emptyFriends: '아직 추가한 친구가 없습니다.', friendError: '친구 목록을 변경하지 못했습니다. 프로필 링크를 확인하거나 잠시 후 다시 시도하세요.',
@@ -165,6 +172,13 @@ const en: Record<keyof typeof ko, string> = {
   playerOne: 'Player 1', playerTwo: 'Player 2',
   turnLimit: 'Turn time limit', turnSeconds: '{{count}} sec', unlimitedTurns: 'No limit', turnClockPaused: 'Paused',
   turnLimitHelp: 'Running out of time loses the match.', turnTimeout: '{{stone}} ran out of time',
+  customTurnLimit: 'Custom', customTurnSeconds: 'Turn time in seconds (1–3600)',
+  enabled: 'On', disabled: 'Off', saveSettings: 'Save', inGameSettings: 'In-game settings',
+  touchEffects: 'Touch effects', touchSoft: 'Soft particles', previewTouch: 'Preview effect',
+  touchProfileHelp: 'Choose the effect for your touches. Your opponent can see it in online matches.',
+  inviteFriend: 'Invite friend', inviteSent: 'Invite sent', inviteError: 'Could not send the invite. Check that the room still has an open seat.',
+  invites: 'Game invitations', inviteMessage: '{{player}} invited you to play {{game}}.', acceptInvite: 'Click to join the room', dismissInvite: 'Dismiss invitation',
+  friendOnline: 'Online', friendOffline: 'Offline', emptyOnline: 'No friends are online.', emptyOffline: 'No friends are offline.',
   graphics: 'Graphics', antialias: 'Antialiasing', graphicsHelp: 'Smooths board and stone edges. Changes apply next match.',
   friends: 'Friends', addFriend: 'Add friend', removeFriend: 'Remove friend', friendLink: 'Friend’s profile link or ID',
   emptyFriends: 'You haven’t added any friends yet.', friendError: 'Could not update your friends. Check the profile link or try again.',
@@ -238,6 +252,8 @@ export function usePreferences() {
   const [language, setLanguage] = useState(getLanguagePreference);
   const [theme, setTheme] = useState(getTheme);
   const [antialias, setAntialias] = useState(() => readPreference('antialias') !== 'off');
+  const [muted, setMuted] = useState(() => readPreference('muted') === 'on');
+  const [showTouches, setShowTouches] = useState(() => readPreference('touch-effects') !== 'off');
   const [systemIsDark, setSystemIsDark] = useState(systemDark.matches);
   const dark = theme === 'system' ? systemIsDark : theme === 'dark';
 
@@ -258,7 +274,15 @@ export function usePreferences() {
   useLayoutEffect(() => { document.documentElement.lang = i18n.resolvedLanguage ?? 'en'; }, [i18n.resolvedLanguage]);
 
   return {
-    language, theme, dark, antialias,
+    language, theme, dark, antialias, muted, showTouches,
+    changeMuted(value: boolean) {
+      setMuted(value);
+      savePreference('muted', value ? 'on' : 'off');
+    },
+    changeShowTouches(value: boolean) {
+      setShowTouches(value);
+      savePreference('touch-effects', value ? 'on' : 'off');
+    },
     changeAntialias(value: boolean) {
       setAntialias(value);
       savePreference('antialias', value ? 'on' : 'off');

@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { playSound } from './audio.ts';
 import type { AudioLevels } from './audio.ts';
 import type { usePreferences } from './preferences.ts';
+import { GearIcon } from './gear-icon.tsx';
 
 export function SettingsMenu({ preferences, levels, onVolume, path }: {
   preferences: ReturnType<typeof usePreferences>;
@@ -11,7 +12,7 @@ export function SettingsMenu({ preferences, levels, onVolume, path }: {
   onVolume: (channel: keyof AudioLevels, value: number) => void;
   path: string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const menu = useRef<HTMLDetailsElement>(null);
   const trigger = useRef<HTMLElement>(null);
 
@@ -47,11 +48,7 @@ export function SettingsMenu({ preferences, levels, onVolume, path }: {
       if (event.target === event.currentTarget && !event.currentTarget.open) close();
     }}>
       <summary ref={trigger} aria-label={t('openSettings')} title={t('openSettings')} aria-controls="settings-popover">
-        <svg className="settings-gear" viewBox="0 0 24 24" fill="none" aria-hidden="true"
-          stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round">
-          <path d="m10.4 2.8-.6 2.3a7.3 7.3 0 0 0-1.7 1l-2.3-.7-1.7 2.9 1.7 1.7a7.5 7.5 0 0 0 0 2l-1.7 1.7 1.7 2.9 2.3-.7a7.3 7.3 0 0 0 1.7 1l.6 2.3h3.2l.6-2.3a7.3 7.3 0 0 0 1.7-1l2.3.7 1.7-2.9-1.7-1.7a7.5 7.5 0 0 0 0-2l1.7-1.7-1.7-2.9-2.3.7a7.3 7.3 0 0 0-1.7-1l-.6-2.3z" transform="translate(0 1)" />
-          <circle cx="12" cy="12" r="2.7" />
-        </svg>
+        <GearIcon />
       </summary>
       <div className="preferences-panel" id="settings-popover">
         <div className="settings-heading">
@@ -61,7 +58,7 @@ export function SettingsMenu({ preferences, levels, onVolume, path }: {
           </button>
         </div>
         <details className="settings-section">
-          <summary>{t('language')}</summary>
+          <summary>{t('language')} <small>{preferences.language === 'system' ? t('system') + ' · ' : ''}{i18n.resolvedLanguage === 'ko' ? '한국어' : 'English'}</small></summary>
           <div className="setting-segments">
             {([{ value: 'system', label: t('system') }, { value: 'ko', label: '한국어' },
               { value: 'en', label: 'English' }] as const).map(({ value, label }) => (
@@ -74,7 +71,7 @@ export function SettingsMenu({ preferences, levels, onVolume, path }: {
           </div>
         </details>
         <details className="settings-section">
-          <summary>{t('theme')}</summary>
+          <summary>{t('theme')} <small>{preferences.theme === 'system' ? t('system') + ' · ' : ''}{t(preferences.dark ? 'dark' : 'light')}</small></summary>
           <div className="setting-segments">
             {(['system', 'light', 'dark'] as const).map(value => (
               <label key={value}>
@@ -92,6 +89,7 @@ export function SettingsMenu({ preferences, levels, onVolume, path }: {
             <span><strong>{t('antialias')}</strong><small>{t('graphicsHelp')}</small></span>
           </label>
         </details>
+        <div className="sound-setting">
         <details className="settings-section settings-sound">
           <summary>{t('sound')}</summary>
           {(['music', 'effects'] as const).map(channel => (
@@ -110,6 +108,11 @@ export function SettingsMenu({ preferences, levels, onVolume, path }: {
             </div>
           ))}
         </details>
+        <button className="sound-switch" type="button" role="switch" aria-label={t('sound')} aria-checked={!preferences.muted}
+          onClick={() => preferences.changeMuted(!preferences.muted)}>
+          <span aria-hidden="true">{t(preferences.muted ? 'disabled' : 'enabled')}</span><i aria-hidden="true" />
+        </button>
+        </div>
       </div>
     </details>
   );

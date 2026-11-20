@@ -7,7 +7,7 @@ import { apiAvailable } from '../network/api.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { games } from './game-catalog.ts';
 import { avatars } from './avatars.ts';
-import { FriendButton } from './friends.tsx';
+import { FriendButton, InviteDialog } from './friends.tsx';
 import type { Friends } from './friends.tsx';
 import { gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
@@ -20,6 +20,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const { t } = useTranslation();
   const [code, setCode] = useState(() => invite.trim().toUpperCase().slice(0, 8));
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'manual'>('idle');
+  const [inviteOpen, setInviteOpen] = useState(false);
   const activeGame = room.matchId ? room.game : 'omok';
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
   const connected = room.state === 'connected';
@@ -78,13 +79,16 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
               </section>
               {room.state && <p className="connection" role="status">{t(connected && room.role === 'guest' && !room.started ? 'waitingStart' : room.state)}</p>}
               <div className="panel-actions">
+                {room.role === 'host' && <button className="button button-secondary" type="button"
+                  disabled={!friends.owner || participants.some(participant => participant.role === 'guest')}
+                  onClick={() => setInviteOpen(true)}>{t('inviteFriend')}</button>}
                 {connected && (room.started || room.role === 'host') && (
                   <button type="button" className="button button-primary" onClick={onPlay}>{t(room.finishedAt ? 'resultTitle' : room.started ? 'resume' : 'start')}</button>
                 )}
                 {(room.state === 'failed' || room.state === 'disconnected') && (
                   <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>
                 )}
-                <button type="button" className="button button-secondary" onClick={() => { room.leave(); setCopyState('idle'); }}>{t('leave')}</button>
+                <button type="button" className="button button-secondary" onClick={() => { room.leave(); setCopyState('idle'); setInviteOpen(false); }}>{t('leave')}</button>
               </div>
             </>
           ) : !apiAvailable ? <p className="muted">{t('roomUnavailable')}</p> : (
@@ -102,6 +106,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
               <RouteLink href={gamePath('omok', 'setup', 'online')} navigate={navigate} className="button button-secondary">{t('newRoom')}</RouteLink>
             </>
           )}
+          {inviteOpen && room.code && room.role === 'host' && <InviteDialog owner={friends.owner} navigate={navigate} invite={room.invite} close={() => setInviteOpen(false)} />}
         </section>
         <aside className="surface setup-summary">
           <img src={games[activeGame].art} alt="" width="880" height="587" />

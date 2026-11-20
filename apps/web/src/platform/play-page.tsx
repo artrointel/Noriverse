@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
-import type { MatchReport } from '../../../../packages/protocol/profile.ts';
+import type { MatchReport, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import { initialAlkkagi, settledStatus } from '../games/alkkagi/rules.ts';
 import type { AlkkagiStatus } from '../games/alkkagi/rules.ts';
 import { boardRules, isBoardGame } from '../games/board-rules.ts';
@@ -42,13 +42,13 @@ function PlayTime({ startedAt }: { startedAt: number }) {
   return <p className="match-time"><span>{t('playTime')}</span><time dateTime={'PT' + seconds + 'S'}>{formatPlayTime(seconds)}</time></p>;
 }
 
-function TurnClock({ deadline, enabled, audible, onExpired }: {
-  deadline: number; enabled: boolean; audible: boolean; onExpired: () => void;
+function TurnClock({ deadline, enabled, audible = false, onExpired, compact = false }: {
+  deadline: number; enabled: boolean; audible?: boolean; onExpired?: () => void; compact?: boolean;
 }) {
   const { t } = useTranslation();
   const [seconds, setSeconds] = useState(() => secondsRemaining(deadline, Date.now()));
   const lastTick = useRef<number>(0);
-  const expire = useEffectEvent(onExpired);
+  const expire = useEffectEvent(() => onExpired?.());
   const tick = useEffectEvent((left: number) => { if (audible) playSound('tick', left); });
   useEffect(() => {
     if (!deadline) return;
@@ -67,6 +67,8 @@ function TurnClock({ deadline, enabled, audible, onExpired }: {
     update();
     return () => window.clearTimeout(timeout);
   }, [deadline]);
+  if (compact) return deadline ? <time className="stage-clock" data-low={seconds <= 3} dateTime={'PT' + seconds + 'S'}>{t('turnSeconds', { count: seconds })}</time>
+    : enabled ? <span className="stage-clock">{t('turnClockPaused')}</span> : null;
   return <p className="match-time turn-clock" data-low={Boolean(deadline && seconds <= 3)}>
     <span>{t('turnLimit')}</span>
     {deadline ? <time dateTime={'PT' + seconds + 'S'}>{t('turnSeconds', { count: seconds })}</time>
@@ -74,12 +76,14 @@ function TurnClock({ deadline, enabled, audible, onExpired }: {
   </p>;
 }
 
-export function PlayPage({ id, dark, antialias, room, power, turnLimit, history, boardRound, allowDoubleThree, move, reset, endLocal, record, navigate }: {
+export function PlayPage({ id, dark, antialias, room, power, turnLimit, history, boardRound, allowDoubleThree, move, reset, endLocal, record, navigate,
+  showTouches, onTouchDisplay, touchStyle }: {
   id: GameId; dark: boolean; antialias: boolean; room?: Room; power: Power; turnLimit: TurnLimit; history: number[];
   boardRound?: ReturnType<typeof createLocalRound> & { firstPlayerColor: Stone };
   allowDoubleThree: boolean; move: (index: number) => void; reset: () => void;
   endLocal: (color: Stone, expiredDeadline?: number) => void;
   record?: (report: MatchReport) => Promise<boolean>; navigate: Navigate;
+  showTouches: boolean; onTouchDisplay: (active: boolean) => void; touchStyle: TouchEffect;
 }) {
   const { t } = useTranslation();
   const [cursor, setCursor] = useState<number | null>(null);
@@ -271,7 +275,9 @@ export function PlayPage({ id, dark, antialias, room, power, turnLimit, history,
         </section>}
         <Suspense fallback={<div className="surface stage-loading" role="status">{t('loading')}</div>}>
           <GameStage key={id === 'physics' ? matchId : id} id={id} matchId={matchId} antialias={antialias} setCursor={setCursor} info={info}
-            infoStatus={status} result={resultPanel} resultVisible={resultVisible}
+            infoStatus={status} timer={<TurnClock key={deadline} deadline={deadline} enabled={Boolean(limit)} compact />}
+            showTouches={showTouches} onTouchDisplay={onTouchDisplay} localTouch={touchStyle === 'soft'}
+            remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch} result={resultPanel} resultVisible={resultVisible}
             onShowResult={() => setClosedResult('')} view={{
             history, cursor, chessSelected: choice?.from, chessTargets, dark, allowDoubleThree, onAlkkagi: updateAlkkagi,
             force: room?.power ?? (power === 'fast' ? 1.35 : 1),

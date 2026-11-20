@@ -1,9 +1,10 @@
 import { DurableObject } from 'cloudflare:workers';
 import { avatarLevel, defaultAvatar, levelFromPlayTime, profileGames, profileIdPattern, readFriendUpdate, readName, readProfilePreferences, readReport } from '../../packages/protocol/profile.ts';
-import type { AvatarId, GameStats, MatchReport, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile } from '../../packages/protocol/profile.ts';
+import type { AvatarId, GameStats, MatchReport, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
+import type { RoomInvite } from '../../packages/protocol/rooms.ts';
 
 const cookieName = 'noriverse_profile';
-type Identity = { id: string; secret: string; name: string; avatar?: AvatarId; favorites?: ProfileGame[]; friends?: string[] };
+type Identity = { id: string; secret: string; name: string; avatar?: AvatarId; favorites?: ProfileGame[]; friends?: string[]; touchEffect?: TouchEffect };
 interface Env { PROFILES: DurableObjectNamespace<ProfileStore> }
 
 function json(data: unknown, status: number, headers?: HeadersInit) {
@@ -77,8 +78,19 @@ export async function profileRequest(request: Request, env: Env, url: URL, exter
       const updated = await store.setFriend(auth.secret, update.id, update.added);
       return json(null, updated ? 200 : 409);
     }
-    const friends = await Promise.all(ids.map(id => env.PROFILES.getByName(id).summary()));
+    const presence = url.searchParams.get('presence') === '1';
+    const friends = await Promise.all(ids.map(id => presence ? env.PROFILES.getByName(id).friendSummary() : env.PROFILES.getByName(id).summary()));
     return json(friends.filter(friend => friend !== null), 200);
+  }
+  if (path === '/api/profiles/me/presence' && request.method === 'POST') {
+    const ticket = store && await store.issuePresenceTicket(auth.secret);
+    return ticket ? json({ ticket }, 201) : json(null, 401);
+  }
+  if (path === '/api/profiles/me/invites/read' && request.method === 'POST') {
+    if (!store) return json(null, 401);
+    const body = await readBody(request);
+    if (!body || typeof body !== 'object' || !('id' in body) || typeof body.id !== 'string' || !profileIdPattern.test(body.id)) return json(null, 400);
+    return json(null, await store.clearInvite(auth.secret, body.id) ? 200 : 401);
   }
   const id = path.match(/^\/api\/profiles\/([^/]+)$/)?.[1];
   if (request.method === 'GET' && id && profileIdPattern.test(id)) {
@@ -99,7 +111,9 @@ export class ProfileStore extends DurableObject<Env> {
         seconds INTEGER NOT NULL, xp INTEGER NOT NULL, playedAt INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS matches_recent ON matches(playedAt DESC);
+      CREATE TABLE IF NOT EXISTS presence_tickets (id TEXT PRIMARY KEY, expires INTEGER NOT NULL);
     `);
+    this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
   async create(identity: Identity) {
@@ -126,6 +140,68 @@ export class ProfileStore extends DurableObject<Env> {
     if (!identity || (secret !== undefined && secret !== identity.secret)) return null;
     const seconds = this.ctx.storage.sql.exec<{ seconds: number }>('SELECT COALESCE(sum(seconds), 0) AS seconds FROM matches').one().seconds;
     return { id: identity.id, name: identity.name, avatar: identity.avatar ?? defaultAvatar, level: levelFromPlayTime(seconds) };
+  }
+
+  async friendSummary() {
+    const profile = await this.summary();
+    return profile ? { ...profile, online: this.ctx.getWebSockets().some(socket => socket.readyState === WebSocket.OPEN) } : null;
+  }
+
+  async issuePresenceTicket(secret: string) {
+    const identity = await this.ctx.storage.get<Identity>('identity');
+    if (identity?.secret !== secret) return null;
+    const ticket = crypto.randomUUID();
+    const now = Date.now();
+    this.ctx.storage.sql.exec('DELETE FROM presence_tickets WHERE expires <= ?', now);
+    this.ctx.storage.sql.exec('INSERT INTO presence_tickets VALUES (?, ?)', ticket, now + 30_000);
+    return ticket;
+  }
+
+  async fetch(request: Request) {
+    const ticket = new URL(request.url).searchParams.get('ticket');
+    if (!ticket || !profileIdPattern.test(ticket) || request.headers.get('Upgrade') !== 'websocket') return new Response(null, { status: 400 });
+    const valid = this.ctx.storage.sql.exec('DELETE FROM presence_tickets WHERE id = ? AND expires > ? RETURNING id', ticket, Date.now()).toArray();
+    if (valid.length === 0) return new Response(null, { status: 401 });
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server);
+    this.sendInvites([server], await this.pendingInvites());
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  webSocketMessage(socket: WebSocket) { socket.close(1008); }
+
+  webSocketClose(socket: WebSocket, code: number) {
+    socket.close(code === 1006 || code === 1005 ? 1000 : code);
+  }
+
+  async receiveInvite(invite: RoomInvite) {
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const invites = await this.pendingInvites();
+      if (invites.some(item => item.code === invite.code && item.sender === invite.sender)) return;
+      const next = [invite, ...invites].slice(0, 12);
+      await this.ctx.storage.put('invites', next);
+      this.sendInvites(this.ctx.getWebSockets(), next);
+    });
+  }
+
+  async clearInvite(secret: string, id: string) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const identity = await this.ctx.storage.get<Identity>('identity');
+      if (identity?.secret !== secret) return false;
+      const next = (await this.pendingInvites()).filter(invite => invite.id !== id);
+      await this.ctx.storage.put('invites', next);
+      this.sendInvites(this.ctx.getWebSockets(), next);
+      return true;
+    });
+  }
+
+  private async pendingInvites() {
+    return (await this.ctx.storage.get<RoomInvite[]>('invites') ?? []).filter(invite => invite.expires > Date.now());
+  }
+
+  private sendInvites(sockets: WebSocket[], invites: RoomInvite[]) {
+    const message = JSON.stringify({ type: 'invites', invites });
+    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN) socket.send(message);
   }
 
   async friendIds(secret: string) {
@@ -172,6 +248,8 @@ export class ProfileStore extends DurableObject<Env> {
       if ('avatar' in update) {
         if (this.publicView(identity).level < avatarLevel[update.avatar]) return null;
         next.avatar = update.avatar;
+      } else if ('touchEffect' in update) {
+        next.touchEffect = update.touchEffect;
       } else {
         const favorites = new Set(identity.favorites);
         if (update.favorite.selected) favorites.add(update.favorite.game);
@@ -203,6 +281,7 @@ export class ProfileStore extends DurableObject<Env> {
       .sort((left, right) => right.playedAt - left.playedAt);
     return {
       id: identity.id, name: identity.name, avatar: identity.avatar ?? defaultAvatar,
+      touchEffect: identity.touchEffect ?? 'soft',
       favorites: identity.favorites ?? [], level: levelFromPlayTime(totalSeconds), xp: totalSeconds, totalSeconds, games, recent,
     };
   }

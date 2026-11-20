@@ -1,7 +1,17 @@
 import { defaultAvatar, profileIdPattern, readName } from '../../../../packages/protocol/profile.ts';
-import type { GameStats, PublicProfile } from '../../../../packages/protocol/profile.ts';
+import type { GameStats, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
 
 const cookiePrefix = 'noriverse_browser_profile=';
+const touchKey = 'noriverse.browser-profile-touch';
+
+function browserTouchEffect(): TouchEffect {
+  try { if (localStorage.getItem(touchKey) === 'none') return 'none'; } catch { /* Optional storage. */ }
+  return 'soft';
+}
+
+export function saveBrowserTouchEffect(touchEffect: TouchEffect) {
+  localStorage.setItem(touchKey, touchEffect);
+}
 
 function readCookie() {
   return document.cookie.split(';').map(part => part.trim())
@@ -11,7 +21,7 @@ function readCookie() {
 function browserProfile(id: string, name: string): PublicProfile {
   const emptyStats = (): GameStats => ({ seconds: 0, wins: 0, losses: 0, draws: 0, sessions: 0 });
   return {
-    id, name, avatar: defaultAvatar, favorites: [], level: 1, xp: 0, totalSeconds: 0,
+    id, name, avatar: defaultAvatar, favorites: [], touchEffect: browserTouchEffect(), level: 1, xp: 0, totalSeconds: 0,
     games: { omok: emptyStats(), physics: emptyStats(), othello: emptyStats(), chess: emptyStats() }, recent: [],
   };
 }

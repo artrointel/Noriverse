@@ -1,20 +1,31 @@
-import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent, ReactNode } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import type { KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { touchResolution } from '../../../../packages/protocol/rooms.ts';
+import type { TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import type { GameId, GameView } from '../games/scenes.ts';
 import { boardSize as omokSize } from '../games/omok/rules.ts';
 import { othelloSize, othelloState } from '../games/othello/rules.ts';
 import { chessSize } from '../games/chess/rules.ts';
+import { TouchBurst } from './touch-burst.tsx';
+import { GearIcon } from './gear-icon.tsx';
 
-export function GameStage({ id, matchId, antialias, view, setCursor, info, infoStatus, result, resultVisible, onShowResult }: {
+export function GameStage({ id, matchId, antialias, view, setCursor, info, infoStatus, timer, result, resultVisible, onShowResult,
+  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
-  info?: ReactNode; infoStatus?: string; result?: ReactNode;
+  info?: ReactNode; infoStatus?: string; timer?: ReactNode; result?: ReactNode;
   resultVisible: boolean; onShowResult: () => void;
+  showTouches: boolean; onTouchDisplay: (active: boolean) => void; localTouch: boolean;
+  remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
 }) {
   const { t } = useTranslation();
   const shell = useRef<HTMLDivElement>(null);
   const mount = useRef<HTMLDivElement>(null);
   const resultButton = useRef<HTMLButtonElement>(null);
+  const gameSettings = useRef<HTMLDetailsElement>(null);
+  const gameInfo = useRef<HTMLDetailsElement>(null);
+  const burstId = useRef(0);
+  const [bursts, setBursts] = useState<{ id: number; x: number; y: number; remote: boolean }[]>([]);
   const current = useRef(view);
   const [graphics, setGraphics] = useState({ matchId, antialias });
   if (graphics.matchId !== matchId) setGraphics({ matchId, antialias });
@@ -26,6 +37,31 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
   const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : 'board';
 
   useEffect(() => { current.current = view; }, [view]);
+
+  function addBurst(point: TouchPoint, remote: boolean) {
+    const bounds = mount.current?.getBoundingClientRect();
+    const canvas = mount.current?.querySelector('canvas')?.getBoundingClientRect();
+    if (!showTouches || !bounds || !canvas) return;
+    const burst = { id: ++burstId.current, remote,
+      x: canvas.left - bounds.left + canvas.width * point.x / touchResolution,
+      y: canvas.top - bounds.top + canvas.height * point.y / touchResolution };
+    setBursts(previous => [...previous.slice(-15), burst]);
+  }
+
+  const displayRemoteTouch = useEffectEvent((point: TouchPoint) => addBurst(point, true));
+  useEffect(() => { if (remoteTouch) displayRemoteTouch(remoteTouch); }, [remoteTouch]);
+  useEffect(() => { setBursts([]); }, [showTouches, matchId]);
+
+  function handleTouch(event: PointerEvent<HTMLDivElement>) {
+    if (!localTouch || status !== 'ready' || view.finished || !event.isPrimary || event.button !== 0
+      || !(event.target instanceof HTMLCanvasElement)) return;
+    const bounds = event.target.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const coordinate = (value: number) => Math.max(0, Math.min(touchResolution, Math.round(value * touchResolution)));
+    const point = { x: coordinate((event.clientX - bounds.left) / bounds.width), y: coordinate((event.clientY - bounds.top) / bounds.height) };
+    addBurst(point, false);
+    onTouch?.(point);
+  }
 
   const resultHidden = Boolean(result && !resultVisible);
   useEffect(() => {
@@ -57,9 +93,14 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
       if (event.key === 'Escape' && !event.defaultPrevented) setExpanded(previous => previous === 'page' ? null : previous);
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
+    function closeSettings(event: globalThis.PointerEvent) {
+      if (gameSettings.current?.open && event.target instanceof Node && !gameSettings.current.contains(event.target)) gameSettings.current.open = false;
+    }
+    document.addEventListener('pointerdown', closeSettings);
     window.addEventListener('keydown', onEscape);
     return () => {
       document.removeEventListener('fullscreenchange', onFullscreenChange);
+      document.removeEventListener('pointerdown', closeSettings);
       window.removeEventListener('keydown', onEscape);
     };
   }, []);
@@ -114,19 +155,16 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
       <div className="stage-bar">
         <span>{t(boardLabel)}</span>
         <div className="stage-actions">
-          {info && <details className="stage-info" onKeyDown={event => {
+          {info && <details className="stage-info" ref={gameInfo} onKeyDown={event => {
             if (event.key === 'Escape' && event.currentTarget.open) {
               event.preventDefault();
               event.currentTarget.open = false;
               event.currentTarget.querySelector('summary')?.focus();
             }
           }}>
-            <summary className="button button-secondary">
-              <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6">
-                <circle cx="10" cy="10" r="7.5" /><path d="M10 9v5m0-8v1" />
-              </svg>
-              <span>{t('gameInfo')}</span>
+            <summary className="button button-secondary" aria-label={t('gameInfo')}>
               {infoStatus && <span className="stage-turn" aria-live="polite">{infoStatus}</span>}
+              {timer}
             </summary>
             <div className="surface match-panel">{info}</div>
           </details>}
@@ -134,6 +172,20 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
           <button className="button button-secondary" type="button" onClick={() => void toggleFullscreen()}>
             {t(expanded ? 'restore' : 'fullscreen')}
           </button>
+          <details className="stage-settings" ref={gameSettings} onKeyDown={event => {
+            if (event.key === 'Escape' && event.currentTarget.open) {
+              event.preventDefault();
+              event.currentTarget.open = false;
+              event.currentTarget.querySelector('summary')?.focus();
+            }
+          }}>
+            <summary className="button button-secondary" aria-label={t('inGameSettings')} onClick={() => {
+              if (gameInfo.current?.open) gameInfo.current.open = false;
+            }}><GearIcon /></summary>
+            <div className="surface stage-settings-panel">
+              <label><input type="checkbox" role="switch" checked={showTouches} onChange={event => onTouchDisplay(event.target.checked)} />{t('touchEffects')}</label>
+            </div>
+          </details>
         </div>
       </div>
       <div className="stage-field">
@@ -144,8 +196,12 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
           aria-label={t(boardLabel)}
           aria-describedby="game-help"
           onBlur={() => setCursor(null)}
+          onPointerDownCapture={handleTouch}
           onKeyDown={id === 'physics' ? undefined : onKeyDown}
-        />
+        >
+          <div className="touch-layer" aria-hidden="true">{bursts.map(burst => <TouchBurst key={burst.id} remote={burst.remote}
+            style={{ left: burst.x, top: burst.y }} onEnd={() => setBursts(current => current.filter(item => item.id !== burst.id))} />)}</div>
+        </div>
         {result && <div className="result-layer" hidden={!resultVisible}>{result}</div>}
       </div>
       {status !== 'ready' && (
