@@ -1,17 +1,19 @@
-export const sichuanSize = 8;
-export const sichuanMotifs = 16;
-const tileCount = sichuanSize ** 2;
+import { defaultSichuanSettings, motifCount, resolveSichuanSettings } from './options.ts';
+import type { SichuanSettings } from './options.ts';
+
+export const obstacle = -1;
 export type Tile = number | null;
 export type TilePoint = readonly [x: number, y: number];
 type Pair = readonly [first: number, second: number];
 
-export const tilePoint = (index: number): TilePoint => [index % sichuanSize, Math.floor(index / sichuanSize)];
+export const isMatchTile = (tile: Tile | undefined): tile is number => typeof tile === 'number' && tile >= 0;
+export const tilePoint = (index: number, size: number): TilePoint => [index % size, Math.floor(index / size)];
 const samePoint = (a: TilePoint, b: TilePoint) => a[0] === b[0] && a[1] === b[1];
 const distance = (a: TilePoint, b: TilePoint) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]);
 
-function pathBetween(board: readonly Tile[], first: number, second: number) {
-  const start = tilePoint(first), end = tilePoint(second);
-  const vacant = ([x, y]: TilePoint) => x < 0 || y < 0 || x >= sichuanSize || y >= sichuanSize || board[y * sichuanSize + x] === null;
+function pathBetween(board: readonly Tile[], first: number, second: number, size: number) {
+  const start = tilePoint(first, size), end = tilePoint(second, size);
+  const vacant = ([x, y]: TilePoint) => x < 0 || y < 0 || x >= size || y >= size || board[y * size + x] === null;
   function segmentClear(a: TilePoint, b: TilePoint) {
     if (a[0] !== b[0] && a[1] !== b[1]) return false;
     const dx = Math.sign(b[0] - a[0]), dy = Math.sign(b[1] - a[1]);
@@ -26,7 +28,7 @@ function pathBetween(board: readonly Tile[], first: number, second: number) {
   }
   let shortest: TilePoint[] | undefined;
   let length = Infinity;
-  for (let line = -1; line <= sichuanSize; line++) {
+  for (let line = -1; line <= size; line++) {
     for (const [a, b] of [[[line, start[1]], [line, end[1]]], [[start[0], line], [end[0], line]]] as const) {
       if (samePoint(a, start) || samePoint(b, end) || samePoint(a, b) || !vacant(a) || !vacant(b)) continue;
       const cost = distance(start, a) + distance(a, b) + distance(b, end);
@@ -39,17 +41,23 @@ function pathBetween(board: readonly Tile[], first: number, second: number) {
 }
 
 export function connectTiles(board: readonly Tile[], first: number, second: number) {
-  if (first === second || board[first] == null || board[first] !== board[second]) return;
-  return pathBetween(board, first, second);
+  if (first === second || !isMatchTile(board[first]) || board[first] !== board[second]) return;
+  return pathBetween(board, first, second, Math.sqrt(board.length));
 }
 
-export function findTilePair(board: readonly Tile[]): Pair | undefined {
+export function availableTileMatches(board: readonly Tile[]) {
+  const removable = new Set<number>();
+  let pair: Pair | undefined;
   for (let first = 0; first < board.length; first++) {
-    if (board[first] === null) continue;
+    if (!isMatchTile(board[first])) continue;
     for (let second = first + 1; second < board.length; second++) {
-      if (connectTiles(board, first, second)) return [first, second];
+      if (!connectTiles(board, first, second)) continue;
+      pair ??= [first, second];
+      removable.add(first);
+      removable.add(second);
     }
   }
+  return { pair, count: removable.size };
 }
 
 function shuffle<T>(items: T[], random: () => number) {
@@ -60,30 +68,95 @@ function shuffle<T>(items: T[], random: () => number) {
   return items;
 }
 
-export function shuffleTiles(board: readonly Tile[], random = Math.random): Tile[] {
-  const occupied = shuffle(board.flatMap((tile, index) => tile === null ? [] : [index]), random);
-  const motifPairs = shuffle(board.filter(tile => tile !== null).sort((a, b) => a - b).filter((_, index) => index % 2 === 0), random);
-  const mask = board.map(tile => tile === null ? null : 0);
-  const next: Tile[] = board.map(() => null);
-  // Assign each matching pair in an order that permits all pairs to be removed.
-  for (const motif of motifPairs) {
-    let pair: Pair | undefined;
-    for (let first = 0; first < occupied.length && !pair; first++) {
-      const second = occupied.findIndex((cell, index) => index > first && pathBetween(mask, occupied[first], cell));
-      if (second !== -1) pair = [first, second];
-    }
-    if (!pair) throw new Error('An occupied tile layout must have a connecting pair');
-    const [first, second] = pair;
-    for (const index of [occupied[first], occupied[second]]) {
-      next[index] = motif;
-      mask[index] = null;
-    }
-    occupied.splice(second, 1);
-    occupied.splice(first, 1);
+function pairMotifs(board: readonly Tile[], pairs: readonly Pair[], motifs: number[], requireChanges: boolean) {
+  const next: Tile[] = board.map(tile => tile === obstacle ? obstacle : null);
+  if (!requireChanges) {
+    pairs.forEach(([first, second], index) => { next[first] = next[second] = motifs[index]; });
+    return next;
   }
+
+  // Match each removable slot to a motif that changes both of its cells.
+  const slotForMotif = motifs.map(() => -1);
+  function assign(slot: number, seen: Set<number>): boolean {
+    const [first, second] = pairs[slot];
+    return motifs.some((tile, index) => {
+      if (tile === board[first] || tile === board[second] || seen.has(index)) return false;
+      seen.add(index);
+      const previous = slotForMotif[index];
+      if (previous !== -1 && !assign(previous, seen)) return false;
+      slotForMotif[index] = slot;
+      return true;
+    });
+  }
+  if (!pairs.every((_, slot) => assign(slot, new Set()))) return;
+  slotForMotif.forEach((slot, index) => {
+    const [first, second] = pairs[slot];
+    next[first] = next[second] = motifs[index];
+  });
   return next;
 }
 
-export function createSichuanBoard(random = Math.random) {
-  return shuffleTiles(Array.from({ length: tileCount }, (_, index) => index % sichuanMotifs), random);
+function packPairs(board: readonly Tile[], motifs: number[], random: () => number, preferChanges: boolean) {
+  const size = Math.sqrt(board.length);
+  const occupied = shuffle(board.flatMap((tile, index) => isMatchTile(tile) ? [index] : []), random);
+  const mask = [...board];
+  const pairs: Pair[] = [];
+  // Assign each matching pair in an order that permits all pairs to be removed.
+  while (occupied.length > 0) {
+    let pair: Pair | undefined;
+    for (let first = 0; first < occupied.length && !pair; first++) {
+      const second = occupied.findIndex((cell, index) => index > first && pathBetween(mask, occupied[first], cell, size));
+      if (second !== -1) pair = [first, second];
+    }
+    if (!pair) return;
+    const [first, second] = pair;
+    pairs.push([occupied[first], occupied[second]]);
+    mask[occupied[first]] = mask[occupied[second]] = null;
+    occupied.splice(second, 1);
+    occupied.splice(first, 1);
+  }
+  return pairMotifs(board, pairs, motifs, preferChanges);
+}
+
+function openDominoes(board: readonly Tile[]) {
+  return board.flatMap((tile, index): Pair[] => index % 2 === 0 && tile !== obstacle && board[index + 1] !== obstacle
+    ? [[index, index + 1]] : []);
+}
+
+function bestRearrangement(board: readonly Tile[], motifs: number[], random: () => number, preferChanges = false) {
+  for (let attempt = 0; attempt < (preferChanges ? 7 : 3); attempt++) {
+    const arranged = packPairs(board, shuffle([...motifs], random), random, preferChanges);
+    if (arranged) return arranged;
+  }
+
+  // Obstacles are placed in whole dominoes, leaving enough adjacent pairs for a safe reshuffle.
+  const positions = shuffle(openDominoes(board), random).sort(([a, b], [c, d]) =>
+    Number(isMatchTile(board[a])) + Number(isMatchTile(board[b])) - Number(isMatchTile(board[c])) - Number(isMatchTile(board[d])))
+    .slice(0, motifs.length);
+  if (positions.length < motifs.length) return packPairs(board, motifs, random, false) ?? [...board];
+  const shuffled = shuffle([...motifs], random);
+  return pairMotifs(board, positions, shuffled, preferChanges) ?? pairMotifs(board, positions, shuffled, false) ?? [...board];
+}
+
+export function shuffleTiles(board: readonly Tile[], random = Math.random) {
+  const motifs = board.filter(isMatchTile).sort((a, b) => a - b).filter((_, index) => index % 2 === 0);
+  return bestRearrangement(board, motifs, random, true);
+}
+
+export function createSichuanBoard(settings = resolveSichuanSettings(defaultSichuanSettings), random = Math.random) {
+  const { size, density, theme, obstacles } = settings;
+  const cellCount = size ** 2;
+  const board: Tile[] = Array(cellCount).fill(null);
+  const slots = shuffle(openDominoes(board), random);
+  const blockPairs = obstacles ? Math.round(cellCount * .03) : 0;
+  for (const [first, second] of slots.splice(0, blockPairs)) board[first] = board[second] = obstacle;
+  const pairs = Math.min(slots.length, Math.round(cellCount * density / 200));
+  const positions = shuffle(slots.flat(), random).slice(0, pairs * 2);
+  for (const index of positions) board[index] = 0;
+  const motifs = Array.from({ length: pairs }, (_, index) => index % motifCount(theme));
+  return bestRearrangement(board, motifs, random);
+}
+
+export function nextSichuanCombo(previous: { at: number; count: number } | undefined, at: number) {
+  return { at, count: previous && at - previous.at <= 1000 ? previous.count + 1 : 1 };
 }

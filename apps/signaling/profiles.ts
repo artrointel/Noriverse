@@ -1,12 +1,12 @@
 import { DurableObject } from 'cloudflare:workers';
 import { avatarLevel, defaultAvatar, levelFromPlayTime, profileGames, profileIdPattern, readFriendUpdate, readName, readProfilePreferences, readReport } from '../../packages/protocol/profile.ts';
-import type { AvatarId, FriendAction, GameStats, MatchReport, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
+import type { AvatarId, FriendAction, GameStats, MatchReport, OwnProfile, PresenceMode, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
 import type { RoomInvite } from '../../packages/protocol/rooms.ts';
 import type { Room } from './worker.ts';
 import type { FriendGraph } from './friend-graph.ts';
 
 const cookieName = 'noriverse_profile';
-type Identity = { id: string; secret: string; name: string; avatar?: AvatarId; favorites?: ProfileGame[]; friends?: string[]; touchEffect?: TouchEffect };
+type Identity = { id: string; secret: string; name: string; avatar?: AvatarId; favorites?: ProfileGame[]; friends?: string[]; touchEffect?: TouchEffect; presence?: PresenceMode };
 interface Env { PROFILES: DurableObjectNamespace<ProfileStore>; FRIENDS: DurableObjectNamespace<FriendGraph>; ROOMS: DurableObjectNamespace<Room> }
 const presenceLease = 25_000;
 const friendActions = ['request', 'accept', 'decline', 'remove', 'cancel'] as const satisfies readonly FriendAction[];
@@ -149,15 +149,15 @@ export class ProfileStore extends DurableObject<Env> {
   async create(identity: Identity) {
     return this.ctx.blockConcurrencyWhile(async () => {
       const existing = await this.ctx.storage.get<Identity>('identity');
-      if (existing) return this.publicView(existing);
+      if (existing) return this.ownView(existing);
       await this.ctx.storage.put('identity', identity);
-      return this.publicView(identity);
+      return this.ownView(identity);
     });
   }
 
   async readOwn(secret: string) {
     const identity = await this.ctx.storage.get<Identity>('identity');
-    return identity?.secret === secret ? this.publicView(identity) : null;
+    return identity?.secret === secret ? this.ownView(identity) : null;
   }
 
   async readPublic() {
@@ -168,13 +168,19 @@ export class ProfileStore extends DurableObject<Env> {
   async summary(secret?: string): Promise<ProfileSummary | null> {
     const identity = await this.ctx.storage.get<Identity>('identity');
     if (!identity || (secret !== undefined && secret !== identity.secret)) return null;
+    return this.profileSummary(identity);
+  }
+
+  private profileSummary(identity: Identity): ProfileSummary {
     const seconds = this.ctx.storage.sql.exec<{ seconds: number }>('SELECT COALESCE(sum(seconds), 0) AS seconds FROM matches').one().seconds;
     return { id: identity.id, name: identity.name, avatar: identity.avatar ?? defaultAvatar, level: levelFromPlayTime(seconds) };
   }
 
   async friendSummary(viewer: string) {
-    const profile = await this.summary();
-    if (!profile) return null;
+    const identity = await this.ctx.storage.get<Identity>('identity');
+    if (!identity) return null;
+    const profile = this.profileSummary(identity);
+    if (identity.presence === 'offline') return { ...profile, online: false };
     const online = Boolean(this.presenceUntil());
     const code = await this.ctx.storage.get<string>('currentRoom');
     const room = code && await this.env.ROOMS.getByName(code).friendRoom(profile.id, viewer);
@@ -210,7 +216,10 @@ export class ProfileStore extends DurableObject<Env> {
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ openedAt: Date.now() });
-    this.sendInvites([server], await this.pendingInvites());
+    const identity = await this.ctx.storage.get<Identity>('identity');
+    const mode = identity?.presence ?? 'online';
+    this.sendPresenceMode([server], mode);
+    this.sendInvites([server], mode === 'offline' ? [] : await this.pendingInvites());
     if (!wasOnline || !await this.ctx.storage.getAlarm()) await this.ctx.storage.setAlarm(Date.now() + presenceLease);
     if (!wasOnline) this.notifyPresence();
     return new Response(null, { status: 101, webSocket: client });
@@ -252,17 +261,20 @@ export class ProfileStore extends DurableObject<Env> {
   private notifyPresence() {
     this.ctx.waitUntil((async () => {
       const identity = await this.ctx.storage.get<Identity>('identity');
-      if (identity) await notifyFriends(this.env, identity.id);
+      if (identity && identity.presence !== 'offline') await notifyFriends(this.env, identity.id);
     })().catch(() => {}));
   }
 
   async receiveInvite(invite: RoomInvite) {
-    await this.ctx.blockConcurrencyWhile(async () => {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const identity = await this.ctx.storage.get<Identity>('identity');
+      if (!identity || identity.presence === 'offline') return false;
       const invites = await this.pendingInvites();
-      if (invites.some(item => item.code === invite.code && item.sender === invite.sender)) return;
+      if (invites.some(item => item.code === invite.code && item.sender === invite.sender)) return true;
       const next = [invite, ...invites].slice(0, 12);
       await this.ctx.storage.put('invites', next);
       this.sendInvites(this.ctx.getWebSockets(), next);
+      return true;
     });
   }
 
@@ -272,7 +284,7 @@ export class ProfileStore extends DurableObject<Env> {
       if (identity?.secret !== secret) return false;
       const next = (await this.pendingInvites()).filter(invite => invite.id !== id);
       await this.ctx.storage.put('invites', next);
-      this.sendInvites(this.ctx.getWebSockets(), next);
+      this.sendInvites(this.ctx.getWebSockets(), identity.presence === 'offline' ? [] : next);
       return true;
     });
   }
@@ -283,6 +295,11 @@ export class ProfileStore extends DurableObject<Env> {
 
   private sendInvites(sockets: WebSocket[], invites: RoomInvite[]) {
     const message = JSON.stringify({ type: 'invites', invites });
+    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN) socket.send(message);
+  }
+
+  private sendPresenceMode(sockets: WebSocket[], presence: PresenceMode) {
+    const message = JSON.stringify({ type: 'presence-mode', presence });
     for (const socket of sockets) if (socket.readyState === WebSocket.OPEN) socket.send(message);
   }
 
@@ -301,7 +318,7 @@ export class ProfileStore extends DurableObject<Env> {
       if (identity?.secret !== secret) return null;
       const next = { ...identity, name };
       await this.ctx.storage.put('identity', next);
-      return this.publicView(next);
+      return this.ownView(next);
     });
   }
 
@@ -310,7 +327,7 @@ export class ProfileStore extends DurableObject<Env> {
     if (identity?.secret !== secret) return null;
     this.ctx.storage.sql.exec('INSERT OR IGNORE INTO matches VALUES (?, ?, ?, ?, ?, ?, ?)',
       report.id, report.game, report.mode, report.outcome, report.seconds, report.seconds, Date.now());
-    return this.publicView(identity);
+    return this.ownView(identity);
   }
 
   async preferences(secret: string, update: ProfilePreferences) {
@@ -323,6 +340,8 @@ export class ProfileStore extends DurableObject<Env> {
         next.avatar = update.avatar;
       } else if ('touchEffect' in update) {
         next.touchEffect = update.touchEffect;
+      } else if ('presence' in update) {
+        next.presence = update.presence;
       } else {
         const favorites = new Set(identity.favorites);
         if (update.favorite.selected) favorites.add(update.favorite.game);
@@ -330,8 +349,18 @@ export class ProfileStore extends DurableObject<Env> {
         next.favorites = [...favorites];
       }
       await this.ctx.storage.put('identity', next);
-      return this.publicView(next);
+      if ('presence' in update && update.presence !== (identity.presence ?? 'online')) {
+        const sockets = this.ctx.getWebSockets();
+        this.sendPresenceMode(sockets, update.presence);
+        this.sendInvites(sockets, update.presence === 'offline' ? [] : await this.pendingInvites());
+        this.ctx.waitUntil(notifyFriends(this.env, identity.id).catch(() => {}));
+      }
+      return this.ownView(next);
     });
+  }
+
+  private ownView(identity: Identity): OwnProfile {
+    return { ...this.publicView(identity), presence: identity.presence ?? 'online' };
   }
 
   private publicView(identity: Identity): PublicProfile {

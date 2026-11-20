@@ -19,11 +19,14 @@ import type { TimeoutChoice, TurnLimit } from './games/turn-clock.ts';
 import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setMusicScene } from './platform/audio.ts';
 import type { AudioLevels } from './platform/audio.ts';
 import { CatalogPage, GameDetail, GameSetup } from './platform/catalog-pages.tsx';
+import { games } from './platform/game-catalog.ts';
 import type { Power } from './platform/catalog-pages.tsx';
 import { gamePath, RouteLink, useNavigation } from './platform/navigation.tsx';
 import type { GameMode } from './platform/navigation.tsx';
 import { createLocalRound, PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
+import { SichuanSettingsFields } from './platform/sichuan-settings.tsx';
+import { defaultSichuanSettings } from './games/sichuan/options.ts';
 import { RoomPage } from './platform/room-page.tsx';
 import { FriendsPage, useFriends } from './platform/friends.tsx';
 import { InvitationToasts, useInvitations } from './platform/invitations.tsx';
@@ -43,10 +46,14 @@ function App() {
   const profile = useProfile();
   const room = useRoomBoard(profile.profile);
   const friends = useFriends(profile.profile?.id, route.page === 'friends');
-  const invitations = useInvitations(profile.profile?.id);
+  const presence = profile.profile?.presence ?? 'online';
+  const invitations = useInvitations(profile.profile?.id, presence, profile.syncPresence);
+  const playGame = route.page === 'play' && (!route.online || (room.code && room.started && room.game === route.id
+    && room.state !== 'closed' && room.state !== 'missing')) ? route.id : undefined;
   const [localBoards, setLocalBoards] = useState(() => ({ omok: createLocalBoard(), othello: createLocalBoard(), chess: createLocalBoard() }));
   const [power, setPower] = useState<Power>('standard');
   const [allowDoubleThree, setAllowDoubleThree] = useState(true);
+  const [sichuanSettings, setSichuanSettings] = useState(defaultSichuanSettings);
   const [overline, setOverline] = useState<OmokOverline>(defaultOmokOverline);
   const [turnLimit, setTurnLimit] = useState<TurnLimit>(0);
   const [nameDismissed, setNameDismissed] = useState(() => Boolean(room.guestRoom));
@@ -243,26 +250,27 @@ function App() {
         return <GameSetup id={route.id} online={route.online} power={power} onPower={setPower}
           turnLimit={turnLimit} onTurnLimit={setTurnLimit}
           allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree} overline={overline} onOverline={setOverline}
+          extraSettings={route.id === 'sichuan' && <SichuanSettingsFields value={sichuanSettings} change={setSichuanSettings} />}
           activeGame={room.code && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full' ? room.game : undefined}
           onStart={startGame} navigate={navigate} />;
       case 'room':
         return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
       case 'play': {
         const id = route.id;
-        if (id === 'sichuan') return <SichuanPage dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
+        if (id === 'sichuan') return <SichuanPage settings={sichuanSettings} dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
           onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
           onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'} navigate={navigate}
           record={apiAvailable && profile.profile ? profile.record : undefined} />;
         const board = isBoardGame(id) ? id : undefined;
         const online = route.online;
         const local = board ? localBoards[board] : undefined;
-        if (online && (!room.code || !room.started || room.game !== id || room.state === 'closed' || room.state === 'missing')) {
+        if (online && playGame !== id) {
           return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite="" navigate={navigate} onPlay={enterRoomGame} />;
         }
         return <PlayPage id={id} dark={preferences.dark} antialias={preferences.antialias} power={power} turnLimit={turnLimit} navigate={navigate}
           resolution={preferences.resolution} onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias}
           showTouches={preferences.showTouches} onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
-          room={online ? room : undefined} history={online ? room.history : local?.history ?? []}
+          room={online ? room : undefined} ownProfile={profile.profile} history={online ? room.history : local?.history ?? []}
           boardRound={online ? undefined : local}
           allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true}
           overline={online ? room.overline : local?.overline ?? defaultOmokOverline} record={apiAvailable && profile.profile ? profile.record : undefined}
@@ -302,11 +310,15 @@ function App() {
               <span className="header-join-label">{t(room.code ? 'activeRoom' : 'joinRoom')}</span>
             </RouteLink>
             <ProfileNav profile={profile.profile} navigate={navigate} />
-            <SettingsMenu preferences={preferences} levels={audioLevels} onVolume={changeVolume} path={path} />
+            <SettingsMenu preferences={preferences} levels={audioLevels} onVolume={changeVolume} path={path}
+              presence={apiAvailable && profile.profile ? { mode: presence, change: mode => profile.setPreferences({ presence: mode }) } : undefined} />
           </div>
         </div>
       </header>
-      <main id="main" tabIndex={-1} className="route-frame"><div className="route-content" key={path}>{page}</div></main>
+      <main id="main" tabIndex={-1} className="route-frame"><div className="route-content" key={path} data-play-game={playGame}>
+        {playGame && <div className="game-backdrop" aria-hidden="true"><img src={games[playGame].art} alt="" decoding="async" /></div>}
+        {page}
+      </div></main>
       <footer className="site-footer">
         <div className="site-width footer-row">
           <div className="footer-identity">
@@ -325,7 +337,7 @@ function App() {
         if (room.code !== invite.code) room.join(invite.code);
         navigate('/room?room=' + invite.code);
       }} />
-      {route.page !== 'friends' && friends.incoming.length > 0 && <div className="friend-request-toast surface" role="status">
+      {presence === 'online' && route.page !== 'friends' && friends.incoming.length > 0 && <div className="friend-request-toast surface" role="status">
         <RouteLink href="/friends" navigate={navigate}>{t('reviewFriendRequests', { count: friends.incoming.length })}</RouteLink>
       </div>}
       {(editName || (profile.status === 'missing' && !nameDismissed)) && (

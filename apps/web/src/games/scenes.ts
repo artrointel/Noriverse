@@ -9,6 +9,7 @@ import { othelloScene } from './othello/scene.ts';
 import { chessScene } from './chess/scene.ts';
 import { sichuanScene } from './sichuan/scene.ts';
 import type { Tile, TilePoint } from './sichuan/rules.ts';
+import type { SichuanSize, SichuanTheme } from './sichuan/options.ts';
 
 export type GameId = ProfileGame;
 export interface GameView {
@@ -25,7 +26,8 @@ export interface GameView {
   move: (index: number, touch?: boolean) => void;
   onAlkkagi: (status: AlkkagiStatus) => void;
   onlineFlick?: FlickRound & { host: boolean; send: (shot: Flick) => void; settle: (layout: StonePosition[], revision: number) => void };
-  sichuan?: { board: readonly Tile[]; selected?: number; hint?: readonly [number, number]; path?: readonly TilePoint[] };
+  sichuan?: { board: readonly Tile[]; size: SichuanSize; theme: SichuanTheme; selected?: number;
+    hint?: readonly [number, number]; path?: readonly TilePoint[]; flip?: 'backs' | 'faces' };
 }
 
 export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, initialSize: number, current: () => GameView, onReady: (size: number) => void) {

@@ -12,6 +12,13 @@ test('only supported avatars and explicit favorite updates are accepted', () => 
     { favorite: { game: 'omok', selected: false } });
 });
 
+test('manual presence is an explicit private profile preference', () => {
+  assert.deepEqual(readProfilePreferences({ presence: 'offline' }), { presence: 'offline' });
+  assert.deepEqual(readProfilePreferences({ presence: 'online' }), { presence: 'online' });
+  assert.equal(readProfilePreferences({ presence: 'automatic' }), undefined);
+  assert.equal(readProfilePreferences({ presence: false }), undefined);
+});
+
 test('generated names use the selected language and differ from the preceding roll', () => {
   const korean = randomPlayerName('ko-KR');
   assert.match(korean, /^[가-힣]+ [가-힣]+$/u);

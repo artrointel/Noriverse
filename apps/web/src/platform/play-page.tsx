@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
-import type { MatchReport, TouchEffect } from '../../../../packages/protocol/profile.ts';
+import type { MatchReport, ProfileSummary, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import { initialAlkkagi, settledStatus } from '../games/alkkagi/rules.ts';
 import type { AlkkagiStatus } from '../games/alkkagi/rules.ts';
 import { boardRules, isBoardGame } from '../games/board-rules.ts';
@@ -25,6 +25,7 @@ import { TimeoutDecision } from './timeout-decision.tsx';
 import { ChessPromotion } from './chess-promotion.tsx';
 import { ChessLosses } from './chess-losses.tsx';
 import { formatPlayTime } from './profiles.tsx';
+import { avatars } from './avatars.ts';
 
 const GameStage = lazy(() => import('./game-stage.tsx').then(module => ({ default: module.GameStage })));
 type Room = ReturnType<typeof useRoomBoard>;
@@ -80,9 +81,9 @@ function TurnClock({ deadline, enabled, audible = false, onExpired, compact = fa
   </p>;
 }
 
-export function PlayPage({ id, dark, antialias, resolution, onResolution, onAntialias, room, power, turnLimit, history, boardRound, allowDoubleThree, overline, move, reset, endLocal, decideLocal, record, navigate,
+export function PlayPage({ id, dark, antialias, resolution, onResolution, onAntialias, room, ownProfile, power, turnLimit, history, boardRound, allowDoubleThree, overline, move, reset, endLocal, decideLocal, record, navigate,
   showTouches, onTouchDisplay, touchStyle }: {
-  id: GameId; dark: boolean; antialias: boolean; room?: Room; power: Power; turnLimit: TurnLimit; history: number[];
+  id: GameId; dark: boolean; antialias: boolean; room?: Room; ownProfile?: ProfileSummary; power: Power; turnLimit: TurnLimit; history: number[];
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   boardRound?: ReturnType<typeof createLocalRound> & { firstPlayerColor: Stone };
   allowDoubleThree: boolean; overline: OmokOverline; move: (index: number) => void; reset: () => void;
@@ -260,20 +261,29 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
       else setLocalRound(current => current.finishedAt || current.deadline !== deadline ? current
         : { ...current, timeoutPending: { color: turn, at: deadline }, deadline: 0 });
     }} />}
-    <div className="seats">
-      {([1, 2] as const).map((stone, index) => (
-        <div className="seat" key={stone} data-active={!outcome && !busy && turn === stone}>
-          <span className={'stone stone-' + (sideLabel(id, stone) === 'black' ? 0 : 1)} aria-hidden="true" />
-          <div>
-            <strong>{t(sideLabel(id, stone))}</strong>
-            {room ? <small>{t(stone === playerColor ? 'me' : 'guest')}</small>
-              : isOmok && <small>{t(stone === firstPlayerColor ? 'playerOne' : 'playerTwo')}</small>}
-            {othello && <small>{t('discCount', { count: othello.scores[index] })}</small>}
-            {!isBoard && <small>{t('remaining', { count: flickStatus.remaining[index] })}</small>}
-          </div>
-        </div>
-      ))}
-    </div>
+    <section aria-label={room ? t('participants') : undefined}>
+      {room && <h2 className="match-roster-label">{t('participants')}</h2>}
+      <ul className={room ? 'seats match-roster' : 'seats'}>
+        {([1, 2] as const).map((stone, index) => {
+          const role = stone === room?.hostColor ? 'host' : 'guest';
+          const ownSeat = room?.playerColor === stone;
+          const participant = room?.participants.find(candidate => candidate.role === role);
+          const profile = ownSeat ? ownProfile ?? participant?.profile : participant?.profile;
+          const side = t(sideLabel(id, stone));
+          return <li className="seat" key={stone} data-active={!outcome && !busy && turn === stone}>
+            {profile ? <img className="seat-avatar" src={avatars[profile.avatar]} alt="" width="34" height="34" />
+              : <span className={'stone stone-' + (sideLabel(id, stone) === 'black' ? 0 : 1)} aria-hidden="true" />}
+            <div>
+              <strong title={profile?.name}>{room ? profile?.name ?? t('anonymousPlayer') : side}</strong>
+              {room ? <small>{[side, t(ownSeat ? 'me' : role), profile ? t('levelValue', { level: profile.level }) : undefined].filter(Boolean).join(' · ')}</small>
+                : isOmok && <small>{t(stone === firstPlayerColor ? 'playerOne' : 'playerTwo')}</small>}
+              {othello && <small>{t('discCount', { count: othello.scores[index] })}</small>}
+              {!isBoard && <small>{t('remaining', { count: flickStatus.remaining[index] })}</small>}
+            </div>
+          </li>;
+        })}
+      </ul>
+    </section>
     {chess && <ChessLosses history={history} />}
     {!isBoard && <p className="power-summary"><span>{t('force')}</span><strong>{t(room ? room.power === 1.35 ? 'fast' : 'standard' : power)}</strong></p>}
     {isOmok && <span className="match-rule">{t(allowDoubleThree ? 'allow33' : 'ban33')} · {t(overline)}</span>}

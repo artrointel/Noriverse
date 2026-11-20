@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useEffectEvent, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
+import type { PresenceMode } from '../../../../packages/protocol/profile.ts';
 import { readInvite } from '../../../../packages/protocol/rooms.ts';
 import type { RoomInvite } from '../../../../packages/protocol/rooms.ts';
 import { apiAvailable, apiFetch, apiUrl } from '../network/api.ts';
@@ -9,10 +10,12 @@ import { apiAvailable, apiFetch, apiUrl } from '../network/api.ts';
 const readEndpoint = '/api/profiles/me/invites/read';
 export const socialChangeEvent = 'noriverse:friends-changed';
 
-export function useInvitations(profile?: string) {
+export function useInvitations(profile: string | undefined, presence: PresenceMode, onPresence: (id: string, presence: PresenceMode) => void) {
   const [invites, setInvites] = useState<RoomInvite[]>([]);
+  const updatePresence = useEffectEvent(onPresence);
   useEffect(() => {
     if (!profile || !apiAvailable) return;
+    const id = profile;
     const controller = new AbortController();
     let socket: WebSocket | undefined;
     let retry: number | undefined;
@@ -37,7 +40,7 @@ export function useInvitations(profile?: string) {
         if (!response.ok) throw new Error('Presence unavailable');
         const { ticket } = await response.json() as { ticket?: string };
         if (controller.signal.aborted || paused || !ticket || !profileIdPattern.test(ticket)) return;
-        const url = apiUrl('/api/presence/' + profile);
+        const url = apiUrl('/api/presence/' + id);
         url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
         url.searchParams.set('ticket', ticket);
         const connection = new WebSocket(url);
@@ -59,6 +62,10 @@ export function useInvitations(profile?: string) {
           try {
             const message = JSON.parse(event.data);
             if (message.type === 'friends-changed') { window.dispatchEvent(new Event(socialChangeEvent)); return; }
+            if (message.type === 'presence-mode' && (message.presence === 'offline' || message.presence === 'online')) {
+              updatePresence(id, message.presence);
+              return;
+            }
             if (message.type !== 'invites' || !Array.isArray(message.invites)) return;
             const valid = message.invites.map(readInvite).filter((invite: RoomInvite | undefined): invite is RoomInvite => !!invite && invite.expires > Date.now());
             setInvites(valid);
@@ -110,7 +117,7 @@ export function useInvitations(profile?: string) {
     }).catch(() => { /* Server may re-deliver after reconnect. */ });
   }
 
-  return { invites: profile ? invites : [], dismiss };
+  return { invites: profile && presence === 'online' ? invites : [], dismiss };
 }
 
 export function InvitationToasts({ model, accept }: { model: ReturnType<typeof useInvitations>; accept: (invite: RoomInvite) => void }) {

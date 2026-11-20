@@ -1,4 +1,4 @@
-type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish';
+type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo';
 type Channel = 'music' | 'effects';
 export type AudioLevels = Record<Channel, number>;
 
@@ -206,6 +206,12 @@ export function playSound(effect: Effect, strength = 1) {
       texture(time, .045, .35, 1900);
       tone(time, 720, .1, .16, 'effects', 'sine', 390);
       break;
+    case 'combo': {
+      const root = 64 + Math.min(strength - 2, 7);
+      tone(time, frequency(root), .14, .15, 'effects', 'triangle');
+      tone(time + .055, frequency(root + 7), .19, .17, 'effects', 'triangle');
+      break;
+    }
     case 'doubleThree':
       texture(time, .055, .31, 1900);
       [62, 69, 76].forEach((note, index) => tone(time + index * .055, frequency(note), .22, .16, 'effects', 'triangle'));

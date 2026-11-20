@@ -9,18 +9,20 @@ import type { RenderResolution } from '../games/render-resolution.ts';
 import { boardSize as omokSize } from '../games/omok/rules.ts';
 import { othelloSize, othelloState } from '../games/othello/rules.ts';
 import { chessSize } from '../games/chess/rules.ts';
-import { sichuanSize } from '../games/sichuan/rules.ts';
+import { obstacle } from '../games/sichuan/rules.ts';
 import { TouchBurst } from './touch-burst.tsx';
 import { GearIcon } from './gear-icon.tsx';
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
-  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch }: {
+  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, onReady, notice }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
   resultVisible: boolean; resultPending: boolean; onShowResult: () => void;
   showTouches: boolean; onTouchDisplay: (active: boolean) => void; localTouch: boolean;
   remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
+  onReady?: () => void;
+  notice?: ReactNode;
 }) {
   const { t } = useTranslation();
   const shell = useRef<HTMLDivElement>(null);
@@ -41,7 +43,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const [status, setStatus] = useState<'ready' | 'loading' | 'error'>('loading');
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [expanded, setExpanded] = useState<'native' | 'page' | null>(null);
-  const boardSize = id === 'othello' ? othelloSize : id === 'chess' ? chessSize : id === 'sichuan' ? sichuanSize : omokSize;
+  const boardSize = view.sichuan?.size ?? (id === 'othello' ? othelloSize : id === 'chess' ? chessSize : omokSize);
+  const notifyReady = useEffectEvent(() => onReady?.());
   const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : id === 'sichuan' ? 'sichuanBoard' : 'board';
 
   useLayoutEffect(() => { current.current = view; }, [view]);
@@ -120,7 +123,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     void import('../games/scenes.ts').then(({ mountGame }) => {
       if (canceled) return;
       instance = mountGame(element, id, roundAntialias, requestedSize.current, () => current.current, size => {
-        if (!canceled) { setActualSize(size); setStatus('ready'); }
+        if (!canceled) { setActualSize(size); setStatus('ready'); notifyReady(); }
       });
       engine.current = instance;
     }).catch(() => { if (!canceled) setStatus('error'); });
@@ -200,8 +203,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     row: Math.floor(view.cursor / boardSize) + 1, column: view.cursor % boardSize + 1,
   });
   const focusTile = view.cursor === null ? undefined : view.sichuan?.board[view.cursor];
-  const focusLabel = !position || !view.sichuan ? position : position + ' · ' + (focusTile == null
-    ? t('sichuanEmptyTile') : t('sichuanMotifNames').split('|')[focusTile]);
+  const focusLabel = !position || !view.sichuan ? position : position + ' · ' + (focusTile == null ? t('sichuanEmptyTile')
+    : focusTile === obstacle ? t('sichuanObstacle') : t('sichuanMotifs_' + view.sichuan.theme).split('|')[focusTile]);
 
   return (
     <section className={expanded === 'page' ? 'surface stage stage-expanded' : 'surface stage'} ref={shell}>
@@ -252,6 +255,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         </div>
       </div>
       <div className="stage-field">
+        {notice}
         <div
           className="game-viewport" ref={mount} data-ready={status === 'ready'}
           tabIndex={0}

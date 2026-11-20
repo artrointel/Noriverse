@@ -10,6 +10,7 @@ export type AvatarId = (typeof avatarIds)[number];
 export const defaultAvatar: AvatarId = 'mint';
 export const touchEffects = ['soft', 'none'] as const;
 export type TouchEffect = typeof touchEffects[number];
+export type PresenceMode = 'online' | 'offline';
 export const avatarLevel: Record<AvatarId, number> = { mint: 1, amber: 1, lunar: 1, ink: 1, violet: 1 };
 export const secondsPerLevel = 3600;
 
@@ -49,6 +50,7 @@ export interface PublicProfile {
 }
 
 export type ProfileSummary = Pick<PublicProfile, 'id' | 'name' | 'avatar' | 'level'>;
+export type OwnProfile = PublicProfile & { presence?: PresenceMode };
 export type FriendRoom = { code: string; game: ProfileGame; joinable: boolean };
 export type FriendSummary = ProfileSummary & { online?: boolean; room?: FriendRoom };
 export type FriendAction = 'request' | 'accept' | 'decline' | 'remove' | 'cancel';
@@ -63,12 +65,14 @@ export function readFriendUpdate(value: unknown) {
 export type ProfilePreferences =
   | { avatar: AvatarId }
   | { touchEffect: TouchEffect }
+  | { presence: PresenceMode }
   | { favorite: { game: ProfileGame; selected: boolean } };
 
 export function readProfilePreferences(value: unknown): ProfilePreferences | undefined {
   if (!value || typeof value !== 'object') return;
   if ('avatar' in value && avatarIds.includes(value.avatar as AvatarId)) return { avatar: value.avatar as AvatarId };
   if ('touchEffect' in value && (value.touchEffect === 'soft' || value.touchEffect === 'none')) return { touchEffect: value.touchEffect };
+  if ('presence' in value && (value.presence === 'online' || value.presence === 'offline')) return { presence: value.presence };
   if (!('favorite' in value) || !value.favorite || typeof value.favorite !== 'object') return;
   const favorite = value.favorite as { game?: unknown; selected?: unknown };
   if (isProfileGame(favorite.game) && typeof favorite.selected === 'boolean') {

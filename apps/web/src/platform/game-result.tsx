@@ -7,9 +7,10 @@ import { formatPlayTime } from './profiles.tsx';
 import { RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 
-export function GameResult({ report, winner, surrendered, timedOut, scores, visible, onClose, room, record, rematch, back, navigate }: {
+export function GameResult({ report, winner, title, surrendered, timedOut, scores, visible, onClose, room, record, rematch, back, navigate }: {
   report: MatchReport;
   winner: Stone | 'draw';
+  title?: string;
   surrendered?: Stone;
   timedOut?: Stone;
   scores?: readonly [number, number]; visible: boolean; onClose: () => void;
@@ -30,8 +31,7 @@ export function GameResult({ report, winner, surrendered, timedOut, scores, visi
     return () => { current = false; };
   }, [attempt, record, report]);
 
-  const label = report.game === 'sichuan' ? t('sichuanClear') : winner === 'draw' ? t('draw')
-    : t('winner', { stone: t(sideLabel(report.game, winner)) });
+  const label = title ?? (winner === 'draw' ? t('draw') : t('winner', { stone: t(sideLabel(report.game, winner)) }));
   return (
     <section className="surface result-card" role="dialog" aria-labelledby="match-result-title"
       onKeyDown={event => {

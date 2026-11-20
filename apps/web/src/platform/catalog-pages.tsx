@@ -4,6 +4,7 @@ import heroArt from '../assets/hero-orbit.jpg';
 import { apiAvailable } from '../network/api.ts';
 import type { GuestRoom } from '../network/guest-seat.ts';
 import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
+import type { ReactNode } from 'react';
 import { omokOverlineRules } from '../games/omok/rules.ts';
 import type { OmokOverline } from '../games/omok/rules.ts';
 import type { GameId } from '../games/scenes.ts';
@@ -261,12 +262,12 @@ export function GameDetail({ id, navigate }: { id: GameId; navigate: Navigate })
   );
 }
 
-export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, allowDoubleThree, onRule, overline, onOverline, onStart, navigate, activeGame }: {
+export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, allowDoubleThree, onRule, overline, onOverline, onStart, navigate, activeGame, extraSettings }: {
   id: GameId; online: boolean; power: Power; onPower: (power: Power) => void;
   turnLimit: TurnLimit; onTurnLimit: (limit: TurnLimit) => void;
   allowDoubleThree: boolean; onRule: (allow: boolean) => void;
   overline: OmokOverline; onOverline: (value: OmokOverline) => void;
-  onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: GameId;
+  onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: GameId; extraSettings?: ReactNode;
 }) {
   const { t } = useTranslation();
   const solo = !isRoomGame(id);
@@ -295,6 +296,7 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
               <span><strong>{t('local')}</strong><small>{t(solo ? 'sichuanCopy' : 'localCopy')}</small></span>
             </label>
           </fieldset>
+          {extraSettings}
           {mode === 'online' && activeGame && activeGame !== id && <p className="muted">{t('otherGameRoom', { game: t(activeGame) })}</p>}
           {showLimit && <fieldset>
             <legend>{t('turnLimit')}</legend>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { avatarIds, avatarLevel, readName, secondsPerLevel, touchEffects, winRate } from '../../../../packages/protocol/profile.ts';
-import type { MatchReport, ProfilePreferences, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
+import type { MatchReport, OwnProfile, PresenceMode, ProfilePreferences, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import { apiAvailable, apiFetch } from '../network/api.ts';
 import { avatars } from './avatars.ts';
 import { readBrowserProfile, readBrowserTouchEffect, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
@@ -14,12 +14,12 @@ import type { Friends } from './friends.tsx';
 import { TouchBurst } from './touch-burst.tsx';
 
 const recordCount = (profile: PublicProfile) => Object.values(profile.games).reduce((sum, game) => sum + game.sessions, 0);
-const applyBrowserTouchEffect = (profile: PublicProfile): PublicProfile => ({ ...profile,
+const applyBrowserTouchEffect = (profile: OwnProfile): OwnProfile => ({ ...profile,
   touchEffect: readBrowserTouchEffect(profile.id) ?? profile.touchEffect ?? 'soft',
 });
 
 export function useProfile() {
-  const [profile, setProfile] = useState<PublicProfile>();
+  const [profile, setProfile] = useState<OwnProfile>();
   const [status, setStatus] = useState<'loading' | 'missing' | 'ready' | 'error'>('loading');
   useEffect(() => {
     if (!apiAvailable) {
@@ -34,7 +34,7 @@ export function useProfile() {
       if (response.status === 404) {
         setStatus('missing');
       } else if (response.ok) {
-        const next = await response.json() as PublicProfile;
+        const next = await response.json() as OwnProfile;
         if (!controller.signal.aborted) {
           setProfile(applyBrowserTouchEffect(next));
           setStatus('ready');
@@ -55,22 +55,23 @@ export function useProfile() {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
     });
     if (!response.ok) throw new Error();
-    const next = await response.json() as PublicProfile;
-    setProfile(applyBrowserTouchEffect(next));
+    const next = await response.json() as OwnProfile;
+    setProfile(current => applyBrowserTouchEffect(current?.id === next.id ? { ...next, presence: current.presence ?? next.presence } : next));
     setStatus('ready');
   }
 
   async function setPreferences(preferences: ProfilePreferences) {
     const touchEffect = 'touchEffect' in preferences ? preferences.touchEffect : undefined;
     const id = profile?.id;
-    let next: PublicProfile;
+    let next: OwnProfile;
     try {
       const response = await apiFetch('/api/profiles/me/preferences', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preferences),
       });
       if (!response.ok) throw new Error();
-      next = await response.json() as PublicProfile;
+      next = await response.json() as OwnProfile;
       if (touchEffect && next.touchEffect !== touchEffect) throw new Error();
+      if ('presence' in preferences && next.presence !== preferences.presence) throw new Error();
     } catch (error) {
       if (!touchEffect || !id || !saveBrowserTouchEffect(id, touchEffect)) throw error;
       setProfile(current => current?.id === id ? { ...current, touchEffect } : current);
@@ -78,8 +79,17 @@ export function useProfile() {
     }
     if (touchEffect) saveBrowserTouchEffect(next.id);
     next = applyBrowserTouchEffect(next);
-    setProfile(current => current?.id === next.id && recordCount(current) > recordCount(next)
-      ? { ...current, avatar: next.avatar, favorites: next.favorites, touchEffect: next.touchEffect } : next);
+    setProfile(current => {
+      if (current?.id !== next.id) return next;
+      const presence = 'presence' in preferences ? next.presence : current.presence ?? next.presence;
+      return recordCount(current) > recordCount(next)
+        ? { ...current, avatar: next.avatar, favorites: next.favorites, touchEffect: next.touchEffect, presence }
+        : { ...next, presence };
+    });
+  }
+
+  function syncPresence(id: string, presence: PresenceMode) {
+    setProfile(current => current?.id === id && current.presence !== presence ? { ...current, presence } : current);
   }
 
   const record = useCallback(async (match: MatchReport) => {
@@ -97,7 +107,7 @@ export function useProfile() {
     }
   }, []);
 
-  return { profile, status, saveName, setPreferences, record };
+  return { profile, status, saveName, setPreferences, syncPresence, record };
 }
 
 export function NameDialog({ name, close, save }: {

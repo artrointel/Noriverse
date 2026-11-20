@@ -64,9 +64,9 @@ export default {
         sender.summary(session.secret), env.ROOMS.getByName(inviteCode).inviteDetails(body.seat),
       ]);
       if (!profile || !room) return cors(new Response(null, { status: 409 }));
-      await env.PROFILES.getByName(body.friend).receiveInvite({ id: crypto.randomUUID(), sender: profile.id, name: profile.name,
+      const received = await env.PROFILES.getByName(body.friend).receiveInvite({ id: crypto.randomUUID(), sender: profile.id, name: profile.name,
         game: room.game, code: inviteCode, expires: Math.min(Date.now() + 180_000, room.expires) });
-      return cors(new Response(null, { status: 204 }));
+      return cors(new Response(null, { status: received ? 204 : 409 }));
     }
 
     const rosterCode = url.pathname.match(/^\/api\/rooms\/([^/]+)\/participants$/)?.[1];
