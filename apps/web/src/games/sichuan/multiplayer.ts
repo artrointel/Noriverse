@@ -1,6 +1,6 @@
 ﻿import { isRoomRole } from '../../../../../packages/protocol/rooms.ts';
 import type { Role } from '../../../../../packages/protocol/rooms.ts';
-import { defaultHints, motifCount, readSichuanRoomSettings, resolveSichuanSettings } from './options.ts';
+import { defaultHints, motifCount, readSichuanRoomSettings, resolveSichuanSettings, sichuanTileCount } from './options.ts';
 import type { SichuanMode, SichuanRoomSettings } from './options.ts';
 import { availableTileMatches, connectTiles, createSichuanBoard, isMatchTile, nextSichuanCombo, obstacle, shuffleTiles } from './rules.ts';
 import type { Tile, TilePoint } from './rules.ts';
@@ -21,6 +21,12 @@ const initialStats = (): PuzzleStats => ({ removed: 0, maxCombo: 0, streak: 0, l
 export const puzzleBoardFor = (round: PuzzleRound, mode: SichuanMode, role: Role) => round.boards[mode === 'coop' ? 'host' : role];
 export const puzzleOutcome = (result: PuzzleResult, role: Role) => result === role || result === 'team' ? 'win' : 'loss';
 export const puzzleEnd = (round: PuzzleRound) => round.beginsAt ? round.beginsAt + round.options.timeLimit * 1000 : 0;
+
+export function puzzleProgress(round: PuzzleRound, role: Role) {
+  const { size, density } = round.options;
+  const removed = round.stats[role]?.removed ?? 0;
+  return Math.min(100, Math.floor(100 * removed / sichuanTileCount(size, density)));
+}
 
 export function makePuzzleRound(config: SichuanRoomSettings, random = Math.random, players: readonly Role[] = defaultPlayers): PuzzleRound {
   const options = resolveSichuanSettings(config.settings, random);

@@ -4,8 +4,9 @@ import type { ProfileGame } from '../../../../packages/protocol/profile.ts';
 import type { Emoji } from '../../../../packages/protocol/reactions.ts';
 import { playReactionCue } from './reaction-sounds.ts';
 
-type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'paper';
+type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'distantCombo' | 'paper';
 type Channel = 'music' | 'effects';
+type VoiceBus = Channel | 'distantEffects';
 export type AudioLevels = Record<Channel, number>;
 
 const defaultLevels: AudioLevels = { music: 24, effects: 68 };
@@ -39,7 +40,7 @@ function initialLobbyTrack() {
 }
 const frequency = (note: number) => 440 * 2 ** ((note - 69) / 12);
 let levels = defaultLevels;
-let graph: { context: AudioContext; music: GainNode; effects: GainNode; noise: AudioBuffer } | undefined;
+let graph: ReturnType<typeof createGraph> | undefined;
 let clock: number | undefined;
 let nextBeat = 0;
 let beat = 0;
@@ -57,7 +58,7 @@ export function onAudioReady(listener: () => void) {
 }
 const playingNotes = new Set<AudioScheduledSourceNode>();
 
-function trackNote(source: AudioScheduledSourceNode, channel: Channel) {
+function trackNote(source: AudioScheduledSourceNode, channel: VoiceBus) {
   if (channel !== 'music') return;
   playingNotes.add(source);
   source.onended = () => { playingNotes.delete(source); };
@@ -147,6 +148,11 @@ function createGraph() {
   const context = new AudioContext();
   const music = context.createGain();
   const effects = context.createGain();
+  const distantEffects = context.createBiquadFilter();
+  distantEffects.type = 'lowpass';
+  distantEffects.frequency.value = 920;
+  distantEffects.Q.value = .55;
+  distantEffects.connect(effects);
   const limiter = context.createDynamicsCompressor();
   music.gain.value = 0;
   effects.gain.value = 0;
@@ -156,7 +162,7 @@ function createGraph() {
   const noise = context.createBuffer(1, Math.ceil(context.sampleRate * 0.3), context.sampleRate);
   const samples = noise.getChannelData(0);
   for (let index = 0; index < samples.length; index++) samples[index] = Math.random() * 2 - 1;
-  return { context, music, effects, noise };
+  return { context, music, effects, distantEffects, noise };
 }
 
 function unlockAudio() {
@@ -181,7 +187,7 @@ function unlockAudio() {
   }
 }
 
-function tone(when: number, hz: number, duration: number, volume: number, channel: Channel,
+function tone(when: number, hz: number, duration: number, volume: number, channel: VoiceBus,
   wave: OscillatorType = 'sine', endHz = hz, attack = .008, sustain = 0) {
   if (!graph) return;
   const { context } = graph;
@@ -249,10 +255,17 @@ export function playSound(effect: Effect, strength = 1) {
       texture(time, .045, .35, 1900);
       tone(time, 720, .1, .16, 'effects', 'sine', 390);
       break;
-    case 'combo': {
+    case 'combo':
+    case 'distantCombo': {
       const root = 64 + Math.min(strength - 2, 7);
-      tone(time, frequency(root), .14, .15, 'effects', 'triangle');
-      tone(time + .055, frequency(root + 7), .19, .17, 'effects', 'triangle');
+      if (effect === 'distantCombo') {
+        tone(time, frequency(root), .19, .058, 'distantEffects', 'triangle', undefined, .029);
+        tone(time + .055, frequency(root + 7), .23, .068, 'distantEffects', 'triangle', undefined, .029);
+        tone(time + .17, frequency(root + 7), .26, .022, 'distantEffects', 'sine', undefined, .034);
+      } else {
+        tone(time, frequency(root), .14, .15, 'effects', 'triangle');
+        tone(time + .055, frequency(root + 7), .19, .17, 'effects', 'triangle');
+      }
       break;
     }
     case 'doubleThree':

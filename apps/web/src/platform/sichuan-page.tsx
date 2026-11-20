@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, ProfileSummary, TouchEffect } from '../../../../packages/protocol/profile.ts';
@@ -9,7 +10,7 @@ import { availableTileMatches, connectTiles, createSichuanBoard, isMatchTile, ne
 import type { Tile, TilePoint } from '../games/sichuan/rules.ts';
 import { resolveSichuanSettings } from '../games/sichuan/options.ts';
 import type { SichuanSettings } from '../games/sichuan/options.ts';
-import { puzzleBoardFor, puzzleOutcome } from '../games/sichuan/multiplayer.ts';
+import { puzzleBoardFor, puzzleOutcome, puzzleProgress } from '../games/sichuan/multiplayer.ts';
 import type { PuzzleRound } from '../games/sichuan/multiplayer.ts';
 import type { SichuanRoomSettings } from '../games/sichuan/options.ts';
 import { playSound } from './audio.ts';
@@ -18,6 +19,7 @@ import { BackLink, gamePath } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { PlayTime } from './play-page.tsx';
 import { formatPlayTime } from './profiles.tsx';
+import { avatars } from './avatars.ts';
 
 const GameStage = lazy(() => import('./game-stage.tsx').then(module => ({ default: module.GameStage })));
 const setup = gamePath('sichuan', 'setup');
@@ -46,6 +48,36 @@ function PuzzleClock({ deadline }: { deadline: number }) {
 
 type PuzzleRoom = ReturnType<typeof useRoomBoard> & { puzzle: PuzzleRound; puzzleConfig: SichuanRoomSettings; role: Role };
 type LocalResult = { at: number; reason: 'clear' | 'timeout' | 'stuck' };
+
+function RaceProgress({ room }: { room: PuzzleRoom }) {
+  const { t } = useTranslation();
+  const { puzzle, state, role, puzzleDisplayStart } = room;
+  const previous = useRef({ stats: puzzle.stats, state });
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = { stats: puzzle.stats, state };
+    if (state !== 'connected' || before.state !== 'connected' || !puzzle.beginsAt) return;
+    const hostTime = Date.now() - (puzzleDisplayStart - puzzle.beginsAt);
+    const streak = puzzle.players.reduce((strongest, player) => {
+      if (player === role) return strongest;
+      const from = before.stats[player], to = puzzle.stats[player];
+      return from && to && to.removed > from.removed && hostTime - to.lastAt < 1800 ? Math.max(strongest, to.streak) : strongest;
+    }, 1);
+    if (streak > 1) playSound('distantCombo', streak);
+  }, [puzzle.stats, puzzle.players, puzzle.beginsAt, puzzleDisplayStart, role, state]);
+
+  return <ul className="sichuan-race-progress" aria-label={t('sichuanOpponentProgress')}>
+    {puzzle.players.filter(player => player !== role).map((player, index) => {
+      const profile = room.participants.find(participant => participant.role === player)?.profile;
+      const name = profile?.name ?? t('sichuanOpponent', { number: index + 1 });
+      const percent = puzzleProgress(puzzle, player);
+      return <li key={player} title={name} data-closing={percent >= 75} style={{ '--race-progress': `${percent}%` } as CSSProperties}>
+        {profile && <img src={avatars[profile.avatar]} width="17" height="17" alt="" />}
+        <span>{name}</span><strong>{percent}%</strong>
+      </li>;
+    })}
+  </ul>;
+}
 
 export function SichuanPage({ settings, room, ownProfile, dark, antialias, resolution, onResolution, onAntialias, navigate, record, showTouches, onTouchDisplay, touchStyle }: {
   settings: SichuanSettings;
@@ -281,6 +313,7 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
     <div className="play-layout">
       <Suspense fallback={<div className="surface stage-loading" role="status">{t('loading')}</div>}>
         <GameStage key={round.id} id="sichuan" matchId={round.id} antialias={antialias} resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
+          progress={room?.puzzleConfig.mode === 'race' ? <RaceProgress room={room} /> : undefined}
           onReady={() => { setLoaded(true); setRound(current => !current || current.startedAt ? current : { ...current, startedAt: Date.now() }); }}
           timer={deadline > 0 && !finished && (!room || onlineStarted) && <PuzzleClock deadline={deadline} />}
           setCursor={setCursor} info={info} infoStatus={status} yourTurn={false} result={result} resultVisible={Boolean(report && showResult)}

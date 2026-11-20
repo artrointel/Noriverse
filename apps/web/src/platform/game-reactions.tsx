@@ -177,10 +177,10 @@ export function ReactionPicker({ scope, enabled, send, lobby = false }: {
   </div>;
 }
 
-export function GameReactions({ matchId, room, profile, enabled, size, children }: {
+export function GameReactions({ matchId, room, profile, enabled, size, children, progress }: {
   matchId: string;
   room?: RoomReactions; profile?: ReactionSender; enabled: boolean;
-  size: { width: number; height: number }; children: ReactNode;
+  size: { width: number; height: number }; children: ReactNode; progress?: ReactNode;
 }) {
   const [local, setLocal] = useState<TimedReaction[]>([]);
   useEffect(() => { setLocal([]); }, [matchId]);
@@ -194,6 +194,9 @@ export function GameReactions({ matchId, room, profile, enabled, size, children 
       {children}
       <ReactionLayer events={room?.events ?? local} />
     </div>
-    <ReactionPicker scope={matchId} enabled={enabled && (!room || room.enabled)} send={send} />
+    <div className="stage-footer-controls">
+      {progress}
+      <ReactionPicker scope={matchId} enabled={enabled && (!room || room.enabled)} send={send} />
+    </div>
   </div>;
 }

@@ -20,7 +20,7 @@ import type { RoomReactions } from './game-reactions.tsx';
 import { setMatchMusic } from './audio.ts';
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
-  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, reactions, ownProfile, onReady }: {
+  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, reactions, ownProfile, onReady, progress }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
@@ -28,7 +28,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   showTouches: boolean; onTouchDisplay: (active: boolean) => void; localTouch: boolean;
   remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
   reactions?: RoomReactions; ownProfile?: ReactionSender;
-  onReady?: () => void;
+  onReady?: () => void; progress?: ReactNode;
 }) {
   const { t } = useTranslation();
   const shell = useRef<HTMLDivElement>(null);
@@ -64,7 +64,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     const layout = stage?.parentElement;
     if (!element || !stage || !layout) return;
     const page = stage.closest('.play-page') ?? stage;
-    const reactionBar = element.querySelector<HTMLElement>('.stage-reaction-bar');
+    const footerControls = element.querySelector<HTMLElement>('.stage-footer-controls');
     const viewport = window.visualViewport;
     function measure() {
       if (!element || !stage || !layout) return;
@@ -78,7 +78,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         const documentTop = window.scrollY + fieldBounds.top;
         availableHeight = Math.max(Math.min(96, visibleHeight), visibleHeight - documentTop - trailingHeight - 8);
       }
-      availableHeight = Math.max(1, availableHeight - (reactionBar?.offsetHeight ?? 0));
+      availableHeight = Math.max(1, availableHeight - (footerControls?.offsetHeight ?? 0));
       const style = getComputedStyle(stage);
       const inset = (property: string) => Number.parseFloat(style.getPropertyValue(property)) || 0;
       const availableWidth = expanded ? element.clientWidth
@@ -107,7 +107,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     if (mount.current && 'devicePixelContentBoxSize' in ResizeObserverEntry.prototype) {
       observer.observe(mount.current, { box: 'device-pixel-content-box' });
     }
-    for (const chrome of [stage.querySelector('.stage-bar'), stage.querySelector('.stage-help'), reactionBar, document.querySelector('.site-header')]) {
+    for (const chrome of [stage.querySelector('.stage-bar'), stage.querySelector('.stage-help'), footerControls, document.querySelector('.site-header')]) {
       if (chrome) observer.observe(chrome);
     }
     window.addEventListener('resize', measure);
@@ -310,7 +310,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         </div>
       </div>
       <div className="stage-field" ref={field}>
-        <GameReactions matchId={matchId} size={actualSize.frame} profile={ownProfile} room={reactions} enabled={status === 'ready' && !view.finished}>
+        <GameReactions matchId={matchId} size={actualSize.frame} profile={ownProfile} room={reactions} progress={progress} enabled={status === 'ready' && !view.finished}>
           <div
             className="game-viewport" ref={mount} data-ready={status === 'ready'}
             tabIndex={0}

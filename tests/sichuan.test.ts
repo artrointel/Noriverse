@@ -4,7 +4,7 @@ import { availableTileMatches, connectTiles, createSichuanBoard, isMatchTile, ne
 import type { Tile } from '../apps/web/src/games/sichuan/rules.ts';
 import { defaultSichuanSettings, maxSichuanObstacleDensity, motifCount, readSichuanRoomSettings, resolveSichuanSettings, sichuanSizes, sichuanThemes, sichuanTileCount, sichuanTimeLimits } from '../apps/web/src/games/sichuan/options.ts';
 import type { SichuanMode } from '../apps/web/src/games/sichuan/options.ts';
-import { applyPuzzleAction, makePuzzleRound, puzzleBoardFor, puzzleEnd, puzzleOutcome, readPuzzleRound, readyPuzzle } from '../apps/web/src/games/sichuan/multiplayer.ts';
+import { applyPuzzleAction, makePuzzleRound, puzzleBoardFor, puzzleEnd, puzzleOutcome, puzzleProgress, readPuzzleRound, readyPuzzle } from '../apps/web/src/games/sichuan/multiplayer.ts';
 
 const sichuanSize = 8;
 
@@ -145,6 +145,8 @@ test('race starts with identical boards, applies the deadline, and awards the fi
   for (let pair = 0; pair < pairs; pair++) {
     const [first, second] = availableTileMatches(current.boards.host.tiles).pair!;
     current = applyPuzzleAction(current, 'race', 'host', { ...action, first, second }, round.beginsAt + pair * 200)!;
+    assert.equal(puzzleProgress(current, 'host'), Math.floor((pair + 1) * 100 / pairs));
+    assert.equal(puzzleProgress(current, 'guest'), 0);
   }
   assert.deepEqual(current.boards.guest, round.boards.guest);
   assert.equal(current.result, 'host');
