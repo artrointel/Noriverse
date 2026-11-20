@@ -39,11 +39,19 @@ interface IceCandidate {
 export type Signal =
   | { type: 'offer' | 'answer'; sdp: string }
   | { type: 'ice'; candidate: IceCandidate };
+export const maxRelayMessageLength = 48_000;
+export type RelayData = { type: string } & Record<string, unknown>;
+export function readRelayData(value: unknown): RelayData | undefined {
+  if (value && typeof value === 'object' && 'type' in value && typeof value.type === 'string'
+    && value.type.length > 0 && value.type.length <= 48 && value.type !== 'touch') return value as RelayData;
+}
 export type RoomMessage =
   | (Signal & { peer?: Role })
   | { type: 'welcome'; role: Role; token: string }
   | { type: 'roster'; participants: Participant[] }
   | { type: 'paired' | 'peer-left'; peer?: Role }
+  | { type: 'relay-request' | 'relay-open'; peer: Role }
+  | { type: 'relay-data'; peer: Role; data: RelayData }
   | { type: 'room-closed' }
   | { type: 'error'; reason: 'missing' | 'full' | 'token' };
 

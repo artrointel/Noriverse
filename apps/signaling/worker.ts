@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { createRoomCode, isRoomGame, isRoomRole, readSignal, roomCapacity, roomCodePattern, roomRoles } from '../../packages/protocol/rooms.ts';
+import { createRoomCode, isRoomGame, isRoomRole, maxRelayMessageLength, readRelayData, readSignal, roomCapacity, roomCodePattern, roomRoles } from '../../packages/protocol/rooms.ts';
 import type { RoomGame } from '../../packages/protocol/rooms.ts';
 import type { Participant, Role, RoomMessage } from '../../packages/protocol/rooms.ts';
 import { profileIdPattern } from '../../packages/protocol/profile.ts';
@@ -11,7 +11,7 @@ export { FriendGraph };
 
 interface Env { ROOMS: DurableObjectNamespace<Room>; PROFILES: DurableObjectNamespace<ProfileStore>; FRIENDS: DurableObjectNamespace<FriendGraph>; APP_ORIGIN?: string }
 interface Reservation { host: string; hostJoined?: boolean; guest?: string; guest2?: string; guest3?: string; game?: RoomGame; expires: number; profiles?: Partial<Record<Role, ProfileSummary>> }
-type AttachedSeat = { role: Role; token?: string };
+type AttachedSeat = { role: Role; token?: string; relay?: boolean };
 const roomLifetime = 30 * 60 * 1000;
 const roomRoute = /^\/api\/rooms\/([^/]+)$/;
 const guests = roomRoles.filter(role => role !== 'host');
@@ -137,6 +137,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 export class Room extends DurableObject<Env> {
+  private readonly relayBudget = new WeakMap<WebSocket, { tokens: number; at: number }>();
   async reserve(game: RoomGame, profile?: ProfileSummary): Promise<string | null> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const previous = await this.ctx.storage.get<Reservation>('reservation');
@@ -243,7 +244,7 @@ export class Room extends DurableObject<Env> {
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
     const role = this.attachedSeat(socket)?.role;
-    if (!role || this.socketFor(role) !== socket || typeof message !== 'string' || message.length > 20000) return;
+    if (!role || this.socketFor(role) !== socket || typeof message !== 'string' || message.length > maxRelayMessageLength) return;
     try {
       const raw: unknown = JSON.parse(message);
       if (role !== 'host' && raw && typeof raw === 'object' && 'type' in raw && raw.type === 'leave') {
@@ -259,13 +260,34 @@ export class Room extends DurableObject<Env> {
         socket.close(1000, 'Seat released');
         return;
       }
-      if (role === 'host' && raw && typeof raw === 'object' && 'type' in raw && raw.type === 'repair') {
-        for (const peer of guests) if (!this.pair(socket, peer)) send(socket, { type: 'peer-left', peer });
-        return;
-      }
-      const signal = readSignal(raw, role);
       const requested = raw && typeof raw === 'object' && 'peer' in raw ? raw.peer : 'guest';
       const target = role === 'host' ? requested : 'host';
+      if (raw && typeof raw === 'object' && 'type' in raw) {
+        if (role === 'host' && raw.type === 'repair') {
+          for (const peer of guests) if ((!('peer' in raw) || requested === peer) && !this.pair(socket, peer)) send(socket, { type: 'peer-left', peer });
+          return;
+        }
+        if (isRoomRole(target) && target !== role && (raw.type === 'relay-request' || raw.type === 'relay-open' || raw.type === 'relay-data')) {
+          const other = this.socketFor(target);
+          if (!other || !this.allowRelayMessage(socket)) return;
+          const guest = role === 'host' ? other : socket;
+          const attachment = this.attachedSeat(guest);
+          if (!attachment) return;
+          if (raw.type === 'relay-request' && role !== 'host' && !attachment.relay) {
+            send(other, { type: 'relay-request', peer: role });
+          } else if (raw.type === 'relay-open' && role === 'host' && !attachment.relay) {
+            guest.serializeAttachment({ ...attachment, relay: true });
+            send(guest, { type: 'relay-open', peer: 'host' });
+            send(socket, { type: 'relay-open', peer: target });
+          } else if (raw.type === 'relay-data' && attachment.relay && 'data' in raw) {
+            const data = readRelayData(raw.data);
+            if (data) send(other, { type: 'relay-data', peer: role, data });
+          }
+          return;
+        }
+      }
+      if (message.length > 20_000) return;
+      const signal = readSignal(raw, role);
       if (signal && isRoomRole(target) && role !== target) {
         const other = this.socketFor(target);
         if (other) send(other, { ...signal, peer: role });
@@ -306,8 +328,19 @@ export class Room extends DurableObject<Env> {
   private pair(host: WebSocket, role: Role) {
     const guest = this.socketFor(role);
     if (!guest) return false;
+    const attachment = this.attachedSeat(guest);
+    if (attachment?.relay) guest.serializeAttachment({ ...attachment, relay: false });
     send(guest, { type: 'paired', peer: 'host' });
     send(host, { type: 'paired', peer: role });
+    return true;
+  }
+
+  private allowRelayMessage(socket: WebSocket) {
+    const now = Date.now();
+    const previous = this.relayBudget.get(socket);
+    const tokens = previous ? Math.min(100, previous.tokens + (now - previous.at) * .05) : 100;
+    if (tokens < 1) return false;
+    this.relayBudget.set(socket, { tokens: tokens - 1, at: now });
     return true;
   }
 

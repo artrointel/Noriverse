@@ -699,8 +699,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
       && matchTurn(round) === playerColor,
     reconnect() {
       if (!code) return;
-      if (seat.current?.role === 'host') link.current?.repair();
-      else connect(code, seat.current?.token ?? readGuestSeat(code));
+      if (seat.current?.role === 'host' && link.current?.repair()) return;
+      connect(code, seat.current?.token ?? readGuestSeat(code));
     },
     chooseTimeout(choice: TimeoutChoice) {
       const current = match.current;

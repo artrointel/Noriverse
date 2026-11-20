@@ -64,7 +64,7 @@ flowchart LR
 - **상태 동기화.** 턴제 경기는 신뢰성 있는 순서 보장 채널에서 입력 ID와 `matchId`, 상태 리비전을 확인한다. 호스트가 권위 있는 상태를 확정하고 참가자에게 배포한다. 갭, 재연결, 버전 불일치를 구별해 전체 스냅샷으로 복구하거나 새로고침을 안내한다. 실시간 물리는 호스트만 권위 있는 시뮬레이션을 수행한다. 참가자는 보간한 스냅샷을 표시하고 확정 이벤트와 결과는 신뢰성 있는 채널에서 받는다. 측정상 필요하면 덮어쓸 수 있는 위치 스냅샷에 별도 비순서 채널과 전송량 제한을 적용한다. [DataChannel 버퍼링과 메시지 크기](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Using_data_channels)
 - **단절과 복귀.** 같은 브라우저의 짧은 복귀는 임시 토큰으로 같은 자리에 돌아와 스냅샷을 받는다. signaling 연결의 유실과 게임 채널의 유실은 따로 표시한다. 호스트 이탈 시 짧은 유예 후 경기를 명시적으로 중단한다. 초기에는 새 방 생성으로 이어지며, 호스트 이전과 페이지 재로드 이후 경기 복구는 별도 의사결정이다. 모바일 호스트 타이머에는 백그라운드 실행을 전제로 하지 않는 시간 기준과 일시 중단 정책이 필요하다.
 
-직접 연결이 성립하면 경기 데이터는 브라우저 사이를 오가며 방 서비스는 재접속, 새 참가자와 방 상태 관리에 사용될 수 있다. TURN이 선택되면 그 연결의 경기 데이터는 Cloudflare 중계를 계속 통과한다. DataChannel의 암호화와 게임의 호스트 권한은 두 경로에서 동일하게 적용된다. 직접 경로와 중계 경로를 검증 결과에서 구분한다. WSS 데이터 중계는 실측이 필요성을 보여줄 때 별도로 검토한다. [WebRTC 연결](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Connectivity) · [TURN 중계와 암호화](https://developers.cloudflare.com/realtime/turn/faq/)
+직접 연결이 성립하면 경기 데이터는 브라우저 사이를 오간다. 직접 연결이 실패하면 해당 참가자와 호스트 사이의 경기 데이터만 기존 방 WebSocket으로 중계한다. 중계의 메시지 크기와 빈도를 제한하고 터치 좌표를 생략한다. 직접 경로와 중계 경로의 성공률, 지연 및 사용량을 구분해 검증한다. [WebRTC 연결](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Connectivity) · [Durable Object WebSocket](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)
 
 ## 공통 프레임워크와 React 통합
 

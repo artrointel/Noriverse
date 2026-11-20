@@ -3,7 +3,15 @@ import { test } from 'node:test';
 import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../apps/web/src/games/turn-clock.ts';
 import { readResolution, renderBufferSize, renderFrameSize } from '../apps/web/src/games/render-resolution.ts';
 import { readProfilePreferences } from '../packages/protocol/profile.ts';
-import { readInvite, readTouch } from '../packages/protocol/rooms.ts';
+import { readInvite, readRelayData, readTouch } from '../packages/protocol/rooms.ts';
+
+test('room relay carries game data and omits continuous touch positions', () => {
+  const move = { type: 'move', index: 14 };
+  assert.deepEqual(readRelayData(move), move);
+  for (const value of [null, [], { type: 4 }, { type: '' }, { type: 'touch', point: { x: 1, y: 1 } }]) {
+    assert.equal(readRelayData(value), undefined);
+  }
+});
 
 test('custom turn limits accept whole seconds and keep zero unlimited', () => {
   for (const value of [0, 1, 37, 3600]) assert.equal(isTurnLimit(value), true);
