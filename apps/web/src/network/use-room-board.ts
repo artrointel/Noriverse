@@ -3,6 +3,8 @@ import { isRoomGame, isRoomRole, readTouch, roomCapacity, roomCodePattern } from
 import type { Participant, Role, RoomGame, TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import { elapsedPlaySeconds, profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
+import { freeReactionCorner, isEmoji, readRoomReaction, showReaction } from '../../../../packages/protocol/reactions.ts';
+import type { Emoji, Reaction, TimedReaction } from '../../../../packages/protocol/reactions.ts';
 import { boardRules, isBoardGame, isTurnBasedGame } from '../games/board-rules.ts';
 import { defaultOmokOverline, isOmokOverline } from '../games/omok/rules.ts';
 import type { OmokOverline } from '../games/omok/rules.ts';
@@ -72,12 +74,15 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const matchRoster = useRef<{ seats: Role[]; names: Map<Role, string> }>(undefined);
   const previousMatch = useRef<Match>(undefined);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const roster = useRef<Participant[]>([]);
   const [connectedPeers, setConnectedPeers] = useState<Role[]>([]);
   const [assignedSeat, setAssignedSeat] = useState<Seat>();
   const [guestRoom, setGuestRoom] = useState(readGuestRoom);
   const [changingGame, setChangingGame] = useState(false);
   const [rematchNotice, setRematchNotice] = useState<{ id: string; kind: 'incoming' | 'sent' }>();
   const [remoteTouch, setRemoteTouch] = useState<TouchPoint & { matchId: string; receivedAt: number }>();
+  const [reactions, setReactions] = useState<TimedReaction[]>([]);
+  const activeReactions = useRef<TimedReaction[]>([]);
   const lastIncomingTouch = useRef(-Infinity);
   const lastOutgoingTouch = useRef(-Infinity);
   const { id: matchId, game, hostColor, startedAt, finishedAt, allowDoubleThree, overline, history, surrendered, timedOut, timeoutPending, turnLimit, deadline } = round;
@@ -89,8 +94,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const operation = useRef(0);
   const ready = useRef(false);
   const gameChange = useRef<Seat | undefined>(undefined);
-  const profileName = useRef(profile?.name);
-  useEffect(() => { profileName.current = profile?.name; }, [profile?.name]);
+  const ownProfile = useRef(profile);
+  useEffect(() => { ownProfile.current = profile; }, [profile]);
 
   useEffect(() => () => {
     operation.current++;
@@ -124,6 +129,10 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function update(next: Match) {
     const currentSeat = seat.current;
     const previous = match.current;
+    if (next.id !== previous.id && activeReactions.current.length) {
+      activeReactions.current = [];
+      setReactions([]);
+    }
     if (currentSeat && next.startedAt && (previous.id !== next.id || !previous.startedAt)) rememberRecentRoom(currentSeat.code, next.game);
     if (currentSeat && currentSeat.role !== 'host' && next.id && (previous.id !== next.id || previous.startedAt !== next.startedAt || previous.finishedAt !== next.finishedAt)) {
       rememberGuestRoom(currentSeat.code, next.startedAt && !next.finishedAt && inRound(next, currentSeat.role) ? next.game : undefined);
@@ -135,7 +144,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
       if (winner || puzzleResult) {
         const entry: RoomResult = { id: next.id, game: next.game, endedAt: next.finishedAt,
           seconds: elapsedPlaySeconds(next.puzzle?.beginsAt || next.startedAt, next.finishedAt),
-          players: matchRoster.current.seats.map(role => ({ role, name: role === 'host' ? profileName.current : matchRoster.current?.names.get(role),
+          players: matchRoster.current.seats.map(role => ({ role, name: role === 'host' ? ownProfile.current?.name : matchRoster.current?.names.get(role),
             outcome: puzzleResult ? puzzleOutcome(puzzleResult, role) : winner === 'draw' ? 'draw' : winner === matchColor(next, role) ? 'win' : 'loss' })),
         };
         results.current = [...results.current, entry];
@@ -149,6 +158,23 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   function snapshot(target?: Role) {
     link.current?.send({ type: 'snapshot', ...match.current, sentAt: Date.now() }, target);
+  }
+
+  function displayReaction(reaction: Reaction, now: number) {
+    activeReactions.current = showReaction(activeReactions.current, reaction, now);
+    setReactions(activeReactions.current);
+  }
+
+  function broadcastReaction(role: Role, emoji: Emoji) {
+    const current = match.current;
+    if (!ready.current || !current.startedAt || current.finishedAt || !inRound(current, role)) return;
+    const now = performance.now();
+    const corner = freeReactionCorner(activeReactions.current, now);
+    if (!corner) return;
+    const profile = (role === 'host' ? ownProfile.current : undefined) ?? roster.current.find(person => person.role === role)?.profile;
+    const reaction = { id: crypto.randomUUID(), role, emoji, corner, sender: profile && { name: profile.name, avatar: profile.avatar } };
+    displayReaction(reaction, now);
+    link.current?.send({ type: 'reaction', matchId: current.id, reaction });
   }
 
   function clearRoomHistory() {
@@ -279,6 +305,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function connect(target: string, token?: string) {
     link.current?.close();
     ready.current = false;
+    roster.current = [];
     setCode(target);
     setState('joining');
     setConnectedPeers([]);
@@ -299,6 +326,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
         setRole(assignedRole);
       },
       roster(people) {
+        roster.current = people;
         setParticipants(people);
         for (const person of people) if (person.profile) matchRoster.current?.names.set(person.role, person.profile.name);
       },
@@ -331,6 +359,19 @@ export function useRoomBoard(profile?: ProfileSummary) {
           return;
         }
         const current = match.current;
+        if (raw.type === 'reaction-request') {
+          if (seat.current?.role === 'host' && 'matchId' in raw && raw.matchId === current.id && 'emoji' in raw && isEmoji(raw.emoji)) {
+            broadcastReaction(peer, raw.emoji);
+          }
+          return;
+        }
+        if (raw.type === 'reaction') {
+          if (peer === 'host' && current.startedAt && !current.finishedAt && 'matchId' in raw && raw.matchId === current.id && 'reaction' in raw) {
+            const event = readRoomReaction(raw.reaction);
+            if (event) displayReaction(event, performance.now());
+          }
+          return;
+        }
         if (seat.current?.role === 'host' && current.startedAt && !inRound(current, peer)) return;
         if (raw.type === 'touch') {
           const now = performance.now();
@@ -620,6 +661,17 @@ export function useRoomBoard(profile?: ProfileSummary) {
     },
     allowDoubleThree, overline, participants, create, join, leave, move, physics: round.physics, power: round.power ?? 1, flick, settleFlick,
     winner: matchWinner(round), turn: matchTurn(round),
+    reactions: {
+      events: reactions,
+      enabled: state === 'connected' && Boolean(started && !finishedAt && role && inRound(round, role)),
+      send(emoji: Emoji) {
+        const current = match.current;
+        const own = seat.current?.role;
+        if (!own || !ready.current || !current.startedAt || current.finishedAt || !inRound(current, own) || !isEmoji(emoji)) return;
+        if (own === 'host') broadcastReaction(own, emoji);
+        else link.current?.send({ type: 'reaction-request', matchId: current.id, emoji });
+      },
+    },
     remoteTouch: remoteTouch?.matchId === matchId && performance.now() - remoteTouch.receivedAt < 500 ? remoteTouch : undefined,
     sendTouch(point: TouchPoint) {
       const now = performance.now();

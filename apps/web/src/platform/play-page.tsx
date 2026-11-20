@@ -354,7 +354,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
             resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
             infoStatus={status} yourTurn={yourTurn} timer={!outcome && <TurnClock key={deadline} deadline={deadline} enabled={Boolean(limit)} compact />}
             showTouches={showTouches} onTouchDisplay={onTouchDisplay} localTouch={touchStyle === 'soft'}
-            remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch} result={resultPanel} resultVisible={resultVisible}
+            remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch} reactions={room?.reactions} ownProfile={ownProfile} result={resultPanel} resultVisible={resultVisible}
             resultPending={resultPending} decision={deadlineDecision || promotion}
             onShowResult={() => setClosedResult('')} view={{
             history, cursor: canMove && tapPreview?.matchId === matchId && tapPreview.history === history ? tapPreview.index : cursor,

@@ -3,6 +3,7 @@ import type { KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { touchResolution } from '../../../../packages/protocol/rooms.ts';
 import type { TouchPoint } from '../../../../packages/protocol/rooms.ts';
+import type { ReactionSender } from '../../../../packages/protocol/reactions.ts';
 import type { GameId, GameView, mountGame } from '../games/scenes.ts';
 import { fixedResolutions, readResolution, renderFrameSize } from '../games/render-resolution.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
@@ -14,15 +15,18 @@ import { chessSize } from '../games/chess/rules.ts';
 import { obstacle } from '../games/sichuan/rules.ts';
 import { TouchBurst } from './touch-burst.tsx';
 import { GearIcon } from './gear-icon.tsx';
+import { GameReactions } from './game-reactions.tsx';
+import type { RoomReactions } from './game-reactions.tsx';
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
-  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, onReady }: {
+  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, reactions, ownProfile, onReady }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
   resultVisible: boolean; resultPending: boolean; onShowResult: () => void;
   showTouches: boolean; onTouchDisplay: (active: boolean) => void; localTouch: boolean;
   remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
+  reactions?: RoomReactions; ownProfile?: ReactionSender;
   onReady?: () => void;
 }) {
   const { t } = useTranslation();
@@ -58,6 +62,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     const layout = stage?.parentElement;
     if (!element || !stage || !layout) return;
     const page = stage.closest('.play-page') ?? stage;
+    const reactionBar = element.querySelector<HTMLElement>('.stage-reaction-bar');
     const viewport = window.visualViewport;
     function measure() {
       if (!element || !stage || !layout) return;
@@ -71,6 +76,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         const documentTop = window.scrollY + fieldBounds.top;
         availableHeight = Math.max(Math.min(96, visibleHeight), visibleHeight - documentTop - trailingHeight - 8);
       }
+      availableHeight = Math.max(1, availableHeight - (reactionBar?.offsetHeight ?? 0));
       const style = getComputedStyle(stage);
       const inset = (property: string) => Number.parseFloat(style.getPropertyValue(property)) || 0;
       const availableWidth = expanded ? element.clientWidth
@@ -86,7 +92,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     observer.observe(element);
     observer.observe(layout);
     observer.observe(page);
-    for (const chrome of [stage.querySelector('.stage-bar'), stage.querySelector('.stage-help'), document.querySelector('.site-header')]) {
+    for (const chrome of [stage.querySelector('.stage-bar'), stage.querySelector('.stage-help'), reactionBar, document.querySelector('.site-header')]) {
       if (chrome) observer.observe(chrome);
     }
     window.addEventListener('resize', measure);
@@ -281,7 +287,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         </div>
       </div>
       <div className="stage-field" ref={field}>
-        <div className="stage-frame" style={actualSize}>
+        <GameReactions matchId={matchId} size={actualSize} profile={ownProfile} room={reactions} enabled={status === 'ready' && !view.finished}>
           <div
             className="game-viewport" ref={mount} data-ready={status === 'ready'}
             tabIndex={0}
@@ -297,7 +303,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
           </div>
           {result && <div className="result-layer" hidden={!resultVisible}>{result}</div>}
           {decision && <div className="result-layer decision-layer">{decision}</div>}
-        </div>
+        </GameReactions>
       </div>
       {status !== 'ready' && (
         <div className="stage-message">
