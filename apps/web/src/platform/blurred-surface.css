@@ -1,0 +1,21 @@
+.blurred-surface {
+  --glass-dim: rgb(255 255 255 / .76);
+  --glass-fallback: rgb(251 248 255 / .96);
+  --glass-edge: rgb(255 255 255 / .82);
+  background-color: var(--glass-fallback);
+  border: 1px solid var(--glass-edge);
+}
+
+:root[data-theme="dark"] .blurred-surface {
+  --glass-dim: rgb(9 6 16 / .76);
+  --glass-fallback: rgb(23 17 33 / .96);
+  --glass-edge: rgb(216 190 250 / .24);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .blurred-surface {
+    background-color: var(--glass-dim);
+    -webkit-backdrop-filter: blur(26px) saturate(1.12);
+    backdrop-filter: blur(26px) saturate(1.12);
+  }
+}

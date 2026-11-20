@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { rematchFirstColor } from '../apps/web/src/games/board-rules.ts';
+import { boardRules, isTurnBasedGame } from '../apps/web/src/games/board-rules.ts';
+import { rematchPlayerColor } from '../apps/web/src/games/table.ts';
 import { doubleThreeAxes, nextStone, place, readHistory, result } from '../apps/web/src/games/omok/rules.ts';
 import { createRoomCode, readSignal, roomCodePattern } from '../packages/protocol/rooms.ts';
 
@@ -31,20 +32,25 @@ test('an overline ends the game only when five or more stones count', () => {
     assert.deepEqual(readHistory(history, true, 'freestyle'), history);
     assert.equal(readHistory([...history, 45], true, 'freestyle'), undefined);
   }
-  assert.equal(rematchFirstColor('omok', 1, blackSix, undefined, 'freestyle'), 2);
+  assert.equal(rematchPlayerColor(1, result(blackSix, 'freestyle')), 2);
 });
 
-test('Omok rematches assign black to the previous loser', () => {
+test('rematches give the opening side to the losing player and preserve colors on a draw', () => {
   const blackWin = [0, 15, 1, 16, 2, 17, 3, 18, 4];
   const whiteWin = [15, 0, 16, 1, 17, 2, 18, 3, 30, 4];
   assert.equal(result(whiteWin), 2);
-  assert.equal(rematchFirstColor('omok', 1, blackWin), 2);
-  assert.equal(rematchFirstColor('omok', 2, blackWin), 1);
-  assert.equal(rematchFirstColor('omok', 2, whiteWin), 2);
-  assert.equal(rematchFirstColor('omok', 1, [], 2), 2);
-  assert.equal(rematchFirstColor('omok', 2, [], 1), 2);
-  assert.equal(rematchFirstColor('omok', 2, []), 2);
-  assert.equal(rematchFirstColor('othello', 1, [], 2), 1);
+  assert.equal(rematchPlayerColor(1, result(blackWin)), 2);
+  assert.equal(rematchPlayerColor(2, result(blackWin)), 1);
+  assert.equal(rematchPlayerColor(2, result(whiteWin)), 2);
+  assert.equal(rematchPlayerColor(1, undefined, 2), 2);
+  assert.equal(rematchPlayerColor(2, undefined, 1), 2);
+  assert.equal(rematchPlayerColor(2, 'draw'), 2);
+  for (const game of Object.keys(boardRules) as (keyof typeof boardRules)[]) {
+    assert.equal(isTurnBasedGame(game), true);
+    assert.equal(boardRules[game].turn([]), 1);
+  }
+  assert.equal(isTurnBasedGame('physics'), true);
+  assert.equal(isTurnBasedGame('sichuan'), false);
 });
 
 test('room codes and signals conform to the two-seat protocol', () => {

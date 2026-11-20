@@ -3,7 +3,7 @@ import type { SichuanTheme } from './options.ts';
 
 type Graphics = Phaser.GameObjects.Graphics;
 type Point = readonly [x: number, y: number];
-type ParticleShape = 'petal' | 'pixel' | 'crumb' | 'paw' | 'bolt' | 'ribbon' | 'paper' | 'digit';
+type ParticleShape = 'pixel' | 'crumb' | 'paw' | 'bolt' | 'ribbon' | 'paper' | 'digit';
 type Skin = {
   colors: readonly [main: number, accent: number, highlight: number];
   shape: ParticleShape;
@@ -15,7 +15,6 @@ type Skin = {
 };
 
 const skins: Record<SichuanTheme, Skin> = {
-  classic: { colors: [0xcf9954, 0x9fe0bd, 0xfff1c5], shape: 'petal', lift: -15, spread: 13, spin: 18, collapse: [.39, .55], pull: -.35 },
   pixel: { colors: [0xaa72ff, 0x66e9f7, 0xffec9c], shape: 'pixel', lift: 0, spread: 22, spin: 0, collapse: [.34, .34], pull: 0 },
   food: { colors: [0xf77f86, 0xffbf65, 0xffefce], shape: 'crumb', lift: -23, spread: 10, spin: 21, collapse: [.75, .36], pull: 1.7 },
   animals: { colors: [0x65c68e, 0xffd37c, 0xeaffce], shape: 'paw', lift: -27, spread: 16, spin: 14, collapse: [.61, .64], pull: 1.1 },
@@ -70,7 +69,7 @@ function paintParticle(layer: Graphics, shape: ParticleShape, dot: Particle, age
       });
       return;
     default: {
-      const width = shape === 'ribbon' ? .28 : shape === 'paper' ? .68 : .46;
+      const width = shape === 'ribbon' ? .28 : .68;
       const length = shape === 'ribbon' ? 1.5 : 1;
       layer.fillTriangle(x - ux * length, y - uy * length, x + vx * width, y + vy * width, x + ux * length, y + uy * length);
       layer.fillTriangle(x - ux * length, y - uy * length, x - vx * width, y - vy * width, x + ux * length, y + uy * length);

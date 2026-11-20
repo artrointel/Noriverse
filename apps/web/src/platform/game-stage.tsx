@@ -55,11 +55,12 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   useLayoutEffect(() => {
     const element = field.current;
     const stage = shell.current;
-    if (!element || !stage) return;
+    const layout = stage?.parentElement;
+    if (!element || !stage || !layout) return;
     const page = stage.closest('.play-page') ?? stage;
     const viewport = window.visualViewport;
     function measure() {
-      if (!element) return;
+      if (!element || !stage || !layout) return;
       const fitWindow = resolution === 'auto' || matchMedia('(pointer: coarse)').matches;
       let availableHeight = Infinity;
       if (expanded) availableHeight = element.clientHeight;
@@ -70,7 +71,11 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         const documentTop = window.scrollY + fieldBounds.top;
         availableHeight = Math.max(Math.min(96, visibleHeight), visibleHeight - documentTop - trailingHeight - 8);
       }
-      const size = renderFrameSize(resolution, element.clientWidth, availableHeight, sceneHeight);
+      const style = getComputedStyle(stage);
+      const inset = (property: string) => Number.parseFloat(style.getPropertyValue(property)) || 0;
+      const availableWidth = expanded ? element.clientWidth
+        : layout.clientWidth - inset('padding-left') - inset('padding-right') - inset('--stage-sidebar-width') - inset('column-gap');
+      const size = renderFrameSize(resolution, availableWidth, availableHeight, sceneHeight);
       if (!size.width || (size.width === requestedSize.current.width && size.height === requestedSize.current.height)) return;
       requestedSize.current = size;
       engine.current?.resize(size);
@@ -79,6 +84,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
+    observer.observe(layout);
     observer.observe(page);
     for (const chrome of [stage.querySelector('.stage-bar'), stage.querySelector('.stage-help'), document.querySelector('.site-header')]) {
       if (chrome) observer.observe(chrome);
@@ -226,7 +232,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     : focusTile === obstacle ? t('sichuanObstacle') : t('sichuanMotifs_' + view.sichuan.theme).split('|')[focusTile]);
 
   return (
-    <section className={expanded === 'page' ? 'surface stage stage-expanded' : 'surface stage'} ref={shell}>
+    <section className={expanded === 'page' ? 'stage stage-expanded' : 'stage'} ref={shell}>
       <div className="stage-bar">
         <span>{t(boardLabel)}</span>
         <div className="stage-actions">

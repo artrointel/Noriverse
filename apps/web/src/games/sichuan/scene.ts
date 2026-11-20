@@ -24,8 +24,8 @@ type RenderedTile = {
 export function sichuanScene(view: () => GameView) {
   const start = view().sichuan;
   const size = start?.size ?? 8;
-  const theme = start?.theme ?? 'classic';
-  const blockFrame = theme === 'classic' ? 16 : 14;
+  const theme = start?.theme ?? 'animals';
+  const blockFrame = 14;
   const backFrame = blockFrame + 1;
   const frameName = (tile: number) => 'motif-' + (tile === obstacle ? blockFrame : tile);
   const pitch = 450 / (size + 1);

@@ -3,7 +3,7 @@ import { isRoomGame, readTouch, roomCapacity, roomCodePattern } from '../../../.
 import type { Participant, Role, RoomGame, TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
-import { boardRules, isBoardGame, rematchFirstColor } from '../games/board-rules.ts';
+import { boardRules, isBoardGame, isTurnBasedGame } from '../games/board-rules.ts';
 import { defaultOmokOverline, isOmokOverline } from '../games/omok/rules.ts';
 import type { OmokOverline } from '../games/omok/rules.ts';
 import { initialFlickRound, readFlick, readFlickRound, readLayout, settledStatus } from '../games/alkkagi/rules.ts';
@@ -13,7 +13,7 @@ import type { ConnectionState } from './room-connection.ts';
 import { forgetGuestSeat, readGuestRoom, readGuestSeat, rememberRecentRoom, saveGuestSeat, writeGuestRoom } from './guest-seat.ts';
 import { apiFetch } from './api.ts';
 import type { Stone } from '../games/table.ts';
-import { oppositeStone } from '../games/table.ts';
+import { oppositeStone, rematchPlayerColor } from '../games/table.ts';
 import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../games/turn-clock.ts';
 import type { PendingTimeout, TimeoutChoice, TurnLimit } from '../games/turn-clock.ts';
 import { defaultSichuanRoomSettings, readSichuanRoomSettings } from '../games/sichuan/options.ts';
@@ -292,7 +292,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
           const physics = game === 'physics' && 'physics' in raw ? readFlickRound(raw.physics, power) : undefined;
           if (game === 'physics' && !physics) return;
           const nextHostColor = 'hostColor' in raw ? raw.hostColor : 1;
-          if (nextHostColor !== 1 && (nextHostColor !== 2 || game !== 'omok')) return;
+          if (nextHostColor !== 1 && (nextHostColor !== 2 || !isTurnBasedGame(game))) return;
           const endedBySurrender = 'surrendered' in raw ? raw.surrendered : undefined;
           if (endedBySurrender !== undefined && (endedBySurrender !== 1 && endedBySurrender !== 2 || raw.finishedAt === 0)) return;
           const timeoutColor = 'timedOut' in raw ? raw.timedOut : undefined;
@@ -505,8 +505,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
     rematch() {
       const current = match.current;
       if (role !== 'host' || !ready.current || !current.finishedAt || changingGame) return;
-      const nextHostColor = isBoardGame(current.game)
-        ? rematchFirstColor(current.game, current.hostColor, current.history, current.surrendered ?? current.timedOut, current.overline) : current.hostColor;
+      const nextHostColor = isTurnBasedGame(current.game)
+        ? rematchPlayerColor(current.hostColor, matchWinner(current), current.surrendered ?? current.timedOut) : current.hostColor;
       const now = Date.now();
       update({ ...blankMatch, id: crypto.randomUUID(), game: current.game, hostColor: nextHostColor, startedAt: now,
         allowDoubleThree: current.allowDoubleThree, overline: current.overline, turnLimit: current.turnLimit, deadline: nextDeadline(current.turnLimit, now),

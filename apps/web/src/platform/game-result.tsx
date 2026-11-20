@@ -7,6 +7,8 @@ import { formatPlayTime } from './profiles.tsx';
 import { RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import type { ReactNode } from 'react';
+import { BlurredSurface } from './blurred-surface.tsx';
+import { isTurnBasedGame } from '../games/board-rules.ts';
 
 export function GameResult({ report, winner, title, surrendered, timedOut, scores, details, visible, onClose, room, record, rematch, back, navigate }: {
   report: MatchReport;
@@ -35,7 +37,7 @@ export function GameResult({ report, winner, title, surrendered, timedOut, score
 
   const label = title ?? (winner === 'draw' ? t('draw') : t('winner', { stone: t(sideLabel(report.game, winner)) }));
   return (
-    <section className="surface result-card" role="dialog" aria-labelledby="match-result-title"
+    <BlurredSurface className="result-card" role="dialog" aria-labelledby="match-result-title"
       onKeyDown={event => {
         if (event.key === 'Escape') {
           event.preventDefault();
@@ -55,7 +57,7 @@ export function GameResult({ report, winner, title, surrendered, timedOut, score
       </div>
       {details}
       {record && <p className="muted" role="status">{t(saved === 'saved' ? 'savedResult' : saved === 'failed' ? 'failedResult' : 'savingResult')}</p>}
-      {record && report.mode === 'local' && report.game !== 'sichuan' && <p className="muted result-note">{t(report.game === 'omok' ? 'localOmokRecord' : report.game === 'chess' ? 'localChessRecord' : 'localRecord')}</p>}
+      {record && report.mode === 'local' && isTurnBasedGame(report.game) && <p className="muted result-note">{t('localRecord')}</p>}
       {room?.notice && <p role="status">{t(room.notice === 'incoming' ? 'rematchIncoming' : 'rematchSent')}</p>}
       <div className="panel-actions">
         {(!room || room.canRematch) && <button type="button" className="button button-primary" onClick={rematch}>
@@ -66,6 +68,6 @@ export function GameResult({ report, winner, title, surrendered, timedOut, score
         <RouteLink href={back} navigate={navigate} className="button button-secondary">{t(room ? 'goToRoom' : 'backToGames')}</RouteLink>
         {saved === 'failed' && <button type="button" className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>{t('saveResult')}</button>}
       </div>
-    </section>
+    </BlurredSurface>
   );
 }

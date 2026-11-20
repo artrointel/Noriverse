@@ -15,7 +15,8 @@ export function loadComboBanner(scene: Phaser.Scene) {
 
 export function createComboBanner(scene: Phaser.Scene) {
   const centerX = 240, centerY = 109;
-  const sparks = scene.add.graphics().setDepth(5);
+  const size = .5, opacity = .7;
+  const sparks = scene.add.graphics().setDepth(5).setPosition(centerX, centerY).setScale(size).setAlpha(opacity);
   const banner = scene.add.container(centerX, centerY).setDepth(6).setVisible(false);
   const animation = { progress: 0 };
 
@@ -42,23 +43,23 @@ export function createComboBanner(scene: Phaser.Scene) {
       const exit = Math.max(0, (p - .68) / .32);
       sparks.clear();
       if (reduced) {
-        sparks.fillStyle(0x28162f, .8 * (1 - exit)).fillRoundedRect(centerX + start - 16, centerY - 39, -start * 2 + 32, 78, 22);
-        banner.setPosition(centerX, centerY).setScale(1).setAngle(0).setAlpha(1 - exit);
+        sparks.fillStyle(0x28162f, .8 * (1 - exit)).fillRoundedRect(start - 16, -39, -start * 2 + 32, 78, 22);
+        banner.setPosition(centerX, centerY).setScale(size).setAngle(0).setAlpha(opacity * (1 - exit));
         return;
       }
 
       const entrance = Math.min(1, p / .24);
       const spring = 1 + 2.4 * (entrance - 1) ** 3 + 1.4 * (entrance - 1) ** 2;
-      banner.setPosition(centerX + exit * 16, centerY + (1 - entrance) * 35 - exit ** 2 * 40)
-        .setAngle(-11 * (1 - entrance) + exit * 10).setScale(.35 + spring * .65 + .28 * exit)
-        .setAlpha(Math.min(1, p * 15) * (1 - exit ** 1.35));
+      banner.setPosition(centerX + exit * 16 * size, centerY + ((1 - entrance) * 35 - exit ** 2 * 40) * size)
+        .setAngle(-11 * (1 - entrance) + exit * 10).setScale((.35 + spring * .65 + .28 * exit) * size)
+        .setAlpha(opacity * Math.min(1, p * 15) * (1 - exit ** 1.35));
       const ringEase = 1 - (1 - p) ** 3;
-      sparks.fillStyle(0x341630, .67 * Math.min(1, p * 14) * (1 - exit)).fillEllipse(centerX, centerY + 2, 238 + intensity * 24, 76);
+      sparks.fillStyle(0x341630, .67 * Math.min(1, p * 14) * (1 - exit)).fillEllipse(0, 2, 238 + intensity * 24, 76);
       sparks.lineStyle(2.5 + intensity, 0xffd078, .7 * (1 - p) ** 2)
-        .strokeEllipse(centerX, centerY, 40 + ringEase * 245, 25 + ringEase * 100);
+        .strokeEllipse(0, 0, 40 + ringEase * 245, 25 + ringEase * 100);
       for (const { angle, reach, color } of particles) {
-        const x = centerX + Math.cos(angle) * (44 + ringEase * reach * 1.33);
-        const y = centerY + Math.sin(angle) * (23 + ringEase * reach * .65);
+        const x = Math.cos(angle) * (44 + ringEase * reach * 1.33);
+        const y = Math.sin(angle) * (23 + ringEase * reach * .65);
         const radius = (2.5 + intensity * 2) * (1 - p);
         sparks.fillStyle(color, (1 - p) ** 1.2)
           .fillTriangle(x - radius, y, x, y - radius * 1.7, x + radius, y)

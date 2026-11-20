@@ -1,10 +1,10 @@
 export const sichuanSceneHeight = 640;
-export const sichuanThemes = ['classic', 'pixel', 'food', 'animals', 'electronics', 'flags', 'school', 'numbers'] as const;
+export const sichuanThemes = ['pixel', 'food', 'animals', 'electronics', 'flags', 'school', 'numbers'] as const;
 export type SichuanTheme = typeof sichuanThemes[number];
 export const sichuanSizes = [6, 8, 10, 12] as const;
 export type SichuanSize = typeof sichuanSizes[number];
 export const sichuanTimeLimits: Record<SichuanSize, number> = { 6: 30, 8: 60, 10: 105, 12: 165 };
-export const motifCount = (theme: SichuanTheme) => theme === 'numbers' ? 10 : theme === 'classic' ? 16 : 14;
+export const motifCount = (theme: SichuanTheme) => theme === 'numbers' ? 10 : 14;
 
 export type SichuanSettings = {
   theme: SichuanTheme | 'random';

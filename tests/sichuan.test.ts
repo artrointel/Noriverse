@@ -41,11 +41,12 @@ test('shuffle changes occupied cells, preserves the motifs and ensures a legal m
   assert.ok(availableTileMatches(shuffled).pair);
 });
 
-test('a new board contains four copies of each atlas motif and can be cleared', () => {
-  const board = createSichuanBoard(resolveSichuanSettings({ ...defaultSichuanSettings, theme: 'classic', density: 100, obstacles: false }), () => .37);
-  for (let motif = 0; motif < motifCount('classic'); motif++) assert.equal(board.filter(tile => tile === motif).length, 4);
+test('a new board contains pairs of each atlas motif and can be cleared', () => {
+  const board = createSichuanBoard(resolveSichuanSettings({ ...defaultSichuanSettings, size: 10, theme: 'numbers', obstacles: false }), () => .37);
+  for (let motif = 0; motif < motifCount('numbers'); motif++) assert.equal(board.filter(tile => tile === motif).length, 8);
+  const pairCount = board.filter(isMatchTile).length / 2;
   let tiles = board;
-  for (let index = 0; index < board.length / 2; index++) {
+  for (let index = 0; index < pairCount; index++) {
     const pair = availableTileMatches(tiles).pair ?? availableTileMatches(tiles = shuffleTiles(tiles, () => .37)).pair;
     assert.ok(pair);
     tiles[pair[0]] = tiles[pair[1]] = null;

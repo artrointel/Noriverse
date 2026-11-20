@@ -12,7 +12,7 @@ import { othelloState } from '../games/othello/rules.ts';
 import type { GameId } from '../games/scenes.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 import type { Stone } from '../games/table.ts';
-import { oppositeStone, sideLabel } from '../games/table.ts';
+import { oppositeStone, rematchPlayerColor, sideLabel } from '../games/table.ts';
 import { nextDeadline, resolveTurnTimeout, secondsRemaining } from '../games/turn-clock.ts';
 import type { PendingTimeout, TimeoutChoice, TurnLimit } from '../games/turn-clock.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
@@ -85,7 +85,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   showTouches, onTouchDisplay, touchStyle }: {
   id: GameId; dark: boolean; antialias: boolean; room?: Room; ownProfile?: ProfileSummary; power: Power; turnLimit: TurnLimit; history: number[];
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
-  boardRound?: ReturnType<typeof createLocalRound> & { firstPlayerColor: Stone };
+  boardRound?: ReturnType<typeof createLocalRound>;
   allowDoubleThree: boolean; overline: OmokOverline; move: (index: number) => void; reset: () => void;
   endLocal: (color: Stone, expiredDeadline?: number) => void;
   decideLocal: (choice: TimeoutChoice, at: number) => void;
@@ -129,7 +129,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const deadline = room?.displayDeadline ?? boardRound?.deadline ?? localRound.deadline;
   const limit = room?.turnLimit ?? boardRound?.turnLimit ?? localRound.turnLimit;
   const mode = room ? 'online' : 'local';
-  const firstPlayerColor = boardRound?.firstPlayerColor ?? 1;
+  const firstPlayerColor = boardRound?.firstPlayerColor ?? localRound.firstPlayerColor;
   const playerColor = room?.playerColor ?? firstPlayerColor;
   const canMove = !outcome && !pending && !waitingSurrender && (room ? room.canMove : !busy);
   const yourTurn = Boolean(room && canMove);
@@ -223,7 +223,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
       reset();
       return;
     }
-    setLocalRound(createLocalRound(localRound.turnLimit));
+    setLocalRound(createLocalRound(localRound.turnLimit, rematchPlayerColor(firstPlayerColor, outcome, loser)));
     setAlkkagi(initialAlkkagi);
   };
 
@@ -276,7 +276,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
             <div>
               <strong title={profile?.name}>{room ? profile?.name ?? t('anonymousPlayer') : side}</strong>
               {room ? <small>{[side, t(ownSeat ? 'me' : role), profile ? t('levelValue', { level: profile.level }) : undefined].filter(Boolean).join(' · ')}</small>
-                : isOmok && <small>{t(stone === firstPlayerColor ? 'playerOne' : 'playerTwo')}</small>}
+                : <small>{t(stone === firstPlayerColor ? 'playerOne' : 'playerTwo')}</small>}
               {othello && <small>{t('discCount', { count: othello.scores[index] })}</small>}
               {!isBoard && <small>{t('remaining', { count: flickStatus.remaining[index] })}</small>}
             </div>
@@ -370,10 +370,10 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   );
 }
 
-export function createLocalRound(turnLimit: TurnLimit = 0): {
+export function createLocalRound(turnLimit: TurnLimit = 0, firstPlayerColor: Stone = 1): {
   id: string; startedAt: number; finishedAt: number; surrendered?: Stone; timedOut?: Stone; timeoutPending?: PendingTimeout;
-  turnLimit: TurnLimit; deadline: number;
+  turnLimit: TurnLimit; deadline: number; firstPlayerColor: Stone;
 } {
   const now = Date.now();
-  return { id: crypto.randomUUID(), startedAt: now, finishedAt: 0, turnLimit, deadline: nextDeadline(turnLimit, now) };
+  return { id: crypto.randomUUID(), startedAt: now, finishedAt: 0, turnLimit, deadline: nextDeadline(turnLimit, now), firstPlayerColor };
 }

@@ -5,7 +5,7 @@ import { elapsedPlaySeconds } from '../../../packages/protocol/profile.ts';
 import { isRoomGame } from '../../../packages/protocol/rooms.ts';
 import licenseUrl from '../../../LICENSE?url&no-inline';
 import logo from './assets/noriverse-icon.png';
-import { boardRules, isBoardGame, rematchFirstColor } from './games/board-rules.ts';
+import { boardRules, isBoardGame } from './games/board-rules.ts';
 import { defaultOmokOverline } from './games/omok/rules.ts';
 import type { OmokOverline } from './games/omok/rules.ts';
 import type { BoardGame } from './games/board-rules.ts';
@@ -13,7 +13,7 @@ import { useRoomBoard } from './network/use-room-board.ts';
 import { apiAvailable } from './network/api.ts';
 import type { GameId } from './games/scenes.ts';
 import type { Stone } from './games/table.ts';
-import { oppositeStone } from './games/table.ts';
+import { oppositeStone, rematchPlayerColor } from './games/table.ts';
 import { nextDeadline, resolveTurnTimeout } from './games/turn-clock.ts';
 import type { TimeoutChoice, TurnLimit } from './games/turn-clock.ts';
 import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setMusicScene } from './platform/audio.ts';
@@ -38,7 +38,7 @@ import { NameDialog, ProfileNav, ProfilePage, useProfile } from './platform/prof
 import './styles.css';
 
 function createLocalBoard(allowDoubleThree = true, firstPlayerColor: Stone = 1, turnLimit: TurnLimit = 0, overline: OmokOverline = defaultOmokOverline) {
-  return { ...createLocalRound(turnLimit), history: [] as number[], allowDoubleThree, firstPlayerColor, overline };
+  return { ...createLocalRound(turnLimit, firstPlayerColor), history: [] as number[], allowDoubleThree, overline };
 }
 
 function App() {
@@ -52,7 +52,10 @@ function App() {
   const invitations = useInvitations(profile.profile?.id, presence, profile.syncPresence);
   const playGame = route.page === 'play' && (!route.online || (room.code && room.started && room.game === route.id
     && room.state !== 'closed' && room.state !== 'missing')) ? route.id : undefined;
-  const [localBoards, setLocalBoards] = useState(() => ({ omok: createLocalBoard(), othello: createLocalBoard(), chess: createLocalBoard() }));
+  const [localBoards, setLocalBoards] = useState(() => {
+    const boards = Object.fromEntries(Object.keys(boardRules).map(id => [id, createLocalBoard()]));
+    return boards as Record<BoardGame, ReturnType<typeof createLocalBoard>>;
+  });
   const [power, setPower] = useState<Power>('standard');
   const [allowDoubleThree, setAllowDoubleThree] = useState(true);
   const [sichuanSettings, setSichuanSettings] = useState(defaultSichuanSettings);
@@ -145,7 +148,8 @@ function App() {
     setLocalBoards(previous => {
       const current = previous[id];
       if (!current.finishedAt) return previous;
-      const firstPlayerColor = rematchFirstColor(id, current.firstPlayerColor, current.history, current.surrendered ?? current.timedOut, current.overline);
+      const firstPlayerColor = rematchPlayerColor(current.firstPlayerColor, boardRules[id].result(current.history, current.overline),
+        current.surrendered ?? current.timedOut);
       return { ...previous, [id]: createLocalBoard(current.allowDoubleThree, firstPlayerColor, current.turnLimit, current.overline) };
     });
   }
