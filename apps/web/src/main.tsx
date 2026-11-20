@@ -25,8 +25,10 @@ import { gamePath, RouteLink, useNavigation } from './platform/navigation.tsx';
 import type { GameMode } from './platform/navigation.tsx';
 import { createLocalRound, PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
-import { SichuanSettingsFields } from './platform/sichuan-settings.tsx';
+import { SichuanModePicker, SichuanSettingsFields } from './platform/sichuan-settings.tsx';
 import { defaultSichuanSettings } from './games/sichuan/options.ts';
+import type { SichuanMode } from './games/sichuan/options.ts';
+import { puzzleOutcome } from './games/sichuan/multiplayer.ts';
 import { RoomPage } from './platform/room-page.tsx';
 import { FriendsPage, useFriends } from './platform/friends.tsx';
 import { InvitationToasts, useInvitations } from './platform/invitations.tsx';
@@ -54,6 +56,7 @@ function App() {
   const [power, setPower] = useState<Power>('standard');
   const [allowDoubleThree, setAllowDoubleThree] = useState(true);
   const [sichuanSettings, setSichuanSettings] = useState(defaultSichuanSettings);
+  const [sichuanMode, setSichuanMode] = useState<SichuanMode>('race');
   const [overline, setOverline] = useState<OmokOverline>(defaultOmokOverline);
   const [turnLimit, setTurnLimit] = useState<TurnLimit>(0);
   const [nameDismissed, setNameDismissed] = useState(() => Boolean(room.guestRoom));
@@ -83,14 +86,16 @@ function App() {
       || (route.page === 'play' && route.id === room.game && route.online)) return;
     const loser = room.surrendered ?? room.timedOut;
     const winner = loser ? oppositeStone(loser) : room.winner;
-    if (!winner) return;
+    const puzzleResult = room.puzzle?.result && room.role ? puzzleOutcome(room.puzzle.result, room.role) : undefined;
+    const outcome = puzzleResult ?? (winner ? winner === 'draw' ? 'draw' : winner === room.playerColor ? 'win' : 'loss' : undefined);
+    if (!outcome) return;
     const matchId = room.matchId;
     lastAwayResult.current = matchId;
     void profile.record({
-      id: matchId, game: room.game, mode: 'online', outcome: winner === 'draw' ? 'draw' : winner === room.playerColor ? 'win' : 'loss',
-      seconds: elapsedPlaySeconds(room.startedAt, room.finishedAt),
+      id: matchId, game: room.game, mode: 'online', outcome,
+      seconds: elapsedPlaySeconds(room.puzzle?.beginsAt || room.startedAt, room.finishedAt),
     }).then(saved => { if (!saved && lastAwayResult.current === matchId) lastAwayResult.current = ''; });
-  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.startedAt, route]);
+  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.startedAt, room.puzzle, room.role, route]);
 
   useEffect(() => {
     const view = route.id ? t(route.id) : route.page === 'room' ? t('room')
@@ -123,7 +128,9 @@ function App() {
     const id = route.id;
     if (mode === 'online' && isRoomGame(id)) {
       if ((!room.code || room.state === 'closed' || room.state === 'missing' || room.state === 'full') && room.state !== 'joining') {
-        void room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1, overline);
+        void room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1, overline, { mode: sichuanMode, settings: sichuanSettings });
+      } else if (id === 'sichuan' && room.game === 'sichuan' && room.role === 'host' && !room.started) {
+        room.configurePuzzle({ mode: sichuanMode, settings: sichuanSettings });
       }
       navigate('/room');
     } else {
@@ -251,21 +258,28 @@ function App() {
           turnLimit={turnLimit} onTurnLimit={setTurnLimit}
           allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree} overline={overline} onOverline={setOverline}
           extraSettings={route.id === 'sichuan' && <SichuanSettingsFields value={sichuanSettings} change={setSichuanSettings} />}
+          onlineSettings={route.id === 'sichuan' && <SichuanModePicker value={sichuanMode} change={setSichuanMode} />}
           activeGame={room.code && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full' ? room.game : undefined}
           onStart={startGame} navigate={navigate} />;
       case 'room':
         return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
       case 'play': {
         const id = route.id;
-        if (id === 'sichuan') return <SichuanPage settings={sichuanSettings} dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
-          onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
-          onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'} navigate={navigate}
-          record={apiAvailable && profile.profile ? profile.record : undefined} />;
         const board = isBoardGame(id) ? id : undefined;
         const online = route.online;
         const local = board ? localBoards[board] : undefined;
         if (online && playGame !== id) {
           return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite="" navigate={navigate} onPlay={enterRoomGame} />;
+        }
+        if (id === 'sichuan') {
+          const puzzleRoom = online && room.puzzle && room.puzzleConfig && room.role
+            ? { ...room, puzzle: room.puzzle, puzzleConfig: room.puzzleConfig, role: room.role } : undefined;
+          if (online && !puzzleRoom) return <p role="status">{t('loading')}</p>;
+          return <SichuanPage key={puzzleRoom?.matchId ?? id} settings={sichuanSettings} room={puzzleRoom} ownProfile={profile.profile}
+            dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
+            onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
+            onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'} navigate={navigate}
+            record={apiAvailable && profile.profile ? profile.record : undefined} />;
         }
         return <PlayPage id={id} dark={preferences.dark} antialias={preferences.antialias} power={power} turnLimit={turnLimit} navigate={navigate}
           resolution={preferences.resolution} onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias}

@@ -6,11 +6,13 @@ import { sideLabel } from '../games/table.ts';
 import { formatPlayTime } from './profiles.tsx';
 import { RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
+import type { ReactNode } from 'react';
 
-export function GameResult({ report, winner, title, surrendered, timedOut, scores, visible, onClose, room, record, rematch, back, navigate }: {
+export function GameResult({ report, winner, title, surrendered, timedOut, scores, details, visible, onClose, room, record, rematch, back, navigate }: {
   report: MatchReport;
   winner: Stone | 'draw';
   title?: string;
+  details?: ReactNode;
   surrendered?: Stone;
   timedOut?: Stone;
   scores?: readonly [number, number]; visible: boolean; onClose: () => void;
@@ -51,6 +53,7 @@ export function GameResult({ report, winner, title, surrendered, timedOut, score
         <div><span>{t('playTime')}</span><strong>{formatPlayTime(report.seconds)}</strong></div>
         <div><span>{t('gameMode')}</span><strong>{t(report.mode)}</strong></div>
       </div>
+      {details}
       {record && <p className="muted" role="status">{t(saved === 'saved' ? 'savedResult' : saved === 'failed' ? 'failedResult' : 'savingResult')}</p>}
       {record && report.mode === 'local' && report.game !== 'sichuan' && <p className="muted result-note">{t(report.game === 'omok' ? 'localOmokRecord' : report.game === 'chess' ? 'localChessRecord' : 'localRecord')}</p>}
       {room?.notice && <p role="status">{t(room.notice === 'incoming' ? 'rematchIncoming' : 'rematchSent')}</p>}

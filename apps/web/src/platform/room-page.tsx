@@ -14,6 +14,7 @@ import { FriendButton, InviteDialog } from './friends.tsx';
 import type { Friends } from './friends.tsx';
 import { routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
+import { SichuanModePicker, SichuanSettingsFields } from './sichuan-settings.tsx';
 
 type Room = ReturnType<typeof useRoomBoard>;
 
@@ -89,7 +90,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                   const color = role === 'host' ? room.hostColor : oppositeStone(room.hostColor);
                   const own = room.role === role;
                   const participant = own ? ownProfile ?? profile : profile;
-                  const seatInfo = [t(role), t(sideLabel(activeGame, color)), own ? t('me') : undefined,
+                  const seatInfo = [t(role), activeGame === 'sichuan' ? undefined : t(sideLabel(activeGame, color)), own ? t('me') : undefined,
                     participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
                   return (
                     <li key={role}>
@@ -107,6 +108,16 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                   );
                 })}</ul>
               </section>
+              {room.puzzleConfig && <p className="match-rule">{t('sichuanMode_' + room.puzzleConfig.mode)} · {room.puzzleConfig.settings.size} × {room.puzzleConfig.settings.size}</p>}
+              {room.role === 'host' && room.puzzleConfig && (!room.started || room.finishedAt > 0) &&
+                <details className="room-games"><summary>{t('settings')}</summary>
+                  <SichuanModePicker value={room.puzzleConfig.mode} change={mode => {
+                    if (room.puzzleConfig) room.configurePuzzle({ ...room.puzzleConfig, mode });
+                  }} />
+                  <SichuanSettingsFields value={room.puzzleConfig.settings} change={settings => {
+                    if (room.puzzleConfig) room.configurePuzzle({ ...room.puzzleConfig, settings });
+                  }} />
+                </details>}
               {room.role === 'host' && gameChoices.length > 0 && <details className="room-games">
                 <summary>{t('changeRoomGame')}</summary>
                 <form className="room-game-picker" onSubmit={async event => {

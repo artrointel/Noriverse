@@ -335,6 +335,13 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 @keyframes touch-particle { to { transform: translate(var(--dx),var(--dy)) scale(.45); } }
 .stage-help { color: var(--muted); font-size: .89rem; padding: 10px 2px 2px; }
 .sichuan-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--muted); font-size: .87rem; }
+.sichuan-score { display: grid; gap: 5px; }
+.sichuan-score > div { display: grid; grid-template-columns: minmax(0, 1.2fr) repeat(2,minmax(0, 1fr)); gap: 5px; align-items: center;
+  background: var(--raised); border-radius: 8px; padding: 7px; text-align: start; font-size: .78rem; }
+.sichuan-score strong { overflow-wrap: anywhere; }
+.sichuan-score strong small { display: block; color: var(--muted); }
+.sichuan-score span { display: grid; gap: 2px; color: var(--muted); }
+.sichuan-score b { color: var(--text); }
 .sichuan-settings > label:not(.choice) { display: grid; gap: 5px; }
 .sichuan-settings small { color: var(--muted); font-weight: 450; }
 .sichuan-settings input[type="range"] { width: 100%; accent-color: var(--primary); }

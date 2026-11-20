@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { availableTileMatches, connectTiles, createSichuanBoard, isMatchTile, nextSichuanCombo, obstacle, shuffleTiles } from '../apps/web/src/games/sichuan/rules.ts';
 import type { Tile } from '../apps/web/src/games/sichuan/rules.ts';
 import { defaultSichuanSettings, motifCount, resolveSichuanSettings, sichuanSizes, sichuanThemes, sichuanTimeLimits } from '../apps/web/src/games/sichuan/options.ts';
+import type { SichuanMode } from '../apps/web/src/games/sichuan/options.ts';
+import { applyPuzzleAction, makePuzzleRound, puzzleBoardFor, puzzleEnd, puzzleOutcome, readPuzzleRound, readyPuzzle } from '../apps/web/src/games/sichuan/multiplayer.ts';
 
 const sichuanSize = 8;
 
@@ -51,14 +53,14 @@ test('a new board contains four copies of each atlas motif and can be cleared', 
   assert.ok(tiles.every(tile => tile === null));
 });
 
-test('obstacles cannot match and count only the tiles participating in legal pairs', () => {
+test('obstacles cannot match and the legal move count is in pairs', () => {
   const board: Tile[] = Array(sichuanSize ** 2).fill(null);
   board[at(2, 3)] = board[at(4, 3)] = 0;
   board[at(3, 3)] = board[at(3, 5)] = obstacle;
   board[at(1, 3)] = 1;
   assert.equal(connectTiles(board, at(3, 3), at(3, 5)), undefined);
   assert.deepEqual(connectTiles(board, at(2, 3), at(4, 3)), [[2, 3], [2, 2], [4, 2], [4, 3]]);
-  assert.equal(availableTileMatches(board).count, 2);
+  assert.equal(availableTileMatches(board).pairs, 1);
 });
 
 test('grid presets, random extremes, themed motif counts and fixed obstacles survive generation and shuffle', () => {
@@ -91,4 +93,51 @@ test('combo includes the one-second boundary and resets after it', () => {
   const second = nextSichuanCombo(first, 1200);
   assert.equal(second.count, 2);
   assert.equal(nextSichuanCombo(second, 2201).count, 1);
+});
+
+function onlinePuzzle(mode: SichuanMode) {
+  const config = { mode, settings: { ...defaultSichuanSettings, size: 6, theme: 'numbers' } } as const;
+  const lobby = makePuzzleRound(config, () => .37);
+  const hostReady = readyPuzzle(lobby, 'host', 1000)!;
+  assert.equal(hostReady.beginsAt, 0);
+  return { config, round: readyPuzzle(hostReady, 'guest', 1000)! };
+}
+
+test('race starts with identical boards, applies the deadline, and awards the first finisher', () => {
+  const { config, round } = onlinePuzzle('race');
+  assert.deepEqual(round.boards.host, round.boards.guest);
+  const [first, second] = availableTileMatches(round.boards.host.tiles).pair!;
+  const action = { kind: 'pair', first, second, generation: round.options.shuffles };
+  assert.equal(applyPuzzleAction(round, 'race', 'host', action, round.beginsAt - 1), undefined);
+  assert.equal(applyPuzzleAction(round, 'race', 'host', action, puzzleEnd(round)), undefined);
+  let current = round;
+  for (let pair = 0; pair < 14; pair++) {
+    const [first, second] = availableTileMatches(current.boards.host.tiles).pair!;
+    current = applyPuzzleAction(current, 'race', 'host', { ...action, first, second }, round.beginsAt + pair * 200)!;
+  }
+  assert.deepEqual(current.boards.guest, round.boards.guest);
+  assert.equal(current.result, 'host');
+  assert.equal(current.stats.host.removed, 28);
+  assert.equal(current.stats.host.maxCombo, 14);
+  assert.equal(puzzleOutcome(current.result, 'guest'), 'loss');
+  assert.deepEqual(readPuzzleRound(current, config), current);
+});
+
+test('co-op shares removals and scores a tile pair only once across both players', () => {
+  const { round } = onlinePuzzle('coop');
+  const [first, second] = availableTileMatches(round.boards.host.tiles).pair!;
+  const action = { kind: 'pair', first, second, generation: round.options.shuffles };
+  let current = applyPuzzleAction(round, 'coop', 'guest', action, round.beginsAt)!;
+  assert.equal(puzzleBoardFor(current, 'coop', 'host'), puzzleBoardFor(current, 'coop', 'guest'));
+  assert.equal(applyPuzzleAction(current, 'coop', 'host', action, round.beginsAt), undefined);
+  for (let pair = 1; pair < 14; pair++) {
+    const [first, second] = availableTileMatches(puzzleBoardFor(current, 'coop', 'guest').tiles).pair!;
+    current = applyPuzzleAction(current, 'coop', pair % 2 ? 'host' : 'guest', { ...action, first, second }, round.beginsAt + pair * 200)!;
+  }
+  assert.equal(current.result, 'team');
+  for (const role of ['host', 'guest'] as const) {
+    assert.equal(puzzleOutcome(current.result, role), 'win');
+    assert.equal(current.stats[role].removed, 14);
+    assert.equal(current.stats[role].maxCombo, 7);
+  }
 });

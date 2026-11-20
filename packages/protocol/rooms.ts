@@ -3,8 +3,8 @@ import type { ProfileGame, ProfileSummary } from './profile.ts';
 
 const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 export const roomCodePattern = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
-export type RoomGame = Exclude<ProfileGame, 'sichuan'>;
-export const roomCapacity = { omok: 2, physics: 2, othello: 2, chess: 2 } satisfies Record<RoomGame, number>;
+export type RoomGame = ProfileGame;
+export const roomCapacity = { omok: 2, physics: 2, othello: 2, chess: 2, sichuan: 2 } satisfies Record<RoomGame, number>;
 export const isRoomGame = (value: unknown): value is RoomGame => typeof value === 'string' && Object.hasOwn(roomCapacity, value);
 
 export type Role = 'host' | 'guest';

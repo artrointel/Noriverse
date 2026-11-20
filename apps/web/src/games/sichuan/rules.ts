@@ -46,18 +46,17 @@ export function connectTiles(board: readonly Tile[], first: number, second: numb
 }
 
 export function availableTileMatches(board: readonly Tile[]) {
-  const removable = new Set<number>();
   let pair: Pair | undefined;
+  let pairs = 0;
   for (let first = 0; first < board.length; first++) {
     if (!isMatchTile(board[first])) continue;
     for (let second = first + 1; second < board.length; second++) {
       if (!connectTiles(board, first, second)) continue;
       pair ??= [first, second];
-      removable.add(first);
-      removable.add(second);
+      pairs++;
     }
   }
-  return { pair, count: removable.size };
+  return { pair, pairs };
 }
 
 function shuffle<T>(items: T[], random: () => number) {

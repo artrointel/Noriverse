@@ -1,7 +1,17 @@
 import { useTranslation } from 'react-i18next';
 import { sichuanSizes, sichuanThemes, sichuanTimeLimits } from '../games/sichuan/options.ts';
-import type { SichuanSettings, SichuanSize } from '../games/sichuan/options.ts';
+import type { SichuanMode, SichuanSettings, SichuanSize } from '../games/sichuan/options.ts';
 import { formatPlayTime } from './profiles.tsx';
+
+export function SichuanModePicker({ value, change }: { value: SichuanMode; change: (value: SichuanMode) => void }) {
+  const { t } = useTranslation();
+  return <fieldset className="sichuan-settings"><legend>{t('sichuanOnlineMode')}</legend>
+    {(['race', 'coop'] as const).map(mode => <label className="choice" key={mode}>
+      <input type="radio" name="sichuan-online-mode" checked={value === mode} onChange={() => change(mode)} />
+      <span><strong>{t('sichuanMode_' + mode)}</strong><small>{t('sichuanModeHelp_' + mode)}</small></span>
+    </label>)}
+  </fieldset>;
+}
 
 export function SichuanSettingsFields({ value, change }: { value: SichuanSettings; change: (value: SichuanSettings) => void }) {
   const { t } = useTranslation();

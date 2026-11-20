@@ -6,7 +6,7 @@ import type { Stone } from './table.ts';
 import { oppositeStone } from './table.ts';
 import { chessResult, chessTurn, placeChess, readChessHistory } from './chess/rules.ts';
 
-export type BoardGame = Exclude<RoomGame, 'physics'>;
+export type BoardGame = Exclude<RoomGame, 'physics' | 'sichuan'>;
 export const isBoardGame = (id: unknown): id is BoardGame => id === 'omok' || id === 'othello' || id === 'chess';
 
 interface BoardRules {

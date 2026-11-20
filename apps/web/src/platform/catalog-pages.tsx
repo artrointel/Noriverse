@@ -262,23 +262,22 @@ export function GameDetail({ id, navigate }: { id: GameId; navigate: Navigate })
   );
 }
 
-export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, allowDoubleThree, onRule, overline, onOverline, onStart, navigate, activeGame, extraSettings }: {
+export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, allowDoubleThree, onRule, overline, onOverline, onStart, navigate, activeGame, extraSettings, onlineSettings }: {
   id: GameId; online: boolean; power: Power; onPower: (power: Power) => void;
   turnLimit: TurnLimit; onTurnLimit: (limit: TurnLimit) => void;
   allowDoubleThree: boolean; onRule: (allow: boolean) => void;
   overline: OmokOverline; onOverline: (value: OmokOverline) => void;
-  onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: GameId; extraSettings?: ReactNode;
+  onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: GameId; extraSettings?: ReactNode; onlineSettings?: ReactNode;
 }) {
   const { t } = useTranslation();
-  const solo = !isRoomGame(id);
   const roomUnavailable = !apiAvailable ? 'roomUnavailable' : undefined;
-  const [mode, setMode] = useState<GameMode>(online && !roomUnavailable && !solo ? 'online' : 'local');
+  const [mode, setMode] = useState<GameMode>(online && !roomUnavailable ? 'online' : 'local');
   const preset = turnLimits.some(limit => limit === turnLimit);
   const [customLimit, setCustomLimit] = useState(!preset);
   const [customSeconds, setCustomSeconds] = useState(preset ? '' : String(turnLimit));
   const customValue = Number(customSeconds);
   const validCustom = customValue > 0 && isTurnLimit(customValue);
-  const showLimit = !solo && (mode === 'local' || !activeGame);
+  const showLimit = id !== 'sichuan' && (mode === 'local' || !activeGame);
   return (
     <div className="site-width subpage">
       <RouteLink href={gamePath(id)} navigate={navigate} className="back-link">{t(id)}</RouteLink>
@@ -287,15 +286,16 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
           <h1 tabIndex={-1}>{t('settings')}</h1>
           <fieldset>
             <legend>{t('gameMode')}</legend>
-            {!solo && <label className="choice">
+            <label className="choice">
               <input type="radio" name="mode" value="online" checked={mode === 'online'} disabled={Boolean(roomUnavailable)} onChange={() => setMode('online')} />
               <span><strong>{t('newRoom')}</strong><small>{t(roomUnavailable ?? 'onlineCopy')}</small></span>
-            </label>}
+            </label>
             <label className="choice">
               <input type="radio" name="mode" value="local" checked={mode === 'local'} onChange={() => setMode('local')} />
-              <span><strong>{t('local')}</strong><small>{t(solo ? 'sichuanCopy' : 'localCopy')}</small></span>
+              <span><strong>{t('local')}</strong><small>{t(id === 'sichuan' ? 'sichuanCopy' : 'localCopy')}</small></span>
             </label>
           </fieldset>
+          {mode === 'online' && onlineSettings}
           {extraSettings}
           {mode === 'online' && activeGame && activeGame !== id && <p className="muted">{t('otherGameRoom', { game: t(activeGame) })}</p>}
           {showLimit && <fieldset>
