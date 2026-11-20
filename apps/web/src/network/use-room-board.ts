@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { readTouch, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import { readTouch, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
 import type { Participant, Role, TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import { isProfileGame } from '../../../../packages/protocol/profile.ts';
 import type { ProfileGame, ProfileSummary } from '../../../../packages/protocol/profile.ts';
@@ -10,7 +10,7 @@ import { initialFlickRound, readFlick, readFlickRound, readLayout, settledStatus
 import type { Flick, FlickPower, FlickRound, StonePosition } from '../games/alkkagi/rules.ts';
 import { connectToRoom } from './room-connection.ts';
 import type { ConnectionState } from './room-connection.ts';
-import { forgetGuestSeat, readGuestSeat, saveGuestSeat } from './guest-seat.ts';
+import { forgetGuestSeat, readGuestRoom, readGuestSeat, saveGuestSeat, writeGuestRoom } from './guest-seat.ts';
 import { apiFetch } from './api.ts';
 import type { Stone } from '../games/table.ts';
 import { oppositeStone } from '../games/table.ts';
@@ -43,6 +43,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const [round, setRound] = useState(blankMatch);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [assignedSeat, setAssignedSeat] = useState<Seat>();
+  const [guestRoom, setGuestRoom] = useState(readGuestRoom);
+  const [changingGame, setChangingGame] = useState(false);
   const [remoteTouch, setRemoteTouch] = useState<TouchPoint & { matchId: string; receivedAt: number }>();
   const lastIncomingTouch = useRef(-Infinity);
   const lastOutgoingTouch = useRef(-Infinity);
@@ -54,6 +56,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const match = useRef<Match>(blankMatch);
   const operation = useRef(0);
   const ready = useRef(false);
+  const gameChange = useRef<Seat | undefined>(undefined);
 
   useEffect(() => () => {
     operation.current++;
@@ -77,7 +80,19 @@ export function useRoomBoard(profile?: ProfileSummary) {
     return () => { request.abort(); window.clearTimeout(retry); };
   }, [assignedSeat, profile?.id, profile?.name, profile?.avatar, profile?.level]);
 
+  function rememberGuestRoom(code: string, game?: ProfileGame) {
+    writeGuestRoom(code, game);
+    setGuestRoom(previous => game
+      ? previous?.code === code && previous.game === game ? previous : { code, game }
+      : previous?.code === code ? undefined : previous);
+  }
+
   function update(next: Match) {
+    const currentSeat = seat.current;
+    const previous = match.current;
+    if (currentSeat?.role === 'guest' && next.id && (previous.id !== next.id || previous.startedAt !== next.startedAt || previous.finishedAt !== next.finishedAt)) {
+      rememberGuestRoom(currentSeat.code, next.startedAt && !next.finishedAt ? next.game : undefined);
+    }
     match.current = next;
     setRound(next);
   }
@@ -159,7 +174,10 @@ export function useRoomBoard(profile?: ProfileSummary) {
     setState('joining');
     link.current = connectToRoom(target, token, {
       state(next) {
-        if (next === 'closed' || next === 'missing') forgetGuestSeat(target);
+        if (next === 'closed' || next === 'missing') {
+          forgetGuestSeat(target);
+          rememberGuestRoom(target);
+        }
         ready.current = next === 'connected';
         setState(next);
       },
@@ -263,6 +281,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     link.current = undefined;
     seat.current = undefined;
     ready.current = false;
+    setChangingGame(false);
     setAssignedSeat(undefined);
     setParticipants([]);
     setCode(undefined);
@@ -289,6 +308,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function join(target: string) {
     if (!roomCodePattern.test(target)) return;
     operation.current++;
+    setChangingGame(false);
     setRole(undefined);
     seat.current = undefined;
     setAssignedSeat(undefined);
@@ -299,6 +319,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   function leave() {
     operation.current++;
+    if (code && seat.current?.role !== 'host') rememberGuestRoom(code);
+    setChangingGame(false);
     link.current?.close();
     link.current = undefined;
     seat.current = undefined;
@@ -309,6 +331,30 @@ export function useRoomBoard(profile?: ProfileSummary) {
     setCode(undefined);
     setRole(undefined);
     setState(undefined);
+  }
+
+  async function changeGame(game: ProfileGame) {
+    const host = seat.current;
+    const attempt = operation.current;
+    if (host?.role !== 'host' || gameChange.current === host || game === match.current.game
+      || Math.max(participants.length, ready.current ? 2 : 1) > roomCapacity[game]) return false;
+    gameChange.current = host;
+    setChangingGame(true);
+    try {
+      const response = await apiFetch('/api/rooms/' + host.code + '/game', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seat: host.token, game }),
+      });
+      if (!response.ok || operation.current !== attempt || seat.current !== host) return false;
+      const { allowDoubleThree, overline, power, turnLimit } = match.current;
+      update({ ...blankMatch, id: crypto.randomUUID(), game, allowDoubleThree, overline, power, turnLimit,
+        physics: game === 'physics' ? initialFlickRound : undefined });
+      snapshot();
+      return true;
+    } catch { return false; }
+    finally {
+      if (gameChange.current === host) gameChange.current = undefined;
+      if (operation.current === attempt) setChangingGame(false);
+    }
   }
 
   function move(index: number) {
@@ -336,6 +382,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   return {
     code, role, state, game, hostColor, playerColor, history, started, matchId, startedAt, finishedAt, surrendered, timedOut, timeoutPending, turnLimit,
+    guestRoom, changeGame, changingGame,
     displayDeadline: deadline ? deadline + (round.clockOffset ?? 0) : 0,
     allowDoubleThree, overline, participants, create, join, leave, move, physics: round.physics, power: round.power ?? 1, flick, settleFlick,
     winner: matchWinner(round), turn: matchTurn(round),
@@ -371,14 +418,14 @@ export function useRoomBoard(profile?: ProfileSummary) {
         : ready.current && Boolean(link.current?.send({ type: 'timeout-choice', id: current.id, at: pending.at, choice }));
     },
     start() {
-      if (role !== 'host' || !ready.current || match.current.startedAt) return;
+      if (role !== 'host' || !ready.current || match.current.startedAt || changingGame) return;
       const now = Date.now();
       update({ ...match.current, startedAt: now, deadline: nextDeadline(match.current.turnLimit, now) });
       snapshot();
     },
     rematch() {
       const current = match.current;
-      if (role !== 'host' || !ready.current || !current.finishedAt) return;
+      if (role !== 'host' || !ready.current || !current.finishedAt || changingGame) return;
       const nextHostColor = isBoardGame(current.game)
         ? rematchFirstColor(current.game, current.hostColor, current.history, current.surrendered ?? current.timedOut, current.overline) : current.hostColor;
       const now = Date.now();

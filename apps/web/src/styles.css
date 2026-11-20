@@ -295,6 +295,10 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .stage-info > summary { gap: 6px; }
 .stage-info[open] > summary { border-color: var(--primary); }
 .stage-turn { padding: 3px 6px; border-radius: 6px; background: var(--active); color: var(--primary); font-size: .76rem; white-space: nowrap; }
+.stage-turn[data-your-turn="true"] { background: #e0f4db; color: #214f37; font-weight: 800; box-shadow: inset 0 0 0 1px #6eaf83; }
+.stage-turn[data-your-turn="true"]::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-inline-end: 5px; border-radius: 50%; background: #2a7650; vertical-align: .04em; }
+[data-theme="dark"] .stage-turn[data-your-turn="true"] { background: #1e4336; color: #c4f6ce; box-shadow: inset 0 0 0 1px #548867; }
+[data-theme="dark"] .stage-turn[data-your-turn="true"]::before { background: #a4e9ac; }
 .stage-clock { color: var(--text); font-size: .78rem; font-weight: 780; font-variant-numeric: tabular-nums; }
 .stage-clock[data-low="true"] { color: var(--primary); }
 .stage-settings summary { list-style: none; }
@@ -329,6 +333,14 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .stage-expanded .stage-field, .stage:fullscreen .stage-field { width: 100%; height: 100%; min-height: 0; }
 .stage-expanded .game-viewport, .stage:fullscreen .game-viewport { width: 100%; height: 100%; aspect-ratio: auto; }
 .match-panel { position: absolute; z-index: 3; inset-block-start: 58px; inset-inline-end: 12px; width: min(330px,calc(100% - 24px)); max-height: 66dvh; overflow: auto; display: grid; gap: 10px; padding: 13px; box-shadow: 0 12px 32px #21142b37; }
+.chess-losses { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
+.chess-losses h2 { margin: 0; font-size: .87rem; }
+.chess-loss-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: .78rem; }
+.chess-loss-row > strong { flex: 1 0 auto; }
+.chess-loss-row strong small { color: var(--muted); font-weight: 500; }
+.chess-loss-row ul { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.chess-loss-row li { display: inline-flex; align-items: center; padding: 1px 3px; border-radius: 5px; background: var(--raised); }
+.chess-loss-row li span { width: 22px; height: 22px; background-size: 600% 200%; background-repeat: no-repeat; }
 .play-feedback { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .play-feedback:empty { display: none; }
 .match-status { display: grid; gap: 5px; padding: 16px; border-radius: 12px; background: var(--active); }
@@ -342,6 +354,19 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .custom-turn-limit input { width: min(100%, 160px); min-height: 42px; padding: 6px 10px; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 9px; }
 .room-participants h2 { margin: 0 0 10px; font-size: 1.05rem; }
 .room-participants h2 small { color: var(--muted); }
+.resume-room { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; margin: 16px 0; padding: 10px; }
+.resume-room img { width: 56px; height: 46px; border-radius: 8px; object-fit: cover; }
+.resume-room div { display: grid; gap: 2px; }
+.resume-room small, .resume-room code { color: var(--muted); }
+.resume-room code { margin-inline-start: 4px; font-size: .8em; white-space: nowrap; }
+.room-games { border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+.room-games summary { cursor: pointer; font-weight: 750; }
+.room-game-picker, .room-game-picker fieldset > div { display: grid; gap: 8px; }
+.room-game-picker { margin-top: 10px; }
+.room-game-picker fieldset > div { grid-template-columns: repeat(auto-fit, minmax(min(135px, 100%), 1fr)); }
+.room-game-picker .choice { align-items: center; padding: 7px; }
+.room-game-picker .choice img { border-radius: 5px; object-fit: cover; }
+.room-game-picker > button { justify-self: start; }
 .friends-panel { max-width: 700px; display: grid; gap: 16px; }
 .share-profile-id input { text-transform: none; letter-spacing: normal; font-size: .9rem; }
 .friend-groups { display: grid; gap: 9px; }

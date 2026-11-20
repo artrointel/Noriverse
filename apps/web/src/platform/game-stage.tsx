@@ -12,11 +12,11 @@ import { chessSize } from '../games/chess/rules.ts';
 import { TouchBurst } from './touch-burst.tsx';
 import { GearIcon } from './gear-icon.tsx';
 
-export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, timer, result, resultVisible, resultPending, decision, onShowResult,
+export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
   showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
-  info?: ReactNode; infoStatus?: string; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
+  info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
   resultVisible: boolean; resultPending: boolean; onShowResult: () => void;
   showTouches: boolean; onTouchDisplay: (active: boolean) => void; localTouch: boolean;
   remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
@@ -209,7 +209,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
             }
           }}>
             <summary className="button button-secondary" aria-label={t('gameInfo')}>
-              {infoStatus && <span className="stage-turn" aria-live="polite">{infoStatus}</span>}
+              {infoStatus && <span className="stage-turn" data-your-turn={yourTurn} aria-live="polite">{infoStatus}</span>}
               {timer}
             </summary>
             <div className="surface match-panel">{info}</div>

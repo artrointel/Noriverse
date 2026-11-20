@@ -4,6 +4,8 @@ import type { Stone } from '../table.ts';
 
 export const chessSize = 8;
 export const promotions = ['q', 'r', 'b', 'n'] as const;
+export const chessPieceFrames = { k: 0, q: 1, r: 2, b: 3, n: 4, p: 5 } as const;
+export const capturablePieces = [...promotions, 'p'] as const;
 export type Promotion = typeof promotions[number];
 const files = 'abcdefgh';
 
@@ -40,6 +42,15 @@ export function chessPosition(history: readonly number[]) {
   for (const move of history) if (!apply(game, move)) break;
   positions.set(history, game);
   return game;
+}
+
+export function chessLosses(history: readonly number[]) {
+  const counts = () => ({ k: 0, q: 0, r: 0, b: 0, n: 0, p: 0 });
+  const losses = { w: counts(), b: counts() };
+  for (const { captured, color } of chessPosition(history).history({ verbose: true })) {
+    if (captured) losses[color === 'w' ? 'b' : 'w'][captured]++;
+  }
+  return losses;
 }
 
 export function chessTurn(history: readonly number[]): Stone | undefined {

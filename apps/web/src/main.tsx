@@ -48,14 +48,14 @@ function App() {
   const [allowDoubleThree, setAllowDoubleThree] = useState(true);
   const [overline, setOverline] = useState<OmokOverline>(defaultOmokOverline);
   const [turnLimit, setTurnLimit] = useState<TurnLimit>(0);
-  const [nameDismissed, setNameDismissed] = useState(false);
+  const [nameDismissed, setNameDismissed] = useState(() => Boolean(room.guestRoom));
   const [editName, setEditName] = useState(false);
   const [pendingFavorite, setPendingFavorite] = useState<GameId>();
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [favoriteError, setFavoriteError] = useState(false);
   const [audioLevels, setLevelState] = useState(loadAudioLevels);
   const lastPath = useRef(path);
-  const matchOpened = useRef(false);
+  const matchOpened = useRef('');
   const lastAwayResult = useRef('');
 
   useEffect(bindPageAudio, []);
@@ -93,12 +93,22 @@ function App() {
 
   useEffect(() => {
     if (!room.started) {
-      matchOpened.current = false;
-    } else if (!matchOpened.current) {
-      matchOpened.current = true;
-      if (room.role === 'guest' && route.page === 'room') navigate(gamePath(room.game, 'play', 'online'));
+      matchOpened.current = '';
+    } else if (room.role === 'guest' && matchOpened.current !== room.matchId) {
+      if (route.page === 'room') {
+        matchOpened.current = room.matchId;
+        navigate(gamePath(room.game, 'play', 'online'));
+      } else if (route.page === 'play' && route.online && route.id === room.game) {
+        matchOpened.current = room.matchId;
+      }
     }
-  }, [room.game, room.started, room.role, route.page, navigate]);
+  }, [room.game, room.started, room.role, room.matchId, route, navigate]);
+
+  useEffect(() => {
+    if (room.role === 'guest' && room.matchId && route.page === 'play' && route.online && (!room.started || route.id !== room.game)) {
+      navigate('/room', true);
+    }
+  }, [room.game, room.started, room.role, room.matchId, route, navigate]);
 
   function startGame(mode: GameMode) {
     if (route.page !== 'setup') return;
@@ -164,6 +174,17 @@ function App() {
     navigate(gamePath(room.game, 'play', 'online'));
   }
 
+  function rejoinRoom() {
+    const saved = room.guestRoom;
+    if (!saved) return;
+    if (room.code === saved.code && room.state === 'connected' && room.started) {
+      navigate(gamePath(room.game, 'play', 'online'));
+    } else {
+      room.join(saved.code);
+      navigate('/room?room=' + saved.code);
+    }
+  }
+
   function changeVolume(channel: keyof AudioLevels, value: number) {
     const levels = { ...audioLevels, [channel]: value };
     setLevelState(levels);
@@ -199,7 +220,7 @@ function App() {
       case 'games':
         return <CatalogPage home={route.page === 'home'} navigate={navigate} favorites={profile.profile?.favorites ?? []}
           disableFavorite={!apiAvailable || profile.status === 'loading' || favoriteBusy} favoriteError={favoriteError}
-          onFavorite={toggleFavorite} />;
+          onFavorite={toggleFavorite} rejoin={apiAvailable && room.guestRoom ? { room: room.guestRoom, resume: rejoinRoom } : undefined} />;
       case 'profile':
       case 'publicProfile':
         return <ProfilePage own={route.page === 'profile'} id={route.profileId} model={profile} friends={friends} navigate={navigate}

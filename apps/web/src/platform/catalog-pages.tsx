@@ -2,6 +2,7 @@ import { useDeferredValue, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import heroArt from '../assets/hero-orbit.jpg';
 import { apiAvailable } from '../network/api.ts';
+import type { GuestRoom } from '../network/guest-seat.ts';
 import { omokOverlineRules } from '../games/omok/rules.ts';
 import type { OmokOverline } from '../games/omok/rules.ts';
 import type { GameId } from '../games/scenes.ts';
@@ -87,9 +88,10 @@ function GamePreview({ id, active, navigate, onClose }: { id: GameId; active: bo
   );
 }
 
-export function CatalogPage({ home, navigate, favorites, disableFavorite, favoriteError, onFavorite }: {
+export function CatalogPage({ home, navigate, favorites, disableFavorite, favoriteError, onFavorite, rejoin }: {
   home: boolean; navigate: Navigate; favorites: GameId[]; disableFavorite: boolean;
   favoriteError: boolean; onFavorite: (id: GameId) => void;
+  rejoin?: { room: GuestRoom; resume: () => void };
 }) {
   const { t } = useTranslation();
   const [filter, setFilter] = useState<Filter>('all');
@@ -156,6 +158,11 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
   }
   return (
     <div className="site-width">
+      {home && rejoin && <section className="surface resume-room" aria-label={t('recentRoom')}>
+        <img src={games[rejoin.room.game].art} alt="" width="64" height="52" />
+        <div><small>{t('recentRoom')}</small><strong>{t(rejoin.room.game)} <code>{rejoin.room.code}</code></strong></div>
+        <button type="button" className="button button-primary" onClick={rejoin.resume}>{t('rejoinRoom')}</button>
+      </section>}
       {home && (
         <section className="hero" aria-labelledby="hero-title">
           <div className="hero-art"><img src={heroArt} alt="" fetchPriority="high" width="1360" height="765" /></div>

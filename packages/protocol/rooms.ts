@@ -3,6 +3,7 @@ import type { ProfileGame, ProfileSummary } from './profile.ts';
 
 const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 export const roomCodePattern = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
+export const roomCapacity = { omok: 2, physics: 2, othello: 2, chess: 2 } satisfies Record<ProfileGame, number>;
 
 export type Role = 'host' | 'guest';
 export interface Participant { role: Role; profile?: ProfileSummary }

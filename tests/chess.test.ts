@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chessIndex, chessPosition, chessResult, chessTurn, encodeChessMove, placeChess, readChessHistory } from '../apps/web/src/games/chess/rules.ts';
+import { chessIndex, chessLosses, chessPosition, chessResult, chessTurn, encodeChessMove, placeChess, readChessHistory } from '../apps/web/src/games/chess/rules.ts';
 import type { Promotion } from '../apps/web/src/games/chess/rules.ts';
 
 type Square = Parameters<typeof chessIndex>[0];
@@ -30,4 +30,12 @@ test('chess replay preserves castling, en passant and promotion', () => {
   const promote = [...advance, move('b7', 'a8', 'n')];
   assert.ok(readChessHistory(promote));
   assert.equal(chessPosition(promote).get('a8')?.type, 'n');
+});
+
+test('chess losses attribute captures to the losing side and include en passant', () => {
+  const history = [move('e2', 'e4'), move('a7', 'a6'), move('e4', 'e5'), move('d7', 'd5'), move('e5', 'd6'),
+    move('c7', 'd6')];
+  assert.ok(readChessHistory(history));
+  assert.deepEqual(chessLosses(history), { w: { k: 0, q: 0, r: 0, b: 0, n: 0, p: 1 }, b: { k: 0, q: 0, r: 0, b: 0, n: 0, p: 1 } });
+  assert.equal(chessLosses(history.slice(0, 5)).w.p, 0);
 });

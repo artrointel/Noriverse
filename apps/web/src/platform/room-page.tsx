@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import { roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
 import { oppositeStone, sideLabel } from '../games/table.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import { apiAvailable } from '../network/api.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
-import { games } from './game-catalog.ts';
+import { gameIds, games } from './game-catalog.ts';
+import type { GameId } from '../games/scenes.ts';
 import { avatars } from './avatars.ts';
 import { FriendButton, InviteDialog } from './friends.tsx';
 import type { Friends } from './friends.tsx';
@@ -21,12 +22,15 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const [code, setCode] = useState(() => invite.trim().toUpperCase().slice(0, 8));
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'manual'>('idle');
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [gameChoice, setGameChoice] = useState<GameId>();
+  const [gameError, setGameError] = useState(false);
   const activeGame = room.matchId ? room.game : 'omok';
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
   const connected = room.state === 'connected';
   const hasRoom = Boolean(room.code) && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full';
   const participants = (['host', 'guest'] as const).map(role => room.participants.find(participant => participant.role === role)
     ?? (room.role === role || connected ? { role, profile: undefined } : undefined)).filter(participant => participant !== undefined);
+  const gameChoices = gameIds.filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
 
   async function copyInvite() {
     try {
@@ -78,13 +82,36 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                   );
                 })}</ul>
               </section>
+              {room.role === 'host' && gameChoices.length > 0 && <details className="room-games">
+                <summary>{t('changeRoomGame')}</summary>
+                <form className="room-game-picker" onSubmit={async event => {
+                  event.preventDefault();
+                  if (!gameChoice || !gameChoices.includes(gameChoice)) return;
+                  setGameError(false);
+                  if (await room.changeGame(gameChoice)) setGameChoice(undefined);
+                  else setGameError(true);
+                }}>
+                  <fieldset disabled={room.changingGame}>
+                    <legend>{t('roomGameChoices', { count: participants.length })}</legend>
+                    <div>{gameChoices.map(id => <label key={id} className="choice">
+                      <input type="radio" name="room-game" checked={gameChoice === id} onChange={() => { setGameChoice(id); setGameError(false); }} />
+                      <img src={games[id].art} alt="" width="40" height="32" /><strong>{t(id)}</strong>
+                    </label>)}</div>
+                  </fieldset>
+                  {room.started && !room.finishedAt && <p className="muted">{t('changeLiveGame')}</p>}
+                  {gameError && <p role="alert">{t('changeGameError')}</p>}
+                  <button type="submit" className="button button-primary" disabled={!gameChoice || !gameChoices.includes(gameChoice) || room.changingGame}>
+                    {t(room.changingGame ? 'loading' : 'applyRoomGame')}
+                  </button>
+                </form>
+              </details>}
               {room.state && <p className="connection" role="status">{t(connected && room.role === 'guest' && !room.started ? 'waitingStart' : room.state)}</p>}
               <div className="panel-actions">
                 {room.role === 'host' && <button className="button button-secondary" type="button"
                   disabled={!friends.owner || participants.some(participant => participant.role === 'guest')}
                   onClick={() => setInviteOpen(true)}>{t('inviteFriend')}</button>}
                 {connected && (room.started || room.role === 'host') && (
-                  <button type="button" className="button button-primary" onClick={onPlay}>{t(room.finishedAt ? 'resultTitle' : room.started ? 'resume' : 'start')}</button>
+                  <button type="button" className="button button-primary" disabled={room.changingGame} onClick={onPlay}>{t(room.finishedAt ? 'resultTitle' : room.started ? 'resume' : 'start')}</button>
                 )}
                 {(room.state === 'failed' || room.state === 'disconnected') && (
                   <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>

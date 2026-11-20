@@ -1,17 +1,16 @@
 import type Phaser from 'phaser';
 import type { Move } from 'chess.js';
 import type { GameView } from '../scenes.ts';
-import { chessIndex, chessPosition } from './rules.ts';
+import { chessIndex, chessPieceFrames, chessPosition } from './rules.ts';
 import { addStoneShadow, createStoneShadow } from '../board-art.ts';
 import { paintTargetMark, paintTileMark, revealMoveMarks } from '../board-marks.ts';
-import { pieceOutlineTexture } from '../piece-outline.ts';
+import { createPieceSelection } from '../piece-selection.ts';
 import { playSound } from '../../platform/audio.ts';
 import boardArt from '../../assets/chess-walnut-board.jpg';
 import chessPieces from '../../assets/chess-staunton.png';
 
 const offset = 32;
 const cell = 52;
-const pieceFrames = { k: 0, q: 1, r: 2, b: 3, n: 4, p: 5 };
 const pieceTexture = 'chess-staunton';
 const boardTexture = 'chess-walnut';
 const moveDuration = 210;
@@ -26,9 +25,7 @@ export function chessScene(view: () => GameView) {
   let board: Phaser.GameObjects.Image;
   let recentMarks: Phaser.GameObjects.Graphics;
   let hints: Phaser.GameObjects.Graphics;
-  let outline: Phaser.GameObjects.Image;
-  let selectedArt: Phaser.GameObjects.Image | undefined;
-  let selectedFrame: Phaser.Textures.Frame | undefined;
+  let showSelection: ReturnType<typeof createPieceSelection>;
   let previous: GameView | undefined;
   const pieces = new Map<number, RenderedPiece>();
   const departing = new Set<RenderedPiece>();
@@ -47,7 +44,7 @@ export function chessScene(view: () => GameView) {
     chessPosition(history).board().flat().forEach((piece, index) => {
       if (!piece) return;
       const [x, y] = squareCenter(index);
-      const frame = pieceFrames[piece.type] + (piece.color === 'w' ? 0 : 6);
+      const frame = chessPieceFrames[piece.type] + (piece.color === 'w' ? 0 : 6);
       const art = scene.add.image(x, y, pieceTexture, frame).setDisplaySize(51, 51).setDepth(2);
       const shadow = addStoneShadow(scene, x + 1, y + 15, 26).setDisplaySize(39, 15).setDepth(1);
       pieces.set(index, { art, shadow });
@@ -90,7 +87,7 @@ export function chessScene(view: () => GameView) {
       scene.tweens.add({ targets: captured.shadow, alpha: 0, duration: 250 });
       playSound('drop');
     } else playSound('place');
-    const promoted = move.promotion === undefined ? undefined : pieceFrames[move.promotion] + (move.color === 'w' ? 0 : 6);
+    const promoted = move.promotion === undefined ? undefined : chessPieceFrames[move.promotion] + (move.color === 'w' ? 0 : 6);
     slide(scene, from, to, promoted);
     if (move.isKingsideCastle()) slide(scene, row + 7, row + 5);
     if (move.isQueensideCastle()) slide(scene, row, row + 3);
@@ -127,25 +124,6 @@ export function chessScene(view: () => GameView) {
     if (cursor !== null) paintTileMark(hints, ...squareCenter(cursor), cell, 'focus');
   }
 
-  function updateOutline(scene: Phaser.Scene, art?: Phaser.GameObjects.Image) {
-    if (art !== selectedArt || art?.frame !== selectedFrame) {
-      selectedArt = art;
-      selectedFrame = art?.frame;
-      scene.tweens.killTweensOf(outline);
-      const key = art && pieceOutlineTexture(scene, art.frame);
-      outline.setVisible(Boolean(key));
-      if (key) {
-        const animate = !matchMedia('(prefers-reduced-motion: reduce)').matches;
-        outline.setTexture(key).setAlpha(animate ? .55 : 1);
-        if (animate) scene.tweens.add({ targets: outline, alpha: 1, duration: 150, ease: 'Sine.Out' });
-      }
-    }
-    if (art) {
-      outline.setPosition(art.x, art.y).setScale(art.scaleX, art.scaleY);
-      if (outline.depth !== art.depth - .5) outline.setDepth(art.depth - .5);
-    }
-  }
-
   return {
     preload(this: Phaser.Scene) {
       this.load.image(boardTexture, boardArt);
@@ -156,7 +134,7 @@ export function chessScene(view: () => GameView) {
       board = this.add.image(240, 240, boardTexture).setDisplaySize(450, 450).setDepth(-1);
       recentMarks = this.add.graphics().setDepth(-.5);
       hints = this.add.graphics().setDepth(.25);
-      outline = this.add.image(0, 0, pieceTexture, 0).setVisible(false);
+      showSelection = createPieceSelection(this);
       createStoneShadow(this);
       for (let i = 0; i < 8; i++) {
         const style = { color: '#fff0d4', fontSize: '10px', fontStyle: 'bold' };
@@ -190,7 +168,7 @@ export function chessScene(view: () => GameView) {
       if (!previous || current.canMove !== previous.canMove || current.chessTargets !== previous.chessTargets || current.cursor !== previous.cursor) {
         paintHints(current);
       }
-      updateOutline(this, current.canMove && current.chessSelected !== undefined ? pieces.get(current.chessSelected)?.art : undefined);
+      showSelection(current.canMove && current.chessSelected !== undefined ? pieces.get(current.chessSelected)?.art : undefined);
       previous = current;
     },
   };

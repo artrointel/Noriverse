@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { createRoomCode, readSignal, roomCodePattern } from '../../packages/protocol/rooms.ts';
+import { createRoomCode, readSignal, roomCapacity, roomCodePattern } from '../../packages/protocol/rooms.ts';
 import type { Participant, Role, RoomMessage } from '../../packages/protocol/rooms.ts';
 import { isProfileGame, profileIdPattern } from '../../packages/protocol/profile.ts';
 import type { ProfileGame, ProfileSummary } from '../../packages/protocol/profile.ts';
@@ -80,6 +80,16 @@ export default {
       return cors(new Response(null, { status: saved ? 204 : 404 }));
     }
 
+    const gameRoomCode = url.pathname.match(/^\/api\/rooms\/([^/]+)\/game$/)?.[1];
+    if (gameRoomCode && roomCodePattern.test(gameRoomCode) && request.method === 'POST') {
+      const input = await readBody(request) as { seat?: unknown; game?: unknown } | undefined;
+      if (typeof input?.seat !== 'string' || !profileIdPattern.test(input.seat) || !isProfileGame(input.game)) {
+        return cors(new Response(null, { status: 400 }));
+      }
+      const changed = await env.ROOMS.getByName(gameRoomCode).changeGame(input.seat, input.game);
+      return cors(new Response(null, { status: changed ? 204 : 409 }));
+    }
+
     if (url.pathname === '/api/rooms' && request.method === 'POST') {
       const body = await readBody(request);
       const game = body && typeof body === 'object' && 'game' in body ? body.game : 'omok';
@@ -114,6 +124,16 @@ export class Room extends DurableObject<Env> {
       await this.ctx.storage.put('reservation', reservation);
       await this.ctx.storage.setAlarm(reservation.expires);
       return reservation.host;
+    });
+  }
+
+  async changeGame(seat: string, game: ProfileGame) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const reservation = await this.ctx.storage.get<Reservation>('reservation');
+      if (!reservation || reservation.host !== seat || reservation.expires <= Date.now() || !this.socketFor('host')) return false;
+      if ((this.socketFor('guest') ? 2 : 1) > roomCapacity[game]) return false;
+      await this.ctx.storage.put('reservation', { ...reservation, game });
+      return true;
     });
   }
 

@@ -37,6 +37,13 @@ let musicScene: MusicScene = 'lobby';
 let lobbyTrack = initialLobbyTrack();
 let musicTrack: MusicTrack = lobbyTrack;
 const trackListeners = new Set<() => void>();
+const audioReadyListeners = new Set<() => void>();
+
+export function onAudioReady(listener: () => void) {
+  audioReadyListeners.add(listener);
+  document.addEventListener('visibilitychange', listener);
+  return () => { audioReadyListeners.delete(listener); document.removeEventListener('visibilitychange', listener); };
+}
 const playingNotes = new Set<OscillatorNode>();
 let lastEffect = -1;
 let resumeRequest: Promise<void> | undefined;
@@ -127,10 +134,14 @@ function unlockAudio() {
       graph = createGraph();
       applyLevels();
     }
-    if (graph.context.state === 'running') {
+    const ready = () => {
       syncMusic();
+      for (const listener of audioReadyListeners) listener();
+    };
+    if (graph.context.state === 'running') {
+      ready();
     } else if (!resumeRequest) {
-      resumeRequest = graph.context.resume().then(syncMusic).catch(() => {})
+      resumeRequest = graph.context.resume().then(ready).catch(() => {})
         .finally(() => { resumeRequest = undefined; });
     }
   } catch {
@@ -177,11 +188,12 @@ function texture(when: number, duration: number, volume: number, center: number)
 }
 
 export function playSound(effect: Effect, strength = 1) {
-  if (!graph || graph.context.state !== 'running' || !levels.effects || document.hidden) return;
+  if (!levels.effects) return true;
+  if (!graph || graph.context.state !== 'running' || document.hidden) return false;
   const time = graph.context.currentTime;
   switch (effect) {
     case 'click':
-      if (time - lastEffect < 0.055) return;
+      if (time - lastEffect < 0.055) return true;
       lastEffect = time;
       tone(time, 540, .07, .12, 'effects', 'sine', 360);
       break;
@@ -219,7 +231,9 @@ export function playSound(effect: Effect, strength = 1) {
       [62, 57, 50].forEach((note, index) => tone(time + index * .12, frequency(note), .37, .13, 'effects', 'sine'));
       break;
     case 'turn':
-      [69, 74].forEach((note, index) => tone(time + index * .07, frequency(note), .17, .105, 'effects', 'sine'));
+      tone(time, 659.25, .22, .20, 'effects', 'triangle');
+      tone(time + .135, 987.77, .30, .22, 'effects', 'triangle');
+      tone(time + .135, 1975.53, .19, .052, 'effects');
       break;
     case 'tick':
       texture(time, .028, .16, strength % 2 ? 2450 : 1750);
@@ -230,6 +244,7 @@ export function playSound(effect: Effect, strength = 1) {
       tone(time + .11, frequency(64), .26, .08, 'effects', 'sine');
       break;
   }
+  return true;
 }
 
 function scheduleMusic() {
