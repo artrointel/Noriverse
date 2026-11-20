@@ -27,7 +27,7 @@ import { createLocalRound, PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
 import { defaultMatchSettings } from './games/match-settings.ts';
 import { puzzleOutcome } from './games/sichuan/multiplayer.ts';
-import { RoomPage } from './platform/room-page.tsx';
+import { CreateRoomPage, RoomPage } from './platform/room-page.tsx';
 import { FriendRequestToast, FriendsPage, useFriends } from './platform/friends.tsx';
 import { InvitationToasts, useInvitations } from './platform/invitations.tsx';
 import { usePreferences } from './platform/preferences.ts';
@@ -55,6 +55,7 @@ function App() {
     return boards as Record<BoardGame, ReturnType<typeof createLocalBoard>>;
   });
   const [settings, setSettings] = useState(defaultMatchSettings);
+  const [selectedRoomGame, selectRoomGame] = useState<GameId>();
   const { power, flick: flickSettings, allowDoubleThree, puzzle: { settings: sichuanSettings }, overline, turnLimit } = settings;
   const roomOpen = Boolean(room.code && !['closed', 'missing', 'full'].includes(room.state ?? ''));
   const backdropGame = playGame ?? (roomOpen && (route.page === 'room' || (route.page === 'play' && route.online)) ? room.game : undefined);
@@ -97,7 +98,7 @@ function App() {
   }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.startedAt, room.puzzle, room.role, room.inMatch, route]);
 
   useEffect(() => {
-    const view = route.id ? t(route.id) : route.page === 'room' ? t('room')
+    const view = route.id ? t(route.id) : route.page === 'room' ? t('room') : route.page === 'createRoom' ? t('newRoom')
       : route.page === 'games' ? t('library') : null;
     const brand = i18n.resolvedLanguage === 'ko' ? '놀이버스' : 'Noriverse';
     document.title = view ? view + ' · ' + brand : brand + ' · ' + t('siteSummary');
@@ -258,6 +259,8 @@ function App() {
           onStart={startGame} navigate={navigate} />;
       case 'room':
         return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
+      case 'createRoom':
+        return <CreateRoomPage selected={selectedRoomGame} select={selectRoomGame} navigate={navigate} />;
       case 'play': {
         const id = route.id;
         const board = isBoardGame(id) ? id : undefined;
@@ -314,13 +317,22 @@ function App() {
             <RouteLink href="/games" navigate={navigate} aria-current={'id' in route || route.page === 'games' ? 'page' : undefined}>{t('games')}</RouteLink>
           </nav>
           <div className="header-actions">
-            <RouteLink href="/room" navigate={navigate} className="header-join" aria-label={t(room.code ? 'activeRoom' : 'joinRoom')}>
-              <span className={room.code ? 'room-marker room-marker-active' : 'room-marker'} aria-hidden="true" />
-              <span className="header-join-label">{t(room.code ? 'activeRoom' : 'joinRoom')}</span>
-            </RouteLink>
-            <ProfileNav profile={profile.profile} navigate={navigate} />
-            <SettingsMenu preferences={preferences} levels={audioLevels} onVolume={changeVolume} path={path}
-              presence={apiAvailable && profile.profile ? { mode: presence, change: mode => profile.setPreferences({ presence: mode }) } : undefined} />
+            <div className="header-room-actions">
+              <RouteLink href="/room" navigate={navigate} className="header-room-link" aria-label={t(roomOpen ? 'activeRoom' : 'joinRoom')}
+                title={t(roomOpen ? 'activeRoom' : 'joinRoom')} aria-current={route.page === 'room' ? 'page' : undefined}>
+                <span className={roomOpen ? 'room-marker room-marker-active' : 'room-marker'} aria-hidden="true" />
+                <span className="header-room-label">{t(roomOpen ? 'activeRoom' : 'joinRoom')}</span>
+              </RouteLink>
+              <RouteLink href="/room/create" navigate={navigate} className="header-room-link header-create" aria-label={t('newRoom')}
+                title={t('newRoom')} aria-current={route.page === 'createRoom' ? 'page' : undefined}>
+                <span className="header-create-icon" aria-hidden="true">+</span><span className="header-room-label">{t('newRoom')}</span>
+              </RouteLink>
+            </div>
+            <div className="header-account-actions">
+              <ProfileNav profile={profile.profile} navigate={navigate} />
+              <SettingsMenu preferences={preferences} levels={audioLevels} onVolume={changeVolume} path={path}
+                presence={apiAvailable && profile.profile ? { mode: presence, change: mode => profile.setPreferences({ presence: mode }) } : undefined} />
+            </div>
           </div>
         </div>
       </header>

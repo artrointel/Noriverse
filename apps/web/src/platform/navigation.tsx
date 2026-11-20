@@ -30,6 +30,7 @@ export function readRoute(url: URL) {
   const invite = url.searchParams.get('room') ?? '';
   const online = url.searchParams.get('mode') === 'online';
   const [section, id, step, extra] = url.pathname.split('/').filter(Boolean);
+  if (section === 'room' && id === 'create' && !step) return { page: 'createRoom' } as const;
   if (section === 'room' || (!section && invite)) return { page: 'room', invite } as const;
   if (!section) return { page: 'home' } as const;
   if (section === 'profile' && !id) return { page: 'profile' } as const;
@@ -98,7 +99,7 @@ export function BackLink({ navigate, fallback, fallbackLabel }: { navigate: Navi
   const { t } = useTranslation();
   const { previous, back } = useContext(BackNavigation);
   const route = previous && readRoute(new URL(previous, location.origin));
-  const label = route && (route.page === 'room' ? 'room' : route.page === 'profile' ? 'myProfile'
+  const label = route && (route.page === 'room' ? 'room' : route.page === 'createRoom' ? 'newRoom' : route.page === 'profile' ? 'myProfile'
     : route.page === 'publicProfile' ? 'publicProfile' : route.page === 'friends' ? 'friends'
     : route.page === 'games' ? 'backToGames' : route.page === 'home' ? 'home'
     : route.page === 'setup' ? 'settings' : 'id' in route ? route.id : undefined);

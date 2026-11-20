@@ -18,15 +18,15 @@ function Tags({ id }: { id: GameId }) {
   return <div className="game-tags"><span>{t(games[id].category)}</span><span>{t(games[id].players)}</span></div>;
 }
 
-function GameCard({ id, selected, preview, disabled, onSelect, favorite }: {
-  id: GameId; selected: boolean; preview: boolean; disabled?: boolean; onSelect: (id: GameId, button: HTMLButtonElement) => void;
+function GameCard({ id, selected, preview, selectable, disabled, onSelect, favorite }: {
+  id: GameId; selected: boolean; preview: boolean; selectable?: boolean; disabled?: boolean; onSelect: (id: GameId, button: HTMLButtonElement) => void;
   favorite?: { selected: boolean; disabled: boolean; toggle: (id: GameId) => void };
 }) {
   const { t } = useTranslation();
   const game = games[id];
   return (
     <article className="game-card" data-selected={selected}>
-      <button type="button" className="card-link" aria-label={t(id)} aria-pressed={preview ? selected : undefined} disabled={disabled}
+      <button type="button" className="card-link" aria-label={t(id)} aria-pressed={preview || selectable ? selected : undefined} disabled={disabled}
         aria-controls={preview && selected ? 'catalog-preview' : undefined} onClick={event => onSelect(id, event.currentTarget)}>
         <span className={'card-art card-art-' + id}><img src={game.art} alt="" width="880" height="587" decoding="async" /></span>
         <span className="card-copy">
@@ -45,13 +45,13 @@ function GameCard({ id, selected, preview, disabled, onSelect, favorite }: {
   );
 }
 
-export function GameSelectionGrid({ ids, selected, onSelect, gridRef, busy, favorites, children }: {
+export function GameSelectionGrid({ ids, selected, onSelect, gridRef, busy, favorites, children, selectable }: {
   ids: GameId[]; selected?: GameId; onSelect: (id: GameId, button: HTMLButtonElement) => void;
-  gridRef?: Ref<HTMLDivElement>; busy?: boolean; children?: ReactNode;
+  gridRef?: Ref<HTMLDivElement>; busy?: boolean; children?: ReactNode; selectable?: boolean;
   favorites?: { games: GameId[]; disabled: boolean; toggle: (id: GameId) => void };
 }) {
   return <div ref={gridRef} className="game-grid" aria-busy={busy}>
-    {ids.map(id => <GameCard key={id} id={id} selected={selected === id} preview={Boolean(favorites)} disabled={!favorites && busy}
+    {ids.map(id => <GameCard key={id} id={id} selected={selected === id} preview={Boolean(favorites)} selectable={selectable} disabled={!favorites && busy}
       onSelect={onSelect} favorite={favorites && { selected: favorites.games.includes(id), disabled: favorites.disabled, toggle: favorites.toggle }} />)}
     {children}
   </div>;

@@ -13,7 +13,7 @@ import { gameIds, games } from './game-catalog.ts';
 import { avatars } from './avatars.ts';
 import { FriendButton, InviteDialog } from './friends.tsx';
 import type { Friends } from './friends.tsx';
-import { BackLink, routeHref, RouteLink } from './navigation.tsx';
+import { BackLink, gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { GameSelectionGrid } from './catalog-pages.tsx';
 import { GameFeature, GameRulesEditor, GameRulesSummary } from './game-settings.tsx';
@@ -22,6 +22,29 @@ import { GearIcon } from './gear-icon.tsx';
 import { ReactionLayer, ReactionPicker } from './game-reactions.tsx';
 
 type Room = ReturnType<typeof useRoomBoard>;
+const roomGames = gameIds.filter(isRoomGame);
+
+export function CreateRoomPage({ selected, select, navigate }: {
+  selected?: RoomGame; select: (game: RoomGame) => void; navigate: Navigate;
+}) {
+  const { t } = useTranslation();
+  return <div className="site-width subpage create-room-page">
+    <BackLink fallback="/games" fallbackLabel="backToGames" navigate={navigate} />
+    <h1 className="match-page-title" tabIndex={-1}>{t('newRoom')}</h1>
+    <form onSubmit={event => {
+      event.preventDefault();
+      if (apiAvailable && selected) navigate(gamePath(selected, 'setup', 'online'));
+    }}>
+      <p className="muted" id="room-game-prompt">{t(apiAvailable ? 'chooseRoomGame' : 'roomUnavailable')}</p>
+      <div role="group" aria-labelledby="room-game-prompt">
+        <GameSelectionGrid ids={roomGames} selected={selected} selectable onSelect={select} />
+      </div>
+      <div className="create-room-actions">
+        <button type="submit" className="button button-primary" disabled={!selected || !apiAvailable}>{t('continueRoomCreation')}</button>
+      </div>
+    </form>
+  </div>;
+}
 
 function RoomSettingsDialog({ room, close }: { room: Room; close: () => void }) {
   const { t } = useTranslation();
@@ -151,7 +174,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const participants = room.role && !room.participants.some(person => person.role === room.role)
     ? [...room.participants, { role: room.role, profile: undefined }] : room.participants;
   const capacity = roomCapacity[activeGame];
-  const gameChoices = gameIds.filter(isRoomGame).filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
+  const gameChoices = roomGames.filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
   const canEdit = room.role === 'host' && (!room.started || room.finishedAt > 0);
 
   useEffect(() => {
