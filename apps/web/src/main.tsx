@@ -11,8 +11,8 @@ import { apiAvailable } from './network/api.ts';
 import type { GameId } from './games/scenes.ts';
 import type { Stone } from './games/table.ts';
 import { oppositeStone } from './games/table.ts';
-import { nextDeadline } from './games/turn-clock.ts';
-import type { TurnLimit } from './games/turn-clock.ts';
+import { nextDeadline, resolveTurnTimeout } from './games/turn-clock.ts';
+import type { TimeoutChoice, TurnLimit } from './games/turn-clock.ts';
 import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setMusicScene } from './platform/audio.ts';
 import type { AudioLevels } from './platform/audio.ts';
 import { CatalogPage, GameDetail, GameSetup } from './platform/catalog-pages.tsx';
@@ -122,7 +122,7 @@ function App() {
     const time = Date.now();
     setLocalBoards(previous => {
       const current = previous[id];
-      if (current.finishedAt || (current.deadline && time >= current.deadline)) return previous;
+      if (current.finishedAt || current.timeoutPending || (current.deadline && time >= current.deadline)) return previous;
       const rules = boardRules[id];
       const history = rules.place(current.history, index, current.allowDoubleThree);
       if (!history) return previous;
@@ -138,10 +138,19 @@ function App() {
       if (current.finishedAt) return previous;
       if (expiredDeadline !== undefined) {
         if (current.deadline !== expiredDeadline || time < expiredDeadline) return previous;
-        return { ...previous, [id]: { ...current, finishedAt: expiredDeadline, timedOut: color, deadline: 0 } };
+        return { ...previous, [id]: { ...current, timeoutPending: { color, at: expiredDeadline }, deadline: 0 } };
       }
       if (current.deadline && time >= current.deadline) return previous;
-      return { ...previous, [id]: { ...current, finishedAt: time, surrendered: color, deadline: 0 } };
+      return { ...previous, [id]: { ...current, finishedAt: time, surrendered: color, deadline: 0, timeoutPending: undefined } };
+    });
+  }
+
+  function decideLocalBoard(id: BoardGame, choice: TimeoutChoice, at: number) {
+    const now = Date.now();
+    setLocalBoards(previous => {
+      const current = previous[id];
+      if (!current.timeoutPending || current.timeoutPending.at !== at || current.finishedAt) return previous;
+      return { ...previous, [id]: { ...current, ...resolveTurnTimeout(current.timeoutPending, choice, now) } };
     });
   }
 
@@ -215,7 +224,8 @@ function App() {
           allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true} record={apiAvailable && profile.profile ? profile.record : undefined}
           move={online ? room.move : index => { if (board) placeLocal(board, index); }}
           reset={online ? room.rematch : () => { if (board) rematchBoard(board); }}
-          endLocal={(color, deadline) => { if (board) endLocalBoard(board, color, deadline); }} />;
+          endLocal={(color, deadline) => { if (board) endLocalBoard(board, color, deadline); }}
+          decideLocal={(choice, at) => { if (board) decideLocalBoard(board, choice, at); }} />;
       }
       default:
         return <div className="site-width subpage missing">

@@ -4,19 +4,39 @@ export type AudioLevels = Record<Channel, number>;
 
 const defaultLevels: AudioLevels = { music: 24, effects: 68 };
 const scores = {
-  lobby: { chords: [[45, 52, 57, 60], [41, 48, 53, 57], [48, 55, 60, 64], [43, 50, 55, 59]], pattern: [0, -1, 2, 1, -1, 3, 2, -1], interval: .38 },
+  orbit: { chords: [[45, 52, 57, 60], [41, 48, 53, 57], [48, 55, 60, 64], [43, 50, 55, 59]], pattern: [0, -1, 2, 1, -1, 3, 2, -1], interval: .38 },
+  skylight: { chords: [[48, 55, 59, 64], [45, 52, 60, 67], [41, 48, 57, 62], [43, 50, 59, 65]], pattern: [3, 2, -1, 1, 2, -1, 3, 1], interval: .43 },
+  lantern: { chords: [[50, 57, 60, 65], [55, 62, 65, 70], [53, 60, 64, 69], [57, 64, 67, 73]], pattern: [1, -1, 3, 2, -1, 1], interval: .52 },
+  paperComet: { chords: [[43, 55, 59, 62], [47, 54, 57, 62], [48, 55, 59, 64], [50, 57, 60, 66]], pattern: [0, 2, 3, -1, 1, 2, -1, 3], interval: .32 },
   omok: { chords: [[48, 55, 62, 64], [45, 52, 57, 60], [41, 48, 57, 60], [43, 50, 57, 62]], pattern: [1, -1, -1, 3, 2, -1, 0, -1], interval: .45 },
   othello: { chords: [[50, 57, 60, 65], [46, 53, 60, 62], [48, 55, 62, 67], [45, 52, 55, 61]], pattern: [2, -1, 3, -1, 1, 2, -1, 0], interval: .36 },
   chess: { chords: [[45, 52, 60, 64], [47, 54, 59, 62], [43, 55, 59, 62], [44, 52, 59, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, -1], interval: .4 },
   physics: { chords: [[43, 50, 58, 62], [46, 53, 60, 65], [41, 48, 57, 60], [45, 52, 55, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, 1], interval: .265 },
 } as const;
+const lobbyTracks = ['orbit', 'skylight', 'lantern', 'paperComet'] as const;
+type LobbyTrack = typeof lobbyTracks[number];
+export type MusicTrack = keyof typeof scores;
+type MusicScene = 'lobby' | Exclude<MusicTrack, LobbyTrack>;
+
+function randomLobbyTrack(previous?: string | null): LobbyTrack {
+  const choices = lobbyTracks.filter(track => track !== previous);
+  return choices[Math.floor(Math.random() * choices.length)];
+}
+
+function initialLobbyTrack() {
+  try { return randomLobbyTrack(localStorage.getItem('noriverse.lobby-track')); }
+  catch { return randomLobbyTrack(); }
+}
 const frequency = (note: number) => 440 * 2 ** ((note - 69) / 12);
 let levels = defaultLevels;
 let graph: { context: AudioContext; music: GainNode; effects: GainNode; noise: AudioBuffer } | undefined;
 let clock: number | undefined;
 let nextBeat = 0;
 let beat = 0;
-let musicScene: keyof typeof scores = 'lobby';
+let musicScene: MusicScene = 'lobby';
+let lobbyTrack = initialLobbyTrack();
+let musicTrack: MusicTrack = lobbyTrack;
+const trackListeners = new Set<() => void>();
 const playingNotes = new Set<OscillatorNode>();
 let lastEffect = -1;
 let resumeRequest: Promise<void> | undefined;
@@ -52,13 +72,36 @@ export function setAudioLevels(value: AudioLevels) {
   syncMusic();
 }
 
-export function setMusicScene(scene: keyof typeof scores) {
-  if (musicScene === scene) return;
-  musicScene = scene;
+function rememberLobbyTrack() {
+  try { localStorage.setItem('noriverse.lobby-track', lobbyTrack); } catch { /* Optional storage. */ }
+}
+
+function changeMusicTrack(track: MusicTrack) {
+  if (musicTrack === track) return;
+  musicTrack = track;
   beat = 0;
   nextBeat = (graph?.context.currentTime ?? 0) + .055;
-  if (!graph) return;
-  for (const note of playingNotes) note.stop(graph.context.currentTime + .025);
+  if (graph) for (const note of playingNotes) note.stop(graph.context.currentTime + .025);
+  for (const listener of trackListeners) listener();
+}
+
+export function getMusicTrack() { return musicTrack; }
+
+export function subscribeMusicTrack(listener: () => void) {
+  trackListeners.add(listener);
+  return () => { trackListeners.delete(listener); };
+}
+
+export function shuffleMusicTrack() {
+  const track = randomLobbyTrack(musicTrack);
+  if (musicScene === 'lobby') { lobbyTrack = track; rememberLobbyTrack(); }
+  changeMusicTrack(track);
+}
+
+export function setMusicScene(scene: MusicScene) {
+  if (musicScene === scene) return;
+  musicScene = scene;
+  changeMusicTrack(scene === 'lobby' ? lobbyTrack : scene);
 }
 
 function createGraph() {
@@ -192,7 +235,7 @@ export function playSound(effect: Effect, strength = 1) {
 function scheduleMusic() {
   if (!graph || graph.context.state !== 'running') return;
   const time = graph.context.currentTime;
-  const { chords, pattern, interval } = scores[musicScene];
+  const { chords, pattern, interval } = scores[musicTrack];
   nextBeat = Math.max(nextBeat, time + 0.015);
   while (nextBeat < time + .16) {
     const step = beat % pattern.length;
@@ -207,7 +250,7 @@ function scheduleMusic() {
       tone(nextBeat, frequency(note), .42, .11, 'music', 'triangle');
       tone(nextBeat + .105, frequency(note), .26, .023, 'music');
     }
-    if (musicScene === 'physics' && step === 4) tone(nextBeat, frequency(notes[0] - 12), .52, .12, 'music');
+    if (musicTrack === 'physics' && step === 4) tone(nextBeat, frequency(notes[0] - 12), .52, .12, 'music');
     nextBeat += interval;
     beat++;
   }
@@ -225,6 +268,7 @@ function syncMusic() {
 }
 
 export function bindPageAudio() {
+  rememberLobbyTrack();
   function click(event: MouseEvent) {
     if (!(event.target instanceof Element) || !event.isTrusted) return;
     unlockAudio();

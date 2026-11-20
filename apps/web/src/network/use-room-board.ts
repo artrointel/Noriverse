@@ -11,11 +11,12 @@ import type { ConnectionState } from './room-connection.ts';
 import { apiFetch } from './api.ts';
 import type { Stone } from '../games/table.ts';
 import { oppositeStone } from '../games/table.ts';
-import { isTurnLimit, nextDeadline } from '../games/turn-clock.ts';
-import type { TurnLimit } from '../games/turn-clock.ts';
+import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../games/turn-clock.ts';
+import type { PendingTimeout, TimeoutChoice, TurnLimit } from '../games/turn-clock.ts';
 
 type Match = { id: string; game: ProfileGame; hostColor: Stone; startedAt: number; finishedAt: number; allowDoubleThree: boolean;
-  history: number[]; physics?: FlickRound; power?: FlickPower; surrendered?: Stone; timedOut?: Stone; turnLimit: TurnLimit; deadline: number; clockOffset?: number };
+  history: number[]; physics?: FlickRound; power?: FlickPower; surrendered?: Stone; timedOut?: Stone; timeoutPending?: PendingTimeout;
+  turnLimit: TurnLimit; deadline: number; clockOffset?: number };
 const blankMatch: Match = { id: '', game: 'omok', hostColor: 1, startedAt: 0, finishedAt: 0, allowDoubleThree: true, history: [], turnLimit: 0, deadline: 0 };
 type Seat = { code: string; role: Role; token: string };
 
@@ -41,7 +42,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const [remoteTouch, setRemoteTouch] = useState<TouchPoint & { matchId: string; receivedAt: number }>();
   const lastIncomingTouch = useRef(-Infinity);
   const lastOutgoingTouch = useRef(-Infinity);
-  const { id: matchId, game, hostColor, startedAt, finishedAt, allowDoubleThree, history, surrendered, timedOut, turnLimit, deadline } = round;
+  const { id: matchId, game, hostColor, startedAt, finishedAt, allowDoubleThree, history, surrendered, timedOut, timeoutPending, turnLimit, deadline } = round;
   const playerColor = role === 'host' ? hostColor : role === 'guest' ? oppositeStone(hostColor) : undefined;
   const started = startedAt > 0;
   const seat = useRef<Seat | undefined>(undefined);
@@ -75,7 +76,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function commitMove(history: number[]) {
     const current = match.current;
     const now = Date.now();
-    if (expireTurn(now)) return;
+    if (current.timeoutPending || expireTurn(now)) return;
     const finishedAt = matchWinner({ ...current, history }) ? now : 0;
     update({ ...current, history, finishedAt, deadline: finishedAt ? 0 : nextDeadline(current.turnLimit, now) });
     snapshot();
@@ -83,7 +84,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   function acceptFlick(raw: unknown, color: Stone, revision: unknown) {
     const current = match.current;
-    if (!current.physics || current.physics.revision !== revision || matchTurn(current) !== color || expireTurn(Date.now())) return;
+    if (!current.physics || current.timeoutPending || current.physics.revision !== revision || matchTurn(current) !== color || expireTurn(Date.now())) return;
     const shot = readFlick(raw, current.physics, current.power ?? 1);
     if (!shot) return;
     update({ ...current, physics: { ...current.physics, shot }, deadline: 0 });
@@ -107,7 +108,16 @@ export function useRoomBoard(profile?: ProfileSummary) {
     if (!current.deadline || now < current.deadline || current.finishedAt) return false;
     const loser = matchTurn(current);
     if (loser === undefined) return false;
-    update({ ...current, timedOut: loser, finishedAt: current.deadline, deadline: 0 });
+    update({ ...current, timeoutPending: { color: loser, at: current.deadline }, deadline: 0 });
+    snapshot();
+    return true;
+  }
+
+  function decideTimeout(choice: TimeoutChoice, at: unknown, actor: Stone) {
+    const current = match.current;
+    const pending = current.timeoutPending;
+    if (!pending || pending.at !== at || current.finishedAt || actor === pending.color) return false;
+    update({ ...current, ...resolveTurnTimeout(pending, choice, Date.now()) });
     snapshot();
     return true;
   }
@@ -124,7 +134,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     const current = match.current;
     const now = Date.now();
     if (!current.startedAt || current.finishedAt || expireTurn(now)) return false;
-    update({ ...current, surrendered: color, finishedAt: now, deadline: 0 });
+    update({ ...current, surrendered: color, finishedAt: now, deadline: 0, timeoutPending: undefined });
     snapshot();
     return true;
   }
@@ -169,6 +179,10 @@ export function useRoomBoard(profile?: ProfileSummary) {
             finishBySurrender(guestColor);
             return;
           }
+          if (raw.type === 'timeout-choice' && 'choice' in raw && (raw.choice === 'claim' || raw.choice === 'extend') && 'at' in raw) {
+            decideTimeout(raw.choice, raw.at, guestColor);
+            return;
+          }
           if (raw.type === 'flick' && 'shot' in raw && 'revision' in raw) {
             acceptFlick(raw.shot, guestColor, raw.revision);
             return;
@@ -178,7 +192,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
           const next = boardRules[current.game].place(current.history, raw.index, current.allowDoubleThree);
           if (next) commitMove(next);
         } else if (raw.type === 'launch') {
-          if (!current.physics || current.physics.shot || !current.startedAt || current.finishedAt || !('id' in raw) || current.id !== raw.id
+          if (!current.physics || current.physics.shot || current.timeoutPending || !current.startedAt || current.finishedAt || !('id' in raw) || current.id !== raw.id
             || !('revision' in raw) || current.physics.revision !== raw.revision || !('shot' in raw)) return;
           const shot = readFlick(raw.shot, current.physics, current.power ?? 1);
           if (shot) update({ ...current, physics: { ...current.physics, shot }, deadline: 0 });
@@ -200,11 +214,14 @@ export function useRoomBoard(profile?: ProfileSummary) {
           if (endedBySurrender !== undefined && (endedBySurrender !== 1 && endedBySurrender !== 2 || raw.finishedAt === 0)) return;
           const timeoutColor = 'timedOut' in raw ? raw.timedOut : undefined;
           if (timeoutColor !== undefined && (timeoutColor !== 1 && timeoutColor !== 2 || !raw.finishedAt || endedBySurrender)) return;
+          const pending = 'timeoutPending' in raw ? readPendingTimeout(raw.timeoutPending, raw.startedAt) : undefined;
+          if ('timeoutPending' in raw && raw.timeoutPending !== undefined && (!pending || raw.finishedAt || physics?.shot)) return;
           const nextLimit = 'turnLimit' in raw ? raw.turnLimit : 0;
           const nextDeadlineAt = 'deadline' in raw ? raw.deadline : 0;
           if (!isTurnLimit(nextLimit) || typeof nextDeadlineAt !== 'number' || !Number.isSafeInteger(nextDeadlineAt)
-            || (nextLimit && raw.startedAt && !raw.finishedAt && !physics?.shot ? nextDeadlineAt < raw.startedAt + nextLimit * 1000 : nextDeadlineAt !== 0)) return;
+            || (nextLimit && raw.startedAt && !raw.finishedAt && !physics?.shot && !pending ? nextDeadlineAt < raw.startedAt + nextLimit * 1000 : nextDeadlineAt !== 0)) return;
           const next = isBoardGame(game) ? boardRules[game].readHistory(raw.history, raw.allowDoubleThree) : [];
+          if (next && pending && (!nextLimit || pending.color !== matchTurn({ ...current, game, history: next, physics }))) return;
           const previousRevision = current.physics?.revision ?? current.history.length;
           const nextRevision = physics?.revision ?? next?.length ?? 0;
           if (next && (raw.id !== current.id || (nextRevision >= previousRevision
@@ -215,7 +232,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
             const clockOffset = 'sentAt' in raw && typeof raw.sentAt === 'number' && Number.isSafeInteger(raw.sentAt)
               ? Date.now() - raw.sentAt : 0;
             update({ id: raw.id, game, hostColor: nextHostColor, startedAt: raw.startedAt, finishedAt: raw.finishedAt, allowDoubleThree: raw.allowDoubleThree,
-              history: next, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, turnLimit: nextLimit, deadline: nextDeadlineAt, clockOffset });
+              history: next, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, timeoutPending: pending,
+              turnLimit: nextLimit, deadline: nextDeadlineAt, clockOffset });
           }
         }
       },
@@ -269,7 +287,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   function move(index: number) {
     const current = match.current;
-    if (!ready.current || !current.id || !current.startedAt || current.finishedAt || !isBoardGame(current.game)) return;
+    if (!ready.current || !current.id || !current.startedAt || current.finishedAt || current.timeoutPending || !isBoardGame(current.game)) return;
     const rules = boardRules[current.game];
     const turn = rules.turn(current.history);
     const next = rules.place(current.history, index, current.allowDoubleThree);
@@ -283,7 +301,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   function flick(shot: Flick) {
     const current = match.current;
-    if (!ready.current || !current.physics || !current.startedAt || current.finishedAt) return;
+    if (!ready.current || !current.physics || !current.startedAt || current.finishedAt || current.timeoutPending) return;
     if (seat.current?.role === 'host') acceptFlick(shot, current.hostColor, current.physics.revision);
     else if (seat.current?.role === 'guest' && matchTurn(current) === oppositeStone(current.hostColor)) {
       link.current?.send({ type: 'flick', id: current.id, revision: current.physics.revision, shot });
@@ -291,7 +309,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   }
 
   return {
-    code, role, state, game, hostColor, playerColor, history, started, matchId, startedAt, finishedAt, surrendered, timedOut, turnLimit,
+    code, role, state, game, hostColor, playerColor, history, started, matchId, startedAt, finishedAt, surrendered, timedOut, timeoutPending, turnLimit,
     displayDeadline: deadline ? deadline + (round.clockOffset ?? 0) : 0,
     allowDoubleThree, participants, create, join, leave, move, physics: round.physics, power: round.power ?? 1, flick, settleFlick,
     winner: matchWinner(round), turn: matchTurn(round),
@@ -312,9 +330,16 @@ export function useRoomBoard(profile?: ProfileSummary) {
         return response.ok;
       } catch { return false; }
     },
-    canMove: state === 'connected' && started && !finishedAt && playerColor !== undefined
+    canMove: state === 'connected' && started && !finishedAt && !timeoutPending && playerColor !== undefined
       && matchTurn(round) === playerColor,
     reconnect() { if (code) connect(code, seat.current?.token); },
+    chooseTimeout(choice: TimeoutChoice) {
+      const current = match.current;
+      const pending = current.timeoutPending;
+      if (!pending || !playerColor || playerColor === pending.color) return false;
+      return role === 'host' ? decideTimeout(choice, pending.at, current.hostColor)
+        : ready.current && Boolean(link.current?.send({ type: 'timeout-choice', id: current.id, at: pending.at, choice }));
+    },
     start() {
       if (role !== 'host' || !ready.current || match.current.startedAt) return;
       const now = Date.now();

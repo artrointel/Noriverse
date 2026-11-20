@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { playSound } from './audio.ts';
+import { getMusicTrack, playSound, shuffleMusicTrack, subscribeMusicTrack } from './audio.ts';
 import type { AudioLevels } from './audio.ts';
 import type { usePreferences } from './preferences.ts';
 import { GearIcon } from './gear-icon.tsx';
@@ -13,6 +13,7 @@ export function SettingsMenu({ preferences, levels, onVolume, path }: {
   path: string;
 }) {
   const { t, i18n } = useTranslation();
+  const track = useSyncExternalStore(subscribeMusicTrack, getMusicTrack);
   const menu = useRef<HTMLDetailsElement>(null);
   const trigger = useRef<HTMLElement>(null);
 
@@ -105,6 +106,10 @@ export function SettingsMenu({ preferences, levels, onVolume, path }: {
                 onKeyUp={event => {
                   if (channel === 'effects' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) playSound('click');
                 }} />
+              {channel === 'music' && <button type="button" className="track-choice" onClick={shuffleMusicTrack}
+                title={t('shuffleTrack')} aria-label={t('shuffleNamedTrack', { track: t('track_' + track) })}>
+                <span aria-hidden="true">♫</span><strong>{t('track_' + track)}</strong><span className="track-shuffle">{t('shuffleTrack')}</span>
+              </button>}
             </div>
           ))}
         </details>

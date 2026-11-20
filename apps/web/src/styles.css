@@ -113,6 +113,11 @@ p { line-height: 1.6; }
 .sound-switch i::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; aspect-ratio: 1; background: var(--surface); box-shadow: 0 1px 3px #150e2c54; border-radius: 50%; transition: transform .15s; }
 .sound-switch[aria-checked="true"] i { background: var(--primary); }
 .sound-switch[aria-checked="true"] i::after { transform: translateX(13px); }
+.track-choice { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--text); text-align: start; cursor: pointer; }
+.track-choice > span:first-child { color: var(--primary); }
+.track-choice strong { min-width: 0; overflow-wrap: anywhere; font-size: .83rem; }
+.track-shuffle { margin-inline-start: auto; color: var(--muted); font-size: .74rem; }
+.track-choice:hover, .track-choice:focus-visible { border-color: var(--primary); }
 .setting-segments { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 3px; padding: 4px; border-radius: 11px; border: 1px solid var(--line); background: var(--raised); }
 .setting-segments label { position: relative; min-width: 0; }
 .setting-segments span { display: grid; place-items: center; min-height: 35px; padding: 3px; border: 1px solid transparent; border-radius: 8px; font-size: .85rem; font-weight: 720; color: var(--muted); cursor: pointer; transition: background .18s, color .18s, border-color .18s; }

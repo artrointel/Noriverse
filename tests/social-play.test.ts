@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isTurnLimit, nextDeadline } from '../apps/web/src/games/turn-clock.ts';
+import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../apps/web/src/games/turn-clock.ts';
 import { readProfilePreferences } from '../packages/protocol/profile.ts';
 import { readInvite, readTouch } from '../packages/protocol/rooms.ts';
 
@@ -9,6 +9,19 @@ test('custom turn limits accept whole seconds and keep zero unlimited', () => {
   for (const value of [-1, 3601, 1.5, '37', Infinity]) assert.equal(isTurnLimit(value), false);
   assert.equal(nextDeadline(0, 100), 0);
   assert.equal(nextDeadline(37, 100), 37100);
+});
+
+test('turn timeouts wait for a decision and extensions resume the same turn clock', () => {
+  const pending = readPendingTimeout({ color: 2, at: 2200 }, 1000);
+  assert.ok(pending);
+  assert.equal(readPendingTimeout({ color: 3, at: 2200 }, 1000), undefined);
+  assert.equal(readPendingTimeout({ color: 2, at: 999 }, 1000), undefined);
+  assert.deepEqual(resolveTurnTimeout(pending, 'extend', 3000), {
+    timeoutPending: undefined, timedOut: undefined, deadline: 18000, finishedAt: 0,
+  });
+  assert.deepEqual(resolveTurnTimeout(pending, 'claim', 3000), {
+    timeoutPending: undefined, timedOut: 2, deadline: 0, finishedAt: 3000,
+  });
 });
 
 test('touch and invite messages validate only supported public fields', () => {

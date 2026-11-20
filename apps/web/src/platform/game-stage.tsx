@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { touchResolution } from '../../../../packages/protocol/rooms.ts';
@@ -10,11 +10,11 @@ import { chessSize } from '../games/chess/rules.ts';
 import { TouchBurst } from './touch-burst.tsx';
 import { GearIcon } from './gear-icon.tsx';
 
-export function GameStage({ id, matchId, antialias, view, setCursor, info, infoStatus, timer, result, resultVisible, onShowResult,
+export function GameStage({ id, matchId, antialias, view, setCursor, info, infoStatus, timer, result, resultVisible, resultPending, decision, onShowResult,
   showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
-  info?: ReactNode; infoStatus?: string; timer?: ReactNode; result?: ReactNode;
-  resultVisible: boolean; onShowResult: () => void;
+  info?: ReactNode; infoStatus?: string; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
+  resultVisible: boolean; resultPending: boolean; onShowResult: () => void;
   showTouches: boolean; onTouchDisplay: (active: boolean) => void; localTouch: boolean;
   remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
 }) {
@@ -27,6 +27,7 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
   const burstId = useRef(0);
   const [bursts, setBursts] = useState<{ id: number; x: number; y: number; remote: boolean }[]>([]);
   const current = useRef(view);
+  const wasDeciding = useRef(false);
   const [graphics, setGraphics] = useState({ matchId, antialias });
   if (graphics.matchId !== matchId) setGraphics({ matchId, antialias });
   const roundAntialias = graphics.antialias;
@@ -36,7 +37,14 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
   const boardSize = id === 'othello' ? othelloSize : id === 'chess' ? chessSize : omokSize;
   const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : 'board';
 
-  useEffect(() => { current.current = view; }, [view]);
+  useLayoutEffect(() => { current.current = view; }, [view]);
+
+  const deciding = Boolean(decision);
+  const hasResult = Boolean(result);
+  useEffect(() => {
+    if (wasDeciding.current && !deciding && !hasResult && status === 'ready') mount.current?.focus({ preventScroll: true });
+    wasDeciding.current = deciding;
+  }, [deciding, hasResult, status]);
 
   function addBurst(point: TouchPoint, remote: boolean) {
     const bounds = mount.current?.getBoundingClientRect();
@@ -63,7 +71,7 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
     onTouch?.(point);
   }
 
-  const resultHidden = Boolean(result && !resultVisible);
+  const resultHidden = Boolean(result && !resultVisible && !resultPending);
   useEffect(() => {
     if (resultHidden) resultButton.current?.focus({ preventScroll: true });
   }, [resultHidden]);
@@ -203,6 +211,7 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
             style={{ left: burst.x, top: burst.y }} onEnd={() => setBursts(current => current.filter(item => item.id !== burst.id))} />)}</div>
         </div>
         {result && <div className="result-layer" hidden={!resultVisible}>{result}</div>}
+        {decision && <div className="result-layer decision-layer">{decision}</div>}
       </div>
       {status !== 'ready' && (
         <div className="stage-message">
