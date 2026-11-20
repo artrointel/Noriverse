@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
-import { availableTileMatches, connectTiles, createSichuanBoard, isMatchTile, nextSichuanCombo, shuffleTiles } from '../games/sichuan/rules.ts';
+import { availableTileMatches, connectTiles, createSichuanBoard, isMatchTile, nextSichuanCombo, obstacle, shuffleTiles } from '../games/sichuan/rules.ts';
 import type { Tile, TilePoint } from '../games/sichuan/rules.ts';
 import { resolveSichuanSettings } from '../games/sichuan/options.ts';
 import type { SichuanSettings } from '../games/sichuan/options.ts';
@@ -50,8 +50,9 @@ export function SichuanPage({ settings, dark, antialias, resolution, onResolutio
   const [selected, setSelected] = useState<number>();
   const [hint, setHint] = useState<readonly [number, number]>();
   const [cursor, setCursor] = useState<number | null>(null);
-  const [path, setPath] = useState<readonly TilePoint[]>();
-  const [feedback, setFeedback] = useState<'sichuanDifferent' | 'sichuanBlocked' | 'sichuanHinted' | 'sichuanShuffled'>();
+  const [match, setMatch] = useState<{ path: readonly TilePoint[]; combo: number }>();
+  const [rejected, setRejected] = useState<{ index: number }>();
+  const [feedback, setFeedback] = useState<'sichuanDifferent' | 'sichuanBlocked' | 'sichuanHinted' | 'sichuanShuffled' | 'sichuanObstacleFeedback'>();
   const [resultState, setResultState] = useState<{ at: number; reason: 'clear' | 'timeout' | 'stuck' }>();
   const [flip, setFlip] = useState<{ phase: 'backs' | 'faces'; board: Tile[] }>();
   const [combo, setCombo] = useState<{ at: number; count: number }>();
@@ -100,10 +101,18 @@ export function SichuanPage({ settings, dark, antialias, resolution, onResolutio
   }, [combo]);
 
   function pick(index: number) {
-    if (!canMove || !isMatchTile(round.board[index])) return;
+    if (!canMove) return;
     if (Date.now() >= deadline) { finish('timeout', deadline); return; }
+    const tile = round.board[index];
+    if (tile === obstacle) {
+      setRejected({ index });
+      setFeedback('sichuanObstacleFeedback');
+      return;
+    }
+    if (!isMatchTile(tile)) return;
     setHint(undefined);
     setFeedback(undefined);
+    if (selected !== index) playSound('paper');
     if (selected === undefined || selected === index) { setSelected(selected === index ? undefined : index); return; }
     const route = connectTiles(round.board, selected, index);
     if (!route) {
@@ -112,9 +121,9 @@ export function SichuanPage({ settings, dark, antialias, resolution, onResolutio
       return;
     }
     setRound(current => ({ ...current, board: current.board.map((tile, cell) => cell === selected || cell === index ? null : tile) }));
-    setPath(route);
     setSelected(undefined);
     const chain = nextSichuanCombo(combo, performance.now());
+    setMatch({ path: route, combo: chain.count });
     setCombo(chain);
     if (chain.count > 1) playSound('combo', chain.count);
     if (remaining === 2) finish('clear');
@@ -130,7 +139,7 @@ export function SichuanPage({ settings, dark, antialias, resolution, onResolutio
     if (animate) setFlip({ phase: 'backs', board });
     setSelected(undefined);
     setHint(undefined);
-    setPath(undefined);
+    setMatch(undefined);
     setCombo(undefined);
     setFeedback('sichuanShuffled');
   }
@@ -140,7 +149,8 @@ export function SichuanPage({ settings, dark, antialias, resolution, onResolutio
     setSelected(undefined);
     setHint(undefined);
     setCursor(null);
-    setPath(undefined);
+    setMatch(undefined);
+    setRejected(undefined);
     setFeedback(undefined);
     setResultState(undefined);
     setFlip(undefined);
@@ -173,7 +183,7 @@ export function SichuanPage({ settings, dark, antialias, resolution, onResolutio
           resultPending={false} onShowResult={() => setShowResult(true)} showTouches={showTouches} onTouchDisplay={onTouchDisplay}
           localTouch={touchStyle === 'soft'} view={{ history: [], cursor, chessTargets: new Map(), dark, allowDoubleThree: true, force: 1,
             canMove, deadline, finished: Boolean(resultState), move: pick, onAlkkagi: () => {},
-            sichuan: { board: round.board, size: round.options.size, theme: round.options.theme, selected, hint, path, flip: flip?.phase } }} />
+            sichuan: { board: round.board, size: round.options.size, theme: round.options.theme, selected, hint, match, rejected, flip: flip?.phase } }} />
       </Suspense>
       {!resultState && <div className="sichuan-controls">
         {pair ? <button type="button" className="button button-secondary" disabled={!canMove}

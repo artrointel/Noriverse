@@ -27,7 +27,8 @@ export interface GameView {
   onAlkkagi: (status: AlkkagiStatus) => void;
   onlineFlick?: FlickRound & { host: boolean; send: (shot: Flick) => void; settle: (layout: StonePosition[], revision: number) => void };
   sichuan?: { board: readonly Tile[]; size: SichuanSize; theme: SichuanTheme; selected?: number;
-    hint?: readonly [number, number]; path?: readonly TilePoint[]; flip?: 'backs' | 'faces' };
+    hint?: readonly [number, number]; match?: { path: readonly TilePoint[]; combo: number }; rejected?: { index: number };
+    flip?: 'backs' | 'faces' };
 }
 
 export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, initialSize: number, current: () => GameView, onReady: (size: number) => void) {

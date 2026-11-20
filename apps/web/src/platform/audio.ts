@@ -1,4 +1,4 @@
-type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo';
+type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'paper';
 type Channel = 'music' | 'effects';
 export type AudioLevels = Record<Channel, number>;
 
@@ -201,6 +201,10 @@ export function playSound(effect: Effect, strength = 1) {
     case 'navigate':
       tone(time, 520, .13, .07, 'effects', 'sine', 730);
       tone(time + .035, 830, .12, .055, 'effects');
+      break;
+    case 'paper':
+      texture(time, .065, .19, 1550);
+      texture(time + .019, .095, .12, 2880);
       break;
     case 'place':
       texture(time, .045, .35, 1900);

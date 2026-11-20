@@ -1,6 +1,7 @@
 import type Phaser from 'phaser';
 import type { GameView } from '../scenes.ts';
 import { paintTileMark } from '../board-marks.ts';
+import { createSichuanEffects } from './effects.ts';
 import { isMatchTile, obstacle, tilePoint } from './rules.ts';
 import type { Tile, TilePoint } from './rules.ts';
 
@@ -8,6 +9,14 @@ const atlasKey = 'sichuan-motifs';
 const boardKey = 'sichuan-board';
 const frameSize = 192;
 const textures = import.meta.glob<string>('../../assets/sichuan-themes/*.jpg', { eager: true, query: '?url', import: 'default' });
+
+type RenderedTile = {
+  container: Phaser.GameObjects.Container;
+  art: Phaser.GameObjects.Image;
+  tile: number;
+  veil?: Phaser.GameObjects.Graphics;
+  rejection?: { progress: number };
+};
 
 export function sichuanScene(view: () => GameView) {
   const start = view().sichuan;
@@ -25,9 +34,9 @@ export function sichuanScene(view: () => GameView) {
   const tileCenter = (index: number) => center(tilePoint(index, size));
   let base: Phaser.GameObjects.Graphics;
   let hints: Phaser.GameObjects.Graphics;
-  let trail: Phaser.GameObjects.Graphics;
+  let effects: ReturnType<typeof createSichuanEffects>;
   let previous: GameView | undefined;
-  const pieces = new Map<number, { container: Phaser.GameObjects.Container; art: Phaser.GameObjects.Image; tile: number }>();
+  const pieces = new Map<number, RenderedTile>();
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
 
   function paintTable(dark: boolean) {
@@ -35,15 +44,17 @@ export function sichuanScene(view: () => GameView) {
     base.fillStyle(0x181724, .35).fillRoundedRect(20, 27, 440, 435, 24);
   }
 
-  function syncTiles(scene: Phaser.Scene, board: readonly Tile[], animate: boolean) {
+  function syncTiles(scene: Phaser.Scene, board: readonly Tile[], combo?: number) {
     for (let index = 0; index < board.length; index++) {
       const tile = board[index];
       if (tile === previous?.sichuan?.board[index]) continue;
       const existing = pieces.get(index);
       if (existing) {
         pieces.delete(index);
-        if (tile === null && animate) scene.tweens.add({ targets: existing.container, alpha: 0, scaleX: existing.container.scaleX * .86,
-          scaleY: existing.container.scaleY * .86, duration: 190, ease: 'Cubic.Out', onComplete: () => existing.container.destroy() });
+        if (tile === null && combo !== undefined && !motion.matches) {
+          existing.veil?.setAlpha(0);
+          effects.depart(existing.container, index === previous?.sichuan?.selected ? -1 : 1, combo);
+        }
         else { scene.tweens.killTweensOf(existing.container); existing.container.destroy(); }
       }
       if (tile === null) continue;
@@ -58,6 +69,39 @@ export function sichuanScene(view: () => GameView) {
       const container = scene.add.container(x, y, [plate, art]).setDepth(1).setScale(pitch / 50);
       pieces.set(index, { art, tile, container });
     }
+  }
+
+  function tintTile(scene: Phaser.Scene, tile: RenderedTile, color: number, border: number) {
+    if (!tile.veil) {
+      tile.veil = scene.add.graphics();
+      tile.container.add(tile.veil);
+    }
+    return tile.veil.clear().fillStyle(color, .34).fillRoundedRect(-22, -22, 44, 44, 6)
+      .lineStyle(2, border, 1).strokeRoundedRect(-21.5, -21.5, 43, 43, 6);
+  }
+
+  function rejectTile(scene: Phaser.Scene, index: number) {
+    const tile = pieces.get(index);
+    if (!tile || tile.tile !== obstacle) return;
+    if (tile.rejection) scene.tweens.killTweensOf(tile.rejection);
+    const feedback = { progress: 0 };
+    tile.rejection = feedback;
+    const [x] = tileCenter(index);
+    const reduced = motion.matches;
+    const veil = tintTile(scene, tile, 0xf03950, 0xff7990).setAlpha(reduced ? 1 : 0);
+    tile.container.x = x;
+    scene.tweens.add({ targets: feedback, progress: 1, duration: 500, ease: 'Linear',
+      onUpdate: () => {
+        if (reduced) return;
+        const t = feedback.progress;
+        veil.setAlpha(Math.sin(t * Math.PI * 2) ** 2);
+        tile.container.x = x + Math.sin(t * Math.PI * 8) * (1 - t) * Math.min(7, pitch * .15);
+      },
+      onComplete: () => {
+        veil.setAlpha(0);
+        tile.container.x = x;
+        tile.rejection = undefined;
+      } });
   }
 
   function flipTiles(scene: Phaser.Scene, phase: 'backs' | 'faces') {
@@ -84,7 +128,6 @@ export function sichuanScene(view: () => GameView) {
     hints.clear();
     if (!data) return;
     for (const index of data.hint ?? []) paintTileMark(hints, ...tileCenter(index), pitch, 'capture');
-    if (data.selected !== undefined) paintTileMark(hints, ...tileCenter(data.selected), pitch, 'arrival');
     if (current.cursor !== null && current.cursor !== data.selected) paintTileMark(hints, ...tileCenter(current.cursor), pitch, 'focus');
   }
 
@@ -97,7 +140,7 @@ export function sichuanScene(view: () => GameView) {
       base = this.add.graphics();
       this.add.image(240, 240, boardKey).setDisplaySize(438, 438);
       hints = this.add.graphics().setDepth(2);
-      trail = this.add.graphics().setDepth(3);
+      effects = createSichuanEffects(this, theme, pitch);
       this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
         const current = view();
         if (!current.canMove) return;
@@ -106,27 +149,23 @@ export function sichuanScene(view: () => GameView) {
         if (x >= 0 && x < size && y >= 0 && y < size) current.move(y * size + x);
       });
     },
-    update(this: Phaser.Scene) {
+    update(this: Phaser.Scene, time: number) {
       const current = view(), data = current.sichuan;
       if (!data) return;
       const before = previous?.sichuan;
       if (current.dark !== previous?.dark) paintTable(current.dark);
-      if (data.board !== before?.board) syncTiles(this, data.board, Boolean(data.path) && !motion.matches);
+      const match = data.match !== before?.match ? data.match : undefined;
+      if (data.board !== before?.board) syncTiles(this, data.board, match?.combo);
       if (data.flip && data.flip !== before?.flip) flipTiles(this, data.flip);
       if (data.selected !== before?.selected || data.hint !== before?.hint || current.cursor !== previous?.cursor) paintHints(current);
-      if (data.path !== before?.path) {
-        this.tweens.killTweensOf(trail);
-        trail.clear().setAlpha(1);
-        if (data.path) {
-          const points = data.path.map(center);
-          for (const [width, color, alpha] of [[7, 0x1a312c, .8], [4, 0x70d9ae, .8], [1.5, 0xf6fff3, 1]]) {
-            trail.lineStyle(width, color, alpha).beginPath().moveTo(...points[0]);
-            for (const point of points.slice(1)) trail.lineTo(...point);
-            trail.strokePath();
-          }
-          this.tweens.add({ targets: trail, alpha: 0, delay: 160, duration: motion.matches ? 1 : 270 });
-        }
+      if (data.selected !== before?.selected) {
+        if (before?.selected !== undefined) pieces.get(before.selected)?.veil?.setAlpha(0);
+        const selected = data.selected === undefined ? undefined : pieces.get(data.selected);
+        if (selected) tintTile(this, selected, 0xffce39, 0xffda53).setAlpha(1);
       }
+      if (data.rejected && data.rejected !== before?.rejected) rejectTile(this, data.rejected.index);
+      if (match) effects.emit(match.path.map(center), match.combo, time, motion.matches);
+      effects.update(time);
       previous = current;
     },
   };
