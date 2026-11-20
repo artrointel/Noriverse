@@ -1,22 +1,17 @@
-import { useDeferredValue, useLayoutEffect, useRef, useState } from 'react';
+﻿import { useDeferredValue, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import heroArt from '../assets/hero-orbit.jpg';
 import { apiAvailable } from '../network/api.ts';
 import type { GuestRoom } from '../network/guest-seat.ts';
 import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
 import type { ReactNode, Ref } from 'react';
-import { omokOverlineRules } from '../games/omok/rules.ts';
-import type { OmokOverline } from '../games/omok/rules.ts';
 import type { GameId } from '../games/scenes.ts';
-import { isTurnLimit, maxTurnLimit, turnLimits } from '../games/turn-clock.ts';
-import type { TurnLimit } from '../games/turn-clock.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { cardsPerPage, pageNumbers } from './library-pagination.ts';
 import { BackLink, gamePath, RouteLink } from './navigation.tsx';
-import type { GameMode, Navigate } from './navigation.tsx';
+import type { Navigate } from './navigation.tsx';
 
 type Filter = 'all' | 'favorites' | 'strategy' | 'action';
-export type Power = 'standard' | 'fast';
 
 function Tags({ id }: { id: GameId }) {
   const { t } = useTranslation();
@@ -269,121 +264,6 @@ export function GameDetail({ id, navigate }: { id: GameId; navigate: Navigate })
       <section className="reading-panel">
         <h2>{t('rules')}</h2><p>{t(game.rules)}</p>
       </section>
-    </div>
-  );
-}
-
-export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, allowDoubleThree, onRule, overline, onOverline, onStart, navigate, activeGame, extraSettings, onlineSettings }: {
-  id: GameId; online: boolean; power: Power; onPower: (power: Power) => void;
-  turnLimit: TurnLimit; onTurnLimit: (limit: TurnLimit) => void;
-  allowDoubleThree: boolean; onRule: (allow: boolean) => void;
-  overline: OmokOverline; onOverline: (value: OmokOverline) => void;
-  onStart: (mode: GameMode) => Promise<boolean>; navigate: Navigate; activeGame?: GameId; extraSettings?: ReactNode; onlineSettings?: ReactNode;
-}) {
-  const { t } = useTranslation();
-  const roomUnavailable = !apiAvailable ? 'roomUnavailable' : undefined;
-  const [mode, setMode] = useState<GameMode>(online && !roomUnavailable ? 'online' : 'local');
-  const [starting, setStarting] = useState(false);
-  const [startFailed, setStartFailed] = useState(false);
-  const preset = turnLimits.some(limit => limit === turnLimit);
-  const [customLimit, setCustomLimit] = useState(!preset);
-  const [customSeconds, setCustomSeconds] = useState(preset ? '' : String(turnLimit));
-  const customValue = Number(customSeconds);
-  const validCustom = customValue > 0 && isTurnLimit(customValue);
-  const showLimit = id !== 'sichuan' && (mode === 'local' || !activeGame);
-  return (
-    <div className="site-width subpage">
-      <BackLink fallback={gamePath(id)} fallbackLabel={id} navigate={navigate} />
-      <div className="setup-layout">
-        <section className="surface setup-form">
-          <h1 tabIndex={-1}>{t('settings')}</h1>
-          <fieldset>
-            <legend>{t('gameMode')}</legend>
-            <label className="choice">
-              <input type="radio" name="mode" value="online" checked={mode === 'online'} disabled={Boolean(roomUnavailable)} onChange={() => setMode('online')} />
-              <span><strong>{t('newRoom')}</strong><small>{t(roomUnavailable ?? 'onlineCopy')}</small></span>
-            </label>
-            <label className="choice">
-              <input type="radio" name="mode" value="local" checked={mode === 'local'} onChange={() => setMode('local')} />
-              <span><strong>{t('local')}</strong><small>{t(id === 'sichuan' ? 'sichuanSolo' : 'localCopy')}</small></span>
-            </label>
-          </fieldset>
-          {mode === 'online' && onlineSettings}
-          {extraSettings}
-          {mode === 'online' && activeGame && activeGame !== id && <p className="muted">{t('otherGameRoom', { game: t(activeGame) })}</p>}
-          {showLimit && <fieldset>
-            <legend>{t('turnLimit')}</legend>
-            <select aria-label={t('turnLimit')} value={customLimit ? 'custom' : turnLimit} onChange={event => {
-              if (event.target.value === 'custom') {
-                setCustomLimit(true);
-                if (validCustom) onTurnLimit(customValue);
-                return;
-              }
-              const seconds = Number(event.target.value);
-              if (isTurnLimit(seconds)) { setCustomLimit(false); onTurnLimit(seconds); }
-            }}>
-              {turnLimits.map(limit => <option key={limit} value={limit}>{t(limit ? 'turnSeconds' : 'unlimitedTurns', { count: limit })}</option>)}
-              <option value="custom">{t('customTurnLimit')}</option>
-            </select>
-            {customLimit && <label className="custom-turn-limit">
-              <span>{t('customTurnSeconds')}</span><input type="number" min={1} max={maxTurnLimit} step={1} value={customSeconds}
-                aria-invalid={Boolean(customSeconds && !validCustom)} onChange={event => {
-                  const value = event.target.valueAsNumber;
-                  setCustomSeconds(event.target.value);
-                  if (value > 0 && isTurnLimit(value)) onTurnLimit(value);
-                }} />
-            </label>}
-            <p className="muted">{t('turnLimitHelp')}</p>
-          </fieldset>}
-          {id === 'omok' && (mode === 'local' || !activeGame) && <>
-            <fieldset>
-              <legend>{t('rule33')}</legend>
-              <p className="muted">{t('rule33Help')}</p>
-              {[true, false].map(allow => (
-                <label className="choice" key={String(allow)}>
-                  <input type="radio" name="rule33" checked={allowDoubleThree === allow} onChange={() => onRule(allow)} />
-                  <span><strong>{t(allow ? 'allow33' : 'ban33')}</strong></span>
-                </label>
-              ))}
-            </fieldset>
-            <fieldset>
-              <legend>{t('overlineRule')}</legend>
-              <p className="muted">{t('overlineHelp')}</p>
-              {omokOverlineRules.map(rule => (
-                <label className="choice" key={rule}>
-                  <input type="radio" name="overline" value={rule} checked={overline === rule} onChange={() => onOverline(rule)} />
-                  <span><strong>{t(rule)}</strong></span>
-                </label>
-              ))}
-            </fieldset>
-          </>}
-          {id === 'physics' && (mode === 'local' || !activeGame) && (
-            <fieldset>
-              <legend>{t('force')}</legend>
-              {(['standard', 'fast'] as const).map(option => (
-                <label className="choice" key={option}>
-                  <input type="radio" name="power" value={option} checked={power === option} onChange={() => onPower(option)} />
-                  <span><strong>{t(option)}</strong></span>
-                </label>
-              ))}
-            </fieldset>
-          )}
-          {mode === 'online' && startFailed && <p role="alert">{t('createRoomError')}</p>}
-          <button type="button" className="button button-primary" disabled={starting || (showLimit && customLimit && !validCustom)} onClick={async () => {
-            setStarting(true);
-            setStartFailed(false);
-            try { setStartFailed(!await onStart(mode)); }
-            catch { setStartFailed(true); }
-            finally { setStarting(false); }
-          }}>
-            {t(starting ? 'loading' : mode === 'online' ? (activeGame ? 'goToRoom' : 'newRoom') : 'start')}
-          </button>
-        </section>
-        <aside className="surface setup-summary">
-          <img src={games[id].art} alt="" width="880" height="587" />
-          <div><Tags id={id} /><h2>{t(id)}</h2><p>{t(games[id].description)}</p></div>
-        </aside>
-      </div>
     </div>
   );
 }

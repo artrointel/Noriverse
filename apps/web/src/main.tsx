@@ -18,18 +18,14 @@ import { nextDeadline, resolveTurnTimeout } from './games/turn-clock.ts';
 import type { TimeoutChoice, TurnLimit } from './games/turn-clock.ts';
 import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setMusicScene } from './platform/audio.ts';
 import type { AudioLevels } from './platform/audio.ts';
-import { CatalogPage, GameDetail, GameSetup } from './platform/catalog-pages.tsx';
+import { CatalogPage, GameDetail } from './platform/catalog-pages.tsx';
+import { GameSetup } from './platform/game-setup.tsx';
 import { games } from './platform/game-catalog.ts';
-import type { Power } from './platform/catalog-pages.tsx';
 import { BackNavigation, gamePath, RouteLink, useNavigation } from './platform/navigation.tsx';
 import type { GameMode } from './platform/navigation.tsx';
 import { createLocalRound, PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
-import { SichuanModePicker, SichuanSettingsFields } from './platform/sichuan-settings.tsx';
-import { defaultSichuanSettings } from './games/sichuan/options.ts';
-import { defaultFlickSettings } from './games/alkkagi/rules.ts';
-import { FlickSettingsFields } from './platform/flick-settings.tsx';
-import type { SichuanMode } from './games/sichuan/options.ts';
+import { defaultMatchSettings } from './games/match-settings.ts';
 import { puzzleOutcome } from './games/sichuan/multiplayer.ts';
 import { RoomPage } from './platform/room-page.tsx';
 import { FriendsPage, useFriends } from './platform/friends.tsx';
@@ -58,13 +54,10 @@ function App() {
     const boards = Object.fromEntries(Object.keys(boardRules).map(id => [id, createLocalBoard()]));
     return boards as Record<BoardGame, ReturnType<typeof createLocalBoard>>;
   });
-  const [power, setPower] = useState<Power>('standard');
-  const [flickSettings, setFlickSettings] = useState(defaultFlickSettings);
-  const [allowDoubleThree, setAllowDoubleThree] = useState(true);
-  const [sichuanSettings, setSichuanSettings] = useState(defaultSichuanSettings);
-  const [sichuanMode, setSichuanMode] = useState<SichuanMode>('race');
-  const [overline, setOverline] = useState<OmokOverline>(defaultOmokOverline);
-  const [turnLimit, setTurnLimit] = useState<TurnLimit>(0);
+  const [settings, setSettings] = useState(defaultMatchSettings);
+  const { power, flick: flickSettings, allowDoubleThree, puzzle: { settings: sichuanSettings }, overline, turnLimit } = settings;
+  const roomOpen = Boolean(room.code && !['closed', 'missing', 'full'].includes(room.state ?? ''));
+  const backdropGame = playGame ?? (roomOpen && (route.page === 'room' || (route.page === 'play' && route.online)) ? room.game : undefined);
   const [nameDismissed, setNameDismissed] = useState(() => Boolean(room.guestRoom));
   const [editName, setEditName] = useState(false);
   const [pendingFavorite, setPendingFavorite] = useState<GameId>();
@@ -113,7 +106,7 @@ function App() {
   useEffect(() => {
     if (!room.started) {
       matchOpened.current = '';
-    } else if (room.role && room.role !== 'host' && room.inMatch && matchOpened.current !== room.matchId) {
+    } else if (!room.finishedAt && room.role && room.role !== 'host' && room.inMatch && matchOpened.current !== room.matchId) {
       if (route.page === 'room') {
         matchOpened.current = room.matchId;
         navigate(gamePath(room.game, 'play', 'online'));
@@ -121,7 +114,7 @@ function App() {
         matchOpened.current = room.matchId;
       }
     }
-  }, [room.game, room.started, room.role, room.inMatch, room.matchId, route, navigate]);
+  }, [room.game, room.started, room.finishedAt, room.role, room.inMatch, room.matchId, route, navigate]);
 
   useEffect(() => {
     if (room.role && room.role !== 'host' && room.matchId && route.page === 'play' && route.online && (!room.started || !room.inMatch || route.id !== room.game)) {
@@ -135,11 +128,7 @@ function App() {
     if (mode === 'online' && isRoomGame(id)) {
       const setupUrl = location.href;
       if ((!room.code || room.state === 'closed' || room.state === 'missing' || room.state === 'full') && room.state !== 'joining') {
-        if (!await room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1, overline, { mode: sichuanMode, settings: sichuanSettings }, flickSettings)) return false;
-      } else if (id === 'sichuan' && room.game === 'sichuan' && room.role === 'host' && !room.started) {
-        room.configurePuzzle({ mode: sichuanMode, settings: sichuanSettings });
-      } else if (id === 'physics' && room.game === 'physics' && room.role === 'host' && !room.started) {
-        room.configureFlick(flickSettings);
+        if (!await room.create(id, settings)) return false;
       }
       if (location.href === setupUrl) navigate('/room');
     } else {
@@ -264,13 +253,8 @@ function App() {
       case 'detail':
         return <GameDetail id={route.id} navigate={navigate} />;
       case 'setup':
-        return <GameSetup id={route.id} online={route.online} power={power} onPower={setPower}
-          turnLimit={turnLimit} onTurnLimit={setTurnLimit}
-          allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree} overline={overline} onOverline={setOverline}
-          extraSettings={route.id === 'sichuan' ? <SichuanSettingsFields value={sichuanSettings} change={setSichuanSettings} />
-            : route.id === 'physics' ? <FlickSettingsFields value={flickSettings} change={setFlickSettings} /> : undefined}
-          onlineSettings={route.id === 'sichuan' && <SichuanModePicker value={sichuanMode} change={setSichuanMode} />}
-          activeGame={room.code && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full' ? room.game : undefined}
+        return <GameSetup id={route.id} online={route.online} settings={settings} change={setSettings}
+          activeGame={roomOpen ? room.game : undefined}
           onStart={startGame} navigate={navigate} />;
       case 'room':
         return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
@@ -340,8 +324,8 @@ function App() {
           </div>
         </div>
       </header>
-      <main id="main" tabIndex={-1} className="route-frame"><BackNavigation.Provider value={backNavigation}><div className="route-content" key={path} data-play-game={playGame}>
-        {playGame && <div className="game-backdrop" aria-hidden="true"><img src={games[playGame].art} alt="" decoding="async" /></div>}
+      <main id="main" tabIndex={-1} className="route-frame"><BackNavigation.Provider value={backNavigation}><div className="route-content" key={path} data-play-game={backdropGame}>
+        {backdropGame && <div className="game-backdrop" aria-hidden="true" key={backdropGame}><img src={games[backdropGame].art} alt="" decoding="async" /></div>}
         {page}
       </div></BackNavigation.Provider></main>
       <footer className="site-footer">

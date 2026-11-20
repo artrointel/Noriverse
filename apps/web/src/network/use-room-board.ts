@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { isRoomGame, isRoomRole, readTouch, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
 import type { Participant, Role, RoomGame, TouchPoint } from '../../../../packages/protocol/rooms.ts';
-import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
+import { elapsedPlaySeconds, profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { boardRules, isBoardGame, isTurnBasedGame } from '../games/board-rules.ts';
 import { defaultOmokOverline, isOmokOverline } from '../games/omok/rules.ts';
@@ -18,8 +18,12 @@ import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } fro
 import type { PendingTimeout, TimeoutChoice, TurnLimit } from '../games/turn-clock.ts';
 import { defaultSichuanRoomSettings, readSichuanRoomSettings } from '../games/sichuan/options.ts';
 import type { SichuanRoomSettings } from '../games/sichuan/options.ts';
-import { applyPuzzleAction, makePuzzleRound, puzzleEnd, readPuzzleRound, readyPuzzle } from '../games/sichuan/multiplayer.ts';
+import { applyPuzzleAction, makePuzzleRound, puzzleEnd, puzzleOutcome, readPuzzleRound, readyPuzzle } from '../games/sichuan/multiplayer.ts';
 import type { PuzzleAction, PuzzleRound } from '../games/sichuan/multiplayer.ts';
+import { defaultMatchSettings } from '../games/match-settings.ts';
+import type { MatchSettings } from '../games/match-settings.ts';
+import { mergeRoomHistory, readRoomResult, roomHistoryBatchSize } from './room-history.ts';
+import type { RoomResult } from './room-history.ts';
 
 type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: number; finishedAt: number; allowDoubleThree: boolean; overline: OmokOverline;
   history: number[]; physics?: FlickRound; physicsSeats?: Role[]; flickSettings?: FlickSettings; power?: FlickPower;
@@ -29,6 +33,13 @@ type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: number; 
 const blankMatch: Match = { id: '', game: 'omok', hostColor: 1, startedAt: 0, finishedAt: 0, allowDoubleThree: true,
   overline: defaultOmokOverline, history: [], turnLimit: 0, deadline: 0 };
 type Seat = { code: string; role: Role; token: string };
+
+function lobbyMatch(game: RoomGame, settings: MatchSettings): Match {
+  const { allowDoubleThree, overline, power, turnLimit, flick, puzzle } = settings;
+  return { ...blankMatch, id: crypto.randomUUID(), game, allowDoubleThree, overline, power, turnLimit: game === 'sichuan' ? 0 : turnLimit,
+    puzzleConfig: game === 'sichuan' ? puzzle : undefined, flickSettings: game === 'physics' ? flick : undefined,
+    physics: game === 'physics' ? createFlickRound(flick) : undefined };
+}
 
 function matchColor(match: Match, role: Role): FlickPlayer | undefined {
   if (match.physicsSeats) return flickPlayers[match.physicsSeats.indexOf(role)];
@@ -56,6 +67,10 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const [role, setRole] = useState<Role>();
   const [state, setState] = useState<ConnectionState>();
   const [round, setRound] = useState(blankMatch);
+  const [roomHistory, setRoomHistory] = useState<RoomResult[]>([]);
+  const results = useRef<RoomResult[]>([]);
+  const matchRoster = useRef<{ seats: Role[]; names: Map<Role, string> }>(undefined);
+  const previousMatch = useRef<Match>(undefined);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [connectedPeers, setConnectedPeers] = useState<Role[]>([]);
   const [assignedSeat, setAssignedSeat] = useState<Seat>();
@@ -74,6 +89,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const operation = useRef(0);
   const ready = useRef(false);
   const gameChange = useRef<Seat | undefined>(undefined);
+  const profileName = useRef(profile?.name);
+  useEffect(() => { profileName.current = profile?.name; }, [profile?.name]);
 
   useEffect(() => () => {
     operation.current++;
@@ -111,12 +128,39 @@ export function useRoomBoard(profile?: ProfileSummary) {
     if (currentSeat && currentSeat.role !== 'host' && next.id && (previous.id !== next.id || previous.startedAt !== next.startedAt || previous.finishedAt !== next.finishedAt)) {
       rememberGuestRoom(currentSeat.code, next.startedAt && !next.finishedAt && inRound(next, currentSeat.role) ? next.game : undefined);
     }
+    if (currentSeat?.role === 'host' && next.finishedAt && !previous.finishedAt && matchRoster.current) {
+      const loser = next.surrendered ?? next.timedOut;
+      const winner = loser ? oppositeStone(loser) : matchWinner(next);
+      const puzzleResult = next.puzzle?.result;
+      if (winner || puzzleResult) {
+        const entry: RoomResult = { id: next.id, game: next.game, endedAt: next.finishedAt,
+          seconds: elapsedPlaySeconds(next.puzzle?.beginsAt || next.startedAt, next.finishedAt),
+          players: matchRoster.current.seats.map(role => ({ role, name: role === 'host' ? profileName.current : matchRoster.current?.names.get(role),
+            outcome: puzzleResult ? puzzleOutcome(puzzleResult, role) : winner === 'draw' ? 'draw' : winner === matchColor(next, role) ? 'win' : 'loss' })),
+        };
+        results.current = [...results.current, entry];
+        setRoomHistory(previous => mergeRoomHistory(previous, [entry]));
+        link.current?.send({ type: 'room-history-entry', entry });
+      }
+    }
     match.current = next;
     setRound(next);
   }
 
   function snapshot(target?: Role) {
     link.current?.send({ type: 'snapshot', ...match.current, sentAt: Date.now() }, target);
+  }
+
+  function clearRoomHistory() {
+    results.current = [];
+    matchRoster.current = undefined;
+    previousMatch.current = undefined;
+    setRoomHistory([]);
+  }
+
+  function sendRoomHistory(peer: Role, offset: number) {
+    const entries = results.current.slice(offset, offset + roomHistoryBatchSize);
+    link.current?.send({ type: 'room-history', entries, next: offset + entries.length < results.current.length ? offset + entries.length : undefined }, peer);
   }
 
   function syncPuzzle(puzzle: PuzzleRound, finishedAt = 0) {
@@ -243,6 +287,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
         if (next === 'closed' || next === 'missing') {
           forgetGuestSeat(target);
           rememberGuestRoom(target);
+          clearRoomHistory();
         }
         ready.current = next === 'connected';
         setState(next);
@@ -253,13 +298,38 @@ export function useRoomBoard(profile?: ProfileSummary) {
         setAssignedSeat(seat.current);
         setRole(assignedRole);
       },
-      roster: setParticipants,
+      roster(people) {
+        setParticipants(people);
+        for (const person of people) if (person.profile) matchRoster.current?.names.set(person.role, person.profile.name);
+      },
       connections: setConnectedPeers,
       open(peer) {
-        if (seat.current?.role === 'host' && !expireTurn(Date.now())) snapshot(peer);
+        if (seat.current?.role === 'host') {
+          if (!expireTurn(Date.now())) snapshot(peer);
+          sendRoomHistory(peer, 0);
+        }
       },
       receive(raw, peer) {
         if (!raw || typeof raw !== 'object' || !('type' in raw)) return;
+        if (raw.type === 'room-history-request' && seat.current?.role === 'host' && 'offset' in raw
+          && typeof raw.offset === 'number' && Number.isSafeInteger(raw.offset) && raw.offset >= 0) {
+          sendRoomHistory(peer, raw.offset);
+          return;
+        }
+        if (peer === 'host' && raw.type === 'room-history-entry' && 'entry' in raw) {
+          const entry = readRoomResult(raw.entry);
+          if (entry) setRoomHistory(previous => mergeRoomHistory(previous, [entry]));
+          return;
+        }
+        if (peer === 'host' && raw.type === 'room-history' && 'entries' in raw && Array.isArray(raw.entries)
+          && raw.entries.length <= roomHistoryBatchSize) {
+          const entries = raw.entries.map(readRoomResult).filter(entry => entry !== undefined);
+          if (entries.length) setRoomHistory(previous => mergeRoomHistory(previous, entries));
+          if ('next' in raw && typeof raw.next === 'number' && Number.isSafeInteger(raw.next) && raw.next > 0) {
+            link.current?.send({ type: 'room-history-request', offset: raw.next });
+          }
+          return;
+        }
         const current = match.current;
         if (seat.current?.role === 'host' && current.startedAt && !inRound(current, peer)) return;
         if (raw.type === 'touch') {
@@ -365,8 +435,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     });
   }
 
-  async function create(game: RoomGame, allowRule = true, limit: TurnLimit = 0, power: FlickPower = 1, overline: OmokOverline = defaultOmokOverline,
-    puzzleConfig = defaultSichuanRoomSettings, flickSettings = defaultFlickSettings) {
+  async function create(game: RoomGame, settings = defaultMatchSettings) {
     const attempt = ++operation.current;
     link.current?.close();
     link.current = undefined;
@@ -377,6 +446,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     setParticipants([]);
     setCode(undefined);
     setRole(undefined);
+    clearRoomHistory();
     update(blankMatch);
     setState('joining');
     try {
@@ -388,10 +458,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
       if (attempt !== operation.current) return false;
       if (!roomCodePattern.test(room.code) || !profileIdPattern.test(room.token)) throw new Error();
       seat.current = { ...room, role: 'host' };
-      update({ ...blankMatch, id: crypto.randomUUID(), game, allowDoubleThree: allowRule, overline, turnLimit: game === 'sichuan' ? 0 : limit,
-        puzzleConfig: game === 'sichuan' ? puzzleConfig : undefined,
-        flickSettings: game === 'physics' ? flickSettings : undefined,
-        physics: game === 'physics' ? createFlickRound(flickSettings) : undefined, power });
+      update(lobbyMatch(game, settings));
       connect(room.code, room.token);
       return true;
     } catch {
@@ -408,6 +475,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     seat.current = undefined;
     setAssignedSeat(undefined);
     setParticipants([]);
+    clearRoomHistory();
     update(blankMatch);
     connect(target, readGuestSeat(target));
   }
@@ -424,6 +492,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     setAssignedSeat(undefined);
     setParticipants([]);
     ready.current = false;
+    clearRoomHistory();
     update(blankMatch);
     setCode(undefined);
     setRole(undefined);
@@ -443,10 +512,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
       });
       if (!response.ok || operation.current !== attempt || seat.current !== host) return false;
       const { allowDoubleThree, overline, power, turnLimit } = match.current;
-      update({ ...blankMatch, id: crypto.randomUUID(), game, allowDoubleThree, overline, power, turnLimit: game === 'sichuan' ? 0 : turnLimit,
-        puzzleConfig: game === 'sichuan' ? defaultSichuanRoomSettings : undefined,
-        flickSettings: game === 'physics' ? defaultFlickSettings : undefined,
-        physics: game === 'physics' ? createFlickRound(defaultFlickSettings) : undefined });
+      previousMatch.current = undefined;
+      update(lobbyMatch(game, { ...defaultMatchSettings, allowDoubleThree, overline, power: power ?? 1, turnLimit }));
       snapshot();
       return true;
     } catch { return false; }
@@ -493,21 +560,24 @@ export function useRoomBoard(profile?: ProfileSummary) {
     const current = match.current;
     const seats = roundSeats();
     if (seat.current?.role !== 'host' || !seats || gameChange.current || (rematch ? !current.finishedAt : current.startedAt)) return false;
-    const winner = matchWinner(current);
-    const endColor = current.surrendered ?? current.timedOut ?? current.physics?.eliminated?.[0];
+    const previous = rematch ? current : previousMatch.current;
+    const winner = previous && matchWinner(previous);
+    const endColor = previous?.surrendered ?? previous?.timedOut ?? previous?.physics?.eliminated?.[0];
     let hostColor = current.hostColor;
     let physicsSeats: Role[] | undefined;
     if (current.physics) {
-      const previous = current.physicsSeats ?? (current.hostColor === 1 ? ['host', 'guest'] : ['guest', 'host']);
-      physicsSeats = rematch ? [...previous.filter(player => seats.includes(player)), ...seats.filter(player => !previous.includes(player))] : seats;
-      const first = rematch && winner !== 'draw' && endColor ? previous[endColor - 1] : undefined;
+      const previousSeats: Role[] = previous?.physicsSeats ?? (previous?.hostColor === 2 ? ['guest', 'host'] : ['host', 'guest']);
+      physicsSeats = previous ? [...previousSeats.filter(player => seats.includes(player)), ...seats.filter(player => !previousSeats.includes(player))] : seats;
+      const first = previous && winner !== 'draw' && endColor ? previousSeats[endColor - 1] : undefined;
       const index = first ? physicsSeats.indexOf(first) : -1;
       if (index > 0) physicsSeats = [...physicsSeats.slice(index), ...physicsSeats.slice(0, index)];
       hostColor = physicsSeats.length === 2 && physicsSeats[0] !== 'host' ? 2 : 1;
-    } else if (rematch && isTurnBasedGame(current.game)) {
-      hostColor = rematchPlayerColor(hostColor, winner === 3 || winner === 4 ? undefined : winner, current.surrendered ?? current.timedOut);
+    } else if (previous && isTurnBasedGame(current.game)) {
+      hostColor = rematchPlayerColor(previous.hostColor, winner === 3 || winner === 4 ? undefined : winner, previous.surrendered ?? previous.timedOut);
     }
     const now = Date.now();
+    matchRoster.current = { seats, names: new Map(participants.flatMap(person => person.profile ? [[person.role, person.profile.name]] : [])) };
+    previousMatch.current = undefined;
     update({ ...current, id: rematch ? crypto.randomUUID() : current.id, hostColor, startedAt: now, finishedAt: 0,
       history: [], surrendered: undefined, timedOut: undefined, timeoutPending: undefined, deadline: nextDeadline(current.turnLimit, now),
       puzzle: current.puzzleConfig ? makePuzzleRound(current.puzzleConfig, Math.random, seats) : undefined,
@@ -517,27 +587,24 @@ export function useRoomBoard(profile?: ProfileSummary) {
   }
 
   return {
-    code, role, state, game, hostColor, playerColor, history, started, matchId, startedAt, finishedAt, surrendered, timedOut, timeoutPending, turnLimit,
+    code, role, state, game, hostColor, playerColor, history, roomHistory, started, matchId, startedAt, finishedAt, surrendered, timedOut, timeoutPending, turnLimit,
     inMatch: Boolean(role && inRound(round, role)),
     canStart: Boolean(connectedPeers.length && participants.every(person => person.role === 'host' || connectedPeers.includes(person.role))),
-    flickSettings: round.flickSettings, physicsSeats: round.physicsSeats,
+    settings: { allowDoubleThree, overline, power: round.power ?? 1, turnLimit, flick: round.flickSettings ?? defaultFlickSettings,
+      puzzle: round.puzzleConfig ?? defaultSichuanRoomSettings } satisfies MatchSettings,
+    physicsSeats: round.physicsSeats,
     colorFor: (player: Role) => matchColor(round, player),
     guestRoom, changeGame, changingGame, rematchNotice: rematchNotice?.id === matchId ? rematchNotice.kind : undefined,
     displayDeadline: deadline ? deadline + (round.clockOffset ?? 0) : 0,
     puzzle: round.puzzle, puzzleConfig: round.puzzleConfig,
     puzzleDisplayStart: round.puzzle?.beginsAt ? round.puzzle.beginsAt + (round.clockOffset ?? 0) : 0,
-    configurePuzzle(config: SichuanRoomSettings) {
+    configureMatch(settings: MatchSettings) {
       const current = match.current;
-      if (seat.current?.role !== 'host' || current.game !== 'sichuan' || gameChange.current || (current.startedAt && !current.finishedAt)) return;
-      update({ ...blankMatch, id: crypto.randomUUID(), game: 'sichuan', puzzleConfig: config });
+      if (seat.current?.role !== 'host' || gameChange.current || (current.startedAt && !current.finishedAt)) return false;
+      if (current.finishedAt) previousMatch.current = current;
+      update(lobbyMatch(current.game, settings));
       snapshot();
-    },
-    configureFlick(settings: FlickSettings) {
-      const current = match.current;
-      if (seat.current?.role !== 'host' || current.game !== 'physics' || gameChange.current || (current.startedAt && !current.finishedAt)) return;
-      update({ ...current, id: crypto.randomUUID(), flickSettings: settings, startedAt: 0, finishedAt: 0, deadline: 0,
-        physics: createFlickRound(settings), physicsSeats: undefined, surrendered: undefined, timedOut: undefined, timeoutPending: undefined });
-      snapshot();
+      return true;
     },
     puzzleReady() {
       const current = match.current, own = seat.current?.role;

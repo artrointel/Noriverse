@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, ProfileSummary, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import { createFlickRound, flickPlayers, initialAlkkagi, settledStatus } from '../games/alkkagi/rules.ts';
-import type { AlkkagiStatus, FlickSettings } from '../games/alkkagi/rules.ts';
+import type { AlkkagiStatus, FlickPower, FlickSettings } from '../games/alkkagi/rules.ts';
 import { boardRules, isBoardGame } from '../games/board-rules.ts';
 import { chessIndex, chessPosition, chessSquare, encodeChessMove } from '../games/chess/rules.ts';
 import { doubleThreeAxes, isForbiddenDoubleThree } from '../games/omok/rules.ts';
@@ -16,7 +16,6 @@ import { oppositeStone, rematchPlayerColor, sideLabel } from '../games/table.ts'
 import { nextDeadline, resolveTurnTimeout, secondsRemaining } from '../games/turn-clock.ts';
 import type { PendingTimeout, TimeoutChoice, TurnLimit } from '../games/turn-clock.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
-import type { Power } from './catalog-pages.tsx';
 import { BackLink, gamePath } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { onAudioReady, playSound } from './audio.ts';
@@ -83,7 +82,7 @@ function TurnClock({ deadline, enabled, audible = false, onExpired, compact = fa
 
 export function PlayPage({ id, dark, antialias, resolution, onResolution, onAntialias, room, ownProfile, power, flickSettings, turnLimit, history, boardRound, allowDoubleThree, overline, move, reset, endLocal, decideLocal, record, navigate,
   showTouches, onTouchDisplay, touchStyle }: {
-  id: GameId; dark: boolean; antialias: boolean; room?: Room; ownProfile?: ProfileSummary; power: Power; flickSettings: FlickSettings; turnLimit: TurnLimit; history: number[];
+  id: GameId; dark: boolean; antialias: boolean; room?: Room; ownProfile?: ProfileSummary; power: FlickPower; flickSettings: FlickSettings; turnLimit: TurnLimit; history: number[];
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   boardRound?: ReturnType<typeof createLocalRound>;
   allowDoubleThree: boolean; overline: OmokOverline; move: (index: number) => void; reset: () => void;
@@ -291,7 +290,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
       </ul>
     </section>
     {chess && <ChessLosses history={history} />}
-    {!isBoard && <p className="power-summary"><span>{t('force')}</span><strong>{t(room ? room.power === 1.35 ? 'fast' : 'standard' : power)}</strong></p>}
+    {!isBoard && <p className="power-summary"><span>{t('force')}</span><strong>{t((room?.power ?? power) === 1.35 ? 'fast' : 'standard')}</strong></p>}
     {isOmok && <span className="match-rule">{t(allowDoubleThree ? 'allow33' : 'ban33')} · {t(overline)}</span>}
     {room?.state && <p className="connection" role="status">{t(room.state)}</p>}
     {(room?.state === 'failed' || room?.state === 'disconnected') && (
@@ -360,7 +359,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
             onShowResult={() => setClosedResult('')} view={{
             history, cursor: canMove && tapPreview?.matchId === matchId && tapPreview.history === history ? tapPreview.index : cursor,
             chessSelected: choice?.from, chessTargets, dark, allowDoubleThree, onAlkkagi: updateAlkkagi,
-            force: room?.power ?? (power === 'fast' ? 1.35 : 1),
+            force: room?.power ?? power,
             localFlick,
             onlineFlick: room?.physics && { ...room.physics, host: room.role === 'host', send: room.flick, settle: room.settleFlick },
             canMove, deadline, finished: Boolean(outcome), move: tryMove,

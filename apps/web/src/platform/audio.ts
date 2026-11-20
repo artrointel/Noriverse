@@ -1,3 +1,6 @@
+import { arrangements, playArrangement } from './music-arrangements.ts';
+import type { ArrangementTrack } from './music-arrangements.ts';
+
 type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'paper';
 type Channel = 'music' | 'effects';
 export type AudioLevels = Record<Channel, number>;
@@ -14,9 +17,9 @@ const scores = {
   sichuan: { chords: [[50, 57, 62, 66], [48, 55, 60, 64], [47, 54, 59, 62], [45, 52, 57, 64]], pattern: [2, -1, 1, 3, -1, 2, 1, -1], interval: .49 },
   physics: { chords: [[43, 50, 58, 62], [46, 53, 60, 65], [41, 48, 57, 60], [45, 52, 55, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, 1], interval: .265 },
 } as const;
-const lobbyTracks = ['orbit', 'skylight', 'lantern', 'paperComet'] as const;
+const lobbyTracks = ['orbit', 'skylight', 'lantern', 'paperComet', ...Object.keys(arrangements) as ArrangementTrack[]] as const;
 type LobbyTrack = typeof lobbyTracks[number];
-export type MusicTrack = keyof typeof scores;
+export type MusicTrack = keyof typeof scores | ArrangementTrack;
 type MusicScene = 'lobby' | Exclude<MusicTrack, LobbyTrack>;
 
 function randomLobbyTrack(previous?: string | null): LobbyTrack {
@@ -45,7 +48,13 @@ export function onAudioReady(listener: () => void) {
   document.addEventListener('visibilitychange', listener);
   return () => { audioReadyListeners.delete(listener); document.removeEventListener('visibilitychange', listener); };
 }
-const playingNotes = new Set<OscillatorNode>();
+const playingNotes = new Set<AudioScheduledSourceNode>();
+
+function trackNote(source: AudioScheduledSourceNode, channel: Channel) {
+  if (channel !== 'music') return;
+  playingNotes.add(source);
+  source.onended = () => { playingNotes.delete(source); };
+}
 let lastEffect = -1;
 let resumeRequest: Promise<void> | undefined;
 
@@ -151,7 +160,7 @@ function unlockAudio() {
 }
 
 function tone(when: number, hz: number, duration: number, volume: number, channel: Channel,
-  wave: OscillatorType = 'sine', endHz = hz) {
+  wave: OscillatorType = 'sine', endHz = hz, attack = .008) {
   if (!graph) return;
   const { context } = graph;
   const oscillator = context.createOscillator();
@@ -160,20 +169,17 @@ function tone(when: number, hz: number, duration: number, volume: number, channe
   oscillator.frequency.setValueAtTime(hz, when);
   oscillator.frequency.exponentialRampToValueAtTime(endHz, when + duration);
   envelope.gain.setValueAtTime(0.0001, when);
-  envelope.gain.exponentialRampToValueAtTime(volume, when + 0.008);
+  envelope.gain.exponentialRampToValueAtTime(volume, when + Math.min(attack, duration / 2));
   envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration);
   oscillator.connect(envelope).connect(graph[channel]);
-  if (channel === 'music') {
-    playingNotes.add(oscillator);
-    oscillator.onended = () => { playingNotes.delete(oscillator); };
-  }
+  trackNote(oscillator, channel);
   oscillator.start(when);
   oscillator.stop(when + duration + 0.01);
 }
 
-function texture(when: number, duration: number, volume: number, center: number) {
+function texture(when: number, duration: number, volume: number, center: number, channel: Channel = 'effects') {
   if (!graph) return;
-  const { context, noise, effects } = graph;
+  const { context, noise } = graph;
   const source = context.createBufferSource();
   const filter = context.createBiquadFilter();
   const envelope = context.createGain();
@@ -183,7 +189,8 @@ function texture(when: number, duration: number, volume: number, center: number)
   filter.Q.value = 0.75;
   envelope.gain.setValueAtTime(volume, when);
   envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration);
-  source.connect(filter).connect(envelope).connect(effects);
+  source.connect(filter).connect(envelope).connect(graph[channel]);
+  trackNote(source, channel);
   source.start(when);
   source.stop(when + duration);
 }
@@ -261,8 +268,18 @@ export function playSound(effect: Effect, strength = 1) {
 function scheduleMusic() {
   if (!graph || graph.context.state !== 'running') return;
   const time = graph.context.currentTime;
-  const { chords, pattern, interval } = scores[musicTrack];
   nextBeat = Math.max(nextBeat, time + 0.015);
+  const track = musicTrack;
+  if (Object.hasOwn(arrangements, track)) {
+    while (nextBeat < time + .16) {
+      const when = nextBeat;
+      nextBeat += playArrangement(track as ArrangementTrack, beat++,
+        (note, length, gain, wave, attack) => tone(when, frequency(note), length, gain, 'music', wave, undefined, attack),
+        (length, gain, hz) => texture(when, length, gain, hz, 'music'));
+    }
+    return;
+  }
+  const { chords, pattern, interval } = scores[track as keyof typeof scores];
   while (nextBeat < time + .16) {
     const step = beat % pattern.length;
     const notes = chords[Math.floor(beat / pattern.length) % chords.length];

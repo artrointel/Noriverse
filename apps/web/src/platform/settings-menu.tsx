@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { PresenceMode } from '../../../../packages/protocol/profile.ts';
 import { getMusicTrack, playSound, shuffleMusicTrack, subscribeMusicTrack } from './audio.ts';
+import { musicMoods } from './music-arrangements.ts';
 import type { AudioLevels } from './audio.ts';
 import type { usePreferences } from './preferences.ts';
 import { GearIcon } from './gear-icon.tsx';
@@ -129,7 +130,11 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
                 }} />
               {channel === 'music' && <button type="button" className="track-choice" onClick={shuffleMusicTrack}
                 title={t('shuffleTrack')} aria-label={t('shuffleNamedTrack', { track: t('track_' + track) })}>
-                <span aria-hidden="true">♫</span><strong>{t('track_' + track)}</strong><span className="track-shuffle">{t('shuffleTrack')}</span>
+                <span className="track-symbol" aria-hidden="true">♫</span>
+                <span className="track-caption"><strong>{t('track_' + track)}</strong>
+                  <span className="track-moods">{musicMoods[track].map(mood => <span key={mood}>{t('mood_' + mood)}</span>)}</span>
+                </span>
+                <span className="track-shuffle">{t('shuffleTrack')}</span>
               </button>}
             </div>
           ))}
