@@ -3,6 +3,8 @@ import type { Move } from 'chess.js';
 import type { GameView } from '../scenes.ts';
 import { chessIndex, chessPosition } from './rules.ts';
 import { addStoneShadow, createStoneShadow } from '../board-art.ts';
+import { paintTargetMark, paintTileMark, revealMoveMarks } from '../board-marks.ts';
+import { pieceOutlineTexture } from '../piece-outline.ts';
 import { playSound } from '../../platform/audio.ts';
 import boardArt from '../../assets/chess-walnut-board.jpg';
 import chessPieces from '../../assets/chess-staunton.png';
@@ -22,7 +24,11 @@ function squareCenter(index: number) {
 export function chessScene(view: () => GameView) {
   let base: Phaser.GameObjects.Graphics;
   let board: Phaser.GameObjects.Image;
-  let layer: Phaser.GameObjects.Graphics;
+  let recentMarks: Phaser.GameObjects.Graphics;
+  let hints: Phaser.GameObjects.Graphics;
+  let outline: Phaser.GameObjects.Image;
+  let selectedArt: Phaser.GameObjects.Image | undefined;
+  let selectedFrame: Phaser.Textures.Frame | undefined;
   let previous: GameView | undefined;
   const pieces = new Map<number, RenderedPiece>();
   const departing = new Set<RenderedPiece>();
@@ -90,32 +96,53 @@ export function chessScene(view: () => GameView) {
     if (move.isQueensideCastle()) slide(scene, row, row + 3);
   }
 
-  function paint(current: GameView) {
-    const { history, dark, chessSelected, chessTargets, cursor } = current;
-    if (!previous || dark !== previous.dark) {
-      base.clear();
-      base.fillStyle(dark ? 0x272132 : 0xe8ddd1).fillRect(0, 0, 480, 480);
-      for (let spread = 12; spread >= 3; spread -= 2) {
-        base.fillStyle(0x20121c, .07).fillRoundedRect(15 - spread / 2 + 2, 15 - spread / 2 + 6, 450 + spread, 450 + spread, 5);
-      }
-      board.setTint(dark ? 0xffe4cf : 0xffffff);
+  function paintBoard(dark: boolean) {
+    base.clear();
+    base.fillStyle(dark ? 0x272132 : 0xe8ddd1).fillRect(0, 0, 480, 480);
+    for (let spread = 12; spread >= 3; spread -= 2) {
+      base.fillStyle(0x20121c, .07).fillRoundedRect(15 - spread / 2 + 2, 15 - spread / 2 + 6, 450 + spread, 450 + spread, 5);
     }
-    layer.clear();
+    board.setTint(dark ? 0xffe4cf : 0xffffff);
+  }
+
+  function paintRecent(history: number[]) {
+    recentMarks.clear();
     const last = history.at(-1);
-    const lastPair = last === undefined ? -1 : Math.floor(last / 5);
+    if (last !== undefined) {
+      const pair = Math.floor(last / 5);
+      paintTileMark(recentMarks, ...squareCenter(Math.floor(pair / 64)), cell, 'origin');
+      paintTileMark(recentMarks, ...squareCenter(pair % 64), cell, 'arrival');
+    }
     const position = chessPosition(history);
-    const king = position.inCheck() ? position.board().flat().find(piece => piece?.type === 'k' && piece.color === position.turn()) : null;
-    const checked = king ? chessIndex(king.square) : -1;
-    for (let index = 0; index < 64; index++) {
-      const [cx, cy] = squareCenter(index);
-      const x = cx - cell / 2, y = cy - cell / 2;
-      if (index === Math.floor(lastPair / 64) || index === lastPair % 64) layer.fillStyle(0xffd978, .42).fillRect(x, y, cell, cell);
-      if (index === checked) layer.fillStyle(0xc83857, .72).fillRect(x, y, cell, cell);
-      if (index === chessSelected || index === cursor) layer.lineStyle(3, 0xffe299).strokeRect(x + 2, y + 2, cell - 4, cell - 4);
-      if (chessTargets.includes(index)) {
-        layer.fillStyle(0x194a46, .87).fillCircle(x + cell - 9, y + 9, 5);
-        layer.lineStyle(1, 0xb8f3da, .9).strokeCircle(x + cell - 9, y + 9, 5);
+    if (position.inCheck()) {
+      const king = position.board().flat().find(piece => piece?.type === 'k' && piece.color === position.turn());
+      if (king) paintTileMark(recentMarks, ...squareCenter(chessIndex(king.square)), cell - 3, 'check');
+    }
+  }
+
+  function paintHints({ canMove, chessTargets, cursor }: GameView) {
+    hints.clear();
+    if (!canMove) return;
+    for (const [index, kind] of chessTargets) paintTargetMark(hints, ...squareCenter(index), cell, kind);
+    if (cursor !== null) paintTileMark(hints, ...squareCenter(cursor), cell, 'focus');
+  }
+
+  function updateOutline(scene: Phaser.Scene, art?: Phaser.GameObjects.Image) {
+    if (art !== selectedArt || art?.frame !== selectedFrame) {
+      selectedArt = art;
+      selectedFrame = art?.frame;
+      scene.tweens.killTweensOf(outline);
+      const key = art && pieceOutlineTexture(scene, art.frame);
+      outline.setVisible(Boolean(key));
+      if (key) {
+        const animate = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+        outline.setTexture(key).setAlpha(animate ? .55 : 1);
+        if (animate) scene.tweens.add({ targets: outline, alpha: 1, duration: 150, ease: 'Sine.Out' });
       }
+    }
+    if (art) {
+      outline.setPosition(art.x, art.y).setScale(art.scaleX, art.scaleY);
+      if (outline.depth !== art.depth - .5) outline.setDepth(art.depth - .5);
     }
   }
 
@@ -127,7 +154,9 @@ export function chessScene(view: () => GameView) {
     create(this: Phaser.Scene) {
       base = this.add.graphics().setDepth(-2);
       board = this.add.image(240, 240, boardTexture).setDisplaySize(450, 450).setDepth(-1);
-      layer = this.add.graphics();
+      recentMarks = this.add.graphics().setDepth(-.5);
+      hints = this.add.graphics().setDepth(.25);
+      outline = this.add.image(0, 0, pieceTexture, 0).setVisible(false);
       createStoneShadow(this);
       for (let i = 0; i < 8; i++) {
         const style = { color: '#fff0d4', fontSize: '10px', fontStyle: 'bold' };
@@ -143,21 +172,25 @@ export function chessScene(view: () => GameView) {
     },
     update(this: Phaser.Scene) {
       const current = view();
+      if (current.dark !== previous?.dark) paintBoard(current.dark);
       if (current.history !== previous?.history) {
         const earlier = previous?.history;
         const incremental = earlier && current.history.length === earlier.length + 1
           && earlier.every((move, index) => current.history[index] === move);
         const move = incremental ? chessPosition(current.history).history({ verbose: true }).at(-1) : undefined;
-        if (move && !matchMedia('(prefers-reduced-motion: reduce)').matches) animateMove(this, move);
+        const animate = Boolean(move) && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (move && animate) animateMove(this, move);
         else {
           resetPieces(this, current.history);
           if (move) playSound(move.captured ? 'drop' : 'place');
         }
+        paintRecent(current.history);
+        revealMoveMarks(this, recentMarks, animate);
       }
-      if (!previous || current.history !== previous.history || current.dark !== previous.dark
-        || current.chessSelected !== previous.chessSelected || current.chessTargets !== previous.chessTargets || current.cursor !== previous.cursor) {
-        paint(current);
+      if (!previous || current.canMove !== previous.canMove || current.chessTargets !== previous.chessTargets || current.cursor !== previous.cursor) {
+        paintHints(current);
       }
+      updateOutline(this, current.canMove && current.chessSelected !== undefined ? pieces.get(current.chessSelected)?.art : undefined);
       previous = current;
     },
   };

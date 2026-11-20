@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { playSound } from '../../platform/audio.ts';
 import { addStoneShadow, createBoardArt, preloadBoard, stoneTexture } from '../board-art.ts';
+import { paintGoldRing } from '../board-marks.ts';
 import { tableSize } from '../table.ts';
 import type { Stone } from '../table.ts';
 import type { GameView } from '../scenes.ts';
@@ -66,13 +67,15 @@ export function alkkagiScene(view: () => GameView) {
     const { x, y } = selection.sprite;
     const length = Math.min(maxPull, Math.hypot(dx, dy));
     const angle = Math.atan2(dy, dx);
-    aim.lineStyle(2, 0xf6e6a6, .96).strokeCircle(x, y, diameter / 2 + 2);
+    paintGoldRing(aim, x, y, diameter / 2 + 2);
     if (length < minPull) return;
     const distance = 31 + length * .82;
-    const endX = x + Math.cos(angle) * distance;
-    const endY = y + Math.sin(angle) * distance;
-    aim.lineStyle(4, 0x382341, .35).lineBetween(x, y, endX, endY);
-    aim.lineStyle(2, 0xfff2cd).lineBetween(x, y, endX, endY);
+    const unitX = Math.cos(angle), unitY = Math.sin(angle);
+    const startX = x + unitX * (diameter / 2 + 3), startY = y + unitY * (diameter / 2 + 3);
+    const endX = x + unitX * distance, endY = y + unitY * distance;
+    aim.lineStyle(5, 0x332018, .48).lineBetween(startX, startY, endX, endY);
+    aim.lineStyle(3.5, 0xffc673, .23).lineBetween(startX, startY, endX, endY);
+    aim.lineStyle(1.4, 0xffe7b6, .96).lineBetween(startX, startY, endX, endY);
     aim.fillStyle(0xfff2cd).fillTriangle(endX, endY,
       endX - Math.cos(angle - .42) * 12, endY - Math.sin(angle - .42) * 12,
       endX - Math.cos(angle + .42) * 12, endY - Math.sin(angle + .42) * 12);

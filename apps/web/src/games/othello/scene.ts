@@ -1,6 +1,7 @@
 import type Phaser from 'phaser';
 import { playSound } from '../../platform/audio.ts';
 import { addStoneShadow, createStoneShadow, preloadStones, stoneTexture } from '../board-art.ts';
+import { paintTargetMark, paintTileMark, revealMoveMarks } from '../board-marks.ts';
 import type { GameView } from '../scenes.ts';
 import { tableSize } from '../table.ts';
 import type { Stone } from '../table.ts';
@@ -11,10 +12,12 @@ const width = tableSize - edge * 2;
 const cell = width / othelloSize;
 const diameter = 44;
 const coordinate = (index: number) => edge + (index + .5) * cell;
+const center = (index: number) => [coordinate(index % othelloSize), coordinate(Math.floor(index / othelloSize))] as const;
 
 export function othelloScene(view: () => GameView) {
   let field: Phaser.GameObjects.Graphics;
-  let marks: Phaser.GameObjects.Graphics;
+  let recentMarks: Phaser.GameObjects.Graphics;
+  let hints: Phaser.GameObjects.Graphics;
   let previous: GameView | undefined;
   let state = othelloState([]);
   const pieces = new Map<number, { color: Stone; disc: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image }>();
@@ -45,7 +48,8 @@ export function othelloScene(view: () => GameView) {
     create(this: Phaser.Scene) {
       createStoneShadow(this);
       field = this.add.graphics().setDepth(-1);
-      marks = this.add.graphics().setDepth(2);
+      recentMarks = this.add.graphics().setDepth(-.5);
+      hints = this.add.graphics().setDepth(.25);
       this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
         if (!view().canMove) return;
         const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
@@ -60,7 +64,7 @@ export function othelloScene(view: () => GameView) {
       if (current.history !== previous?.history) {
         const single = previous && current.history.length === previous.history.length + 1
           && previous.history.every((move, index) => move === current.history[index]);
-        const animate = single && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const animate = Boolean(single) && !matchMedia('(prefers-reduced-motion: reduce)').matches;
         state = othelloState(current.history);
         for (let index = 0; index < state.board.length; index++) {
           const color = state.board[index];
@@ -99,19 +103,16 @@ export function othelloScene(view: () => GameView) {
           }
         }
         if (single) playSound('place');
+        recentMarks.clear();
+        const last = current.history.at(-1);
+        if (last !== undefined) paintTileMark(recentMarks, ...center(last), cell, 'arrival');
+        revealMoveMarks(this, recentMarks, animate);
       }
       if (!previous || current.history !== previous.history || current.cursor !== previous.cursor || current.canMove !== previous.canMove) {
-        marks.clear();
+        hints.clear();
         if (current.canMove) {
-          marks.fillStyle(0xe5ffc7, .7);
-          for (const move of state.legal) marks.fillCircle(coordinate(move % othelloSize), coordinate(Math.floor(move / othelloSize)), 4);
-        }
-        const last = current.history.at(-1);
-        if (last !== undefined) marks.lineStyle(1.6, 0xffd890).strokeCircle(coordinate(last % othelloSize), coordinate(Math.floor(last / othelloSize)), 4);
-        if (current.cursor !== null) {
-          const x = edge + current.cursor % othelloSize * cell;
-          const y = edge + Math.floor(current.cursor / othelloSize) * cell;
-          marks.lineStyle(2, 0xffe2a4).strokeRoundedRect(x + 3, y + 3, cell - 6, cell - 6, 6);
+          for (const move of state.legal) paintTargetMark(hints, ...center(move), cell);
+          if (current.cursor !== null) paintTileMark(hints, ...center(current.cursor), cell, 'focus');
         }
       }
       previous = current;

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { ProfileGame } from '../../../../packages/protocol/profile.ts';
 import type { AlkkagiStatus, Flick, FlickRound, StonePosition } from './alkkagi/rules.ts';
+import type { TargetMark } from './board-marks.ts';
 import { tableSize } from './table.ts';
 import { alkkagiScene } from './alkkagi/scene.ts';
 import { omokScene } from './omok/scene.ts';
@@ -12,7 +13,7 @@ export interface GameView {
   history: number[];
   cursor: number | null;
   chessSelected?: number;
-  chessTargets: readonly number[];
+  chessTargets: ReadonlyMap<number, TargetMark>;
   dark: boolean;
   force: number;
   allowDoubleThree: boolean;

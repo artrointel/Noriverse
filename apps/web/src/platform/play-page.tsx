@@ -110,7 +110,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const choice = chessChoice?.matchId === matchId && chessChoice.revision === history.length && chessChoice.last === history.at(-1)
     ? chessChoice : undefined;
   const chessMoves = useMemo(() => chess && choice ? chess.moves({ square: chessSquare(choice.from), verbose: true }) : [], [chess, choice]);
-  const chessTargets = useMemo(() => chessMoves.map(move => chessIndex(move.to)), [chessMoves]);
+  const chessTargets = useMemo(() => new Map(chessMoves.map(move => [chessIndex(move.to), move.captured ? 'capture' : 'target'] as const)), [chessMoves]);
   const flickStatus = room?.physics ? settledStatus(room.physics) : alkkagi;
   const surrendered = room?.surrendered ?? boardRound?.surrendered ?? localRound.surrendered;
   const timedOut = room?.timedOut ?? boardRound?.timedOut ?? localRound.timedOut;
