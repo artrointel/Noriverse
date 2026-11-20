@@ -68,7 +68,13 @@ export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, i
   });
   return {
     resize(next: RenderSize) { size = next; applyResolution(game); },
-    refreshInputBounds() { if (camera) game.scale.updateBounds(); },
+    refreshInputBounds() {
+      if (!camera) return;
+      const scale = game.scale;
+      scale.updateBounds();
+      const { width, height } = scale.canvasBounds;
+      if (width && height) scale.displayScale.set(scale.baseSize.width / width, scale.baseSize.height / height);
+    },
     destroy() { game.destroy(true); },
   };
 }

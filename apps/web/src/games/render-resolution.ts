@@ -14,3 +14,9 @@ export function renderFrameSize(quality: RenderResolution, availableWidth: numbe
   const width = Math.max(0, Math.floor(Math.min(limit, availableWidth, availableHeight / aspect)));
   return { width, height: Math.round(width * aspect) };
 }
+
+export function renderBufferSize(quality: RenderResolution, frame: RenderSize, sceneHeight: number, devicePixelRatio: number): RenderSize {
+  const density = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const width = frame.width > 0 ? Math.max(1, Math.round(frame.width * density)) : 0;
+  return renderFrameSize(quality, width, Infinity, sceneHeight);
+}

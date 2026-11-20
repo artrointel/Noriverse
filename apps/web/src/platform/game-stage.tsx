@@ -5,7 +5,7 @@ import { touchResolution } from '../../../../packages/protocol/rooms.ts';
 import type { TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import type { ReactionSender } from '../../../../packages/protocol/reactions.ts';
 import type { GameId, GameView, mountGame } from '../games/scenes.ts';
-import { fixedResolutions, readResolution, renderFrameSize } from '../games/render-resolution.ts';
+import { fixedResolutions, readResolution, renderBufferSize, renderFrameSize } from '../games/render-resolution.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 import { tableSize } from '../games/table.ts';
 import { sichuanSceneHeight } from '../games/sichuan/options.ts';
@@ -36,7 +36,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const mount = useRef<HTMLDivElement>(null);
   const engine = useRef<ReturnType<typeof mountGame>>(null);
   const sceneHeight = id === 'sichuan' ? sichuanSceneHeight : tableSize;
-  const requestedSize = useRef({ width: tableSize, height: sceneHeight });
+  const requestedSize = useRef({ frame: { width: tableSize, height: sceneHeight }, buffer: { width: tableSize, height: sceneHeight } });
   const [actualSize, setActualSize] = useState(requestedSize.current);
   const resultButton = useRef<HTMLButtonElement>(null);
   const gameSettings = useRef<HTMLDetailsElement>(null);
@@ -83,23 +83,41 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
       const inset = (property: string) => Number.parseFloat(style.getPropertyValue(property)) || 0;
       const availableWidth = expanded ? element.clientWidth
         : layout.clientWidth - inset('padding-left') - inset('padding-right') - inset('--stage-sidebar-width') - inset('column-gap');
-      const size = renderFrameSize(resolution, availableWidth, availableHeight, sceneHeight);
-      if (!size.width || (size.width === requestedSize.current.width && size.height === requestedSize.current.height)) return;
-      requestedSize.current = size;
-      engine.current?.resize(size);
-      setActualSize(size);
+      const frame = renderFrameSize(resolution, availableWidth, availableHeight, sceneHeight);
+      if (!frame.width) return;
+      const buffer = renderBufferSize(resolution, frame, sceneHeight, window.devicePixelRatio);
+      const previous = requestedSize.current;
+      if (frame.width === previous.frame.width && buffer.width === previous.buffer.width) return;
+      requestedSize.current = { frame, buffer };
+      if (buffer.width !== previous.buffer.width) engine.current?.resize(buffer);
+      setActualSize(requestedSize.current);
     }
-    measure();
+    let densityQuery: MediaQueryList | undefined;
+    function watchDensity() {
+      densityQuery?.removeEventListener('change', watchDensity);
+      densityQuery = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      densityQuery.addEventListener('change', watchDensity);
+      measure();
+    }
+    watchDensity();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     observer.observe(layout);
     observer.observe(page);
+    if (mount.current && 'devicePixelContentBoxSize' in ResizeObserverEntry.prototype) {
+      observer.observe(mount.current, { box: 'device-pixel-content-box' });
+    }
     for (const chrome of [stage.querySelector('.stage-bar'), stage.querySelector('.stage-help'), reactionBar, document.querySelector('.site-header')]) {
       if (chrome) observer.observe(chrome);
     }
     window.addEventListener('resize', measure);
     viewport?.addEventListener('resize', measure);
-    return () => { observer.disconnect(); window.removeEventListener('resize', measure); viewport?.removeEventListener('resize', measure); };
+    return () => {
+      observer.disconnect();
+      densityQuery?.removeEventListener('change', watchDensity);
+      window.removeEventListener('resize', measure);
+      viewport?.removeEventListener('resize', measure);
+    };
   }, [resolution, expanded, sceneHeight]);
 
   useLayoutEffect(() => { engine.current?.refreshInputBounds(); }, [actualSize, expanded]);
@@ -149,7 +167,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     setStatus('loading');
     void import('../games/scenes.ts').then(({ mountGame }) => {
       if (canceled) return;
-      instance = mountGame(element, id, roundAntialias, requestedSize.current, () => current.current, () => {
+      instance = mountGame(element, id, roundAntialias, requestedSize.current.buffer, () => current.current, () => {
         if (!canceled) { setStatus('ready'); notifyReady(); }
       });
       engine.current = instance;
@@ -283,13 +301,16 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
                 </select>
               </label>
               <small>{t('resolutionFit')}</small>
-              {status === 'ready' && <output className="applied-resolution">{t('resolutionApplied', actualSize)}</output>}
+              {status === 'ready' && <>
+                <output className="applied-resolution">{t('resolutionApplied', actualSize.buffer)}</output>
+                {actualSize.frame.width !== actualSize.buffer.width && <small>{t('resolutionDisplay', actualSize.frame)}</small>}
+              </>}
             </div>
           </details>
         </div>
       </div>
       <div className="stage-field" ref={field}>
-        <GameReactions matchId={matchId} size={actualSize} profile={ownProfile} room={reactions} enabled={status === 'ready' && !view.finished}>
+        <GameReactions matchId={matchId} size={actualSize.frame} profile={ownProfile} room={reactions} enabled={status === 'ready' && !view.finished}>
           <div
             className="game-viewport" ref={mount} data-ready={status === 'ready'}
             tabIndex={0}

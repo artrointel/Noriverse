@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../apps/web/src/games/turn-clock.ts';
-import { readResolution, renderFrameSize } from '../apps/web/src/games/render-resolution.ts';
+import { readResolution, renderBufferSize, renderFrameSize } from '../apps/web/src/games/render-resolution.ts';
 import { readProfilePreferences } from '../packages/protocol/profile.ts';
 import { readInvite, readTouch } from '../packages/protocol/rooms.ts';
 
@@ -10,6 +10,16 @@ test('custom turn limits accept whole seconds and keep zero unlimited', () => {
   for (const value of [-1, 3601, 1.5, '37', Infinity]) assert.equal(isTurnLimit(value), false);
   assert.equal(nextDeadline(0, 100), 0);
   assert.equal(nextDeadline(37, 100), 37100);
+});
+
+test('the canvas buffer uses device pixels with automatic and manual width limits', () => {
+  const frame = { width: 387, height: 516 };
+  assert.deepEqual(renderBufferSize('auto', frame, 640, 1), frame);
+  assert.deepEqual(renderBufferSize('auto', frame, 640, 3), { width: 1161, height: 1548 });
+  assert.deepEqual(renderBufferSize('auto', frame, 640, 2.75), { width: 1064, height: 1419 });
+  assert.deepEqual(renderBufferSize('auto', { width: 980, height: 1307 }, 640, 3), { width: 1920, height: 2560 });
+  assert.deepEqual(renderBufferSize(720, frame, 640, 3), { width: 720, height: 960 });
+  assert.deepEqual(renderBufferSize('auto', frame, 640, NaN), frame);
 });
 
 test('graphics resolution matches the available display area and preserves the scene aspect ratio', () => {

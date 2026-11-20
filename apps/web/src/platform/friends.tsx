@@ -153,11 +153,12 @@ export function InviteDialog({ owner, navigate, invite, close }: { owner: string
   </dialog>;
 }
 
-export function FriendButton({ id, model }: { id: string; model: Friends }) {
+export function FriendButton({ id, model, allowRemoval = false }: { id: string; model: Friends; allowRemoval?: boolean }) {
   const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
   if (!apiAvailable || !model.owner || model.owner === id || !model.friends) return null;
   const added = model.friends.some(friend => friend.id === id);
+  if (added && !allowRemoval) return null;
   const received = model.incoming.some(friend => friend.id === id);
   const sent = model.outgoing.some(friend => friend.id === id);
   return <>
@@ -249,7 +250,7 @@ export function FriendsPage({ model, navigate, openProfile, follow }: { model: F
             {friend.room && <div className="friend-room"><span>{t(friend.room.game)}</span>
               <button type="button" className="button button-primary" disabled={!friend.room.joinable} onClick={() => { if (friend.room) follow(friend.room); }}>
                 {t(friend.room.joinable ? 'followFriend' : 'friendRoomFull')}</button></div>}
-            <FriendButton id={friend.id} model={model} />
+            <FriendButton id={friend.id} model={model} allowRemoval />
           </div>} />}
       </>}
     </section>

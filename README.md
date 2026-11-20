@@ -30,6 +30,7 @@ npm run dev
 - [서비스 기획과 벤치마킹](docs/product.md)
 - [기술 설계와 인프라 검토](docs/technical-design.md)
 - [로드맵과 Phase 1 검증 기준](docs/roadmap.md)
+- [장기 검토 항목](docs/long-term.md)
 
 ## GitHub Pages 첫 배포
 

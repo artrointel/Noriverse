@@ -366,7 +366,7 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 }
 @keyframes stage-reaction-fade { 0%, 82% { opacity: .7; } 100% { opacity: 0; } }
 .game-viewport { width: 100%; height: 100%; position: relative; border-radius: 13px; overflow: hidden; background: var(--raised); touch-action: none; }
-.game-viewport canvas { display: block; }
+.game-viewport canvas { display: block; width: 100%; height: 100%; }
 [data-play-game="sichuan"] .game-viewport { color-scheme: only light; }
 .game-viewport[data-ready="true"] canvas { animation: view-in .23s var(--ease) both; }
 .touch-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; overflow: hidden; }
