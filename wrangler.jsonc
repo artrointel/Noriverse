@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "noriverse-phase-one",
+  "main": "apps/signaling/worker.ts",
+  "compatibility_date": "2026-07-09",
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOMS", "class_name": "Room" },
+      { "name": "PROFILES", "class_name": "ProfileStore" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Room"] },
+    { "tag": "v2", "new_sqlite_classes": ["ProfileStore"] }
+  ]
+}

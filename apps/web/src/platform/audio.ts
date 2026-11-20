@@ -1,0 +1,236 @@
+type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win';
+type Channel = 'music' | 'effects';
+export type AudioLevels = Record<Channel, number>;
+
+const defaultLevels: AudioLevels = { music: 24, effects: 68 };
+const scores = {
+  lobby: { chords: [[45, 52, 57, 60], [41, 48, 53, 57], [48, 55, 60, 64], [43, 50, 55, 59]], pattern: [0, -1, 2, 1, -1, 3, 2, -1], interval: .38 },
+  omok: { chords: [[48, 55, 62, 64], [45, 52, 57, 60], [41, 48, 57, 60], [43, 50, 57, 62]], pattern: [1, -1, -1, 3, 2, -1, 0, -1], interval: .45 },
+  physics: { chords: [[43, 50, 58, 62], [46, 53, 60, 65], [41, 48, 57, 60], [45, 52, 55, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, 1], interval: .265 },
+} as const;
+const frequency = (note: number) => 440 * 2 ** ((note - 69) / 12);
+let levels = defaultLevels;
+let graph: { context: AudioContext; music: GainNode; effects: GainNode; noise: AudioBuffer } | undefined;
+let clock: number | undefined;
+let nextBeat = 0;
+let beat = 0;
+let musicScene: keyof typeof scores = 'lobby';
+const playingNotes = new Set<OscillatorNode>();
+let lastEffect = -1;
+let resumeRequest: Promise<void> | undefined;
+
+export function loadAudioLevels(): AudioLevels {
+  try {
+    const saved = JSON.parse(localStorage.getItem('noriverse.audio') ?? '{}') as Partial<AudioLevels> | null;
+    return {
+      music: clampLevel(saved?.music, defaultLevels.music),
+      effects: clampLevel(saved?.effects, defaultLevels.effects),
+    };
+  } catch {
+    return defaultLevels;
+  }
+}
+
+function clampLevel(value: unknown, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(100, Math.max(0, Math.round(value))) : fallback;
+}
+
+function applyLevels() {
+  if (!graph) return;
+  for (const name of ['music', 'effects'] as const) {
+    const parameter = graph[name].gain;
+    const target = document.hidden ? 0 : (levels[name] / 100) ** 1.35;
+    parameter.setTargetAtTime(target, graph.context.currentTime, 0.045);
+  }
+}
+
+export function setAudioLevels(value: AudioLevels) {
+  levels = value;
+  applyLevels();
+  syncMusic();
+}
+
+export function setMusicScene(scene: keyof typeof scores) {
+  if (musicScene === scene) return;
+  musicScene = scene;
+  beat = 0;
+  nextBeat = (graph?.context.currentTime ?? 0) + .055;
+  if (!graph) return;
+  for (const note of playingNotes) note.stop(graph.context.currentTime + .025);
+}
+
+function createGraph() {
+  const context = new AudioContext();
+  const music = context.createGain();
+  const effects = context.createGain();
+  const limiter = context.createDynamicsCompressor();
+  music.gain.value = 0;
+  effects.gain.value = 0;
+  music.connect(limiter);
+  effects.connect(limiter);
+  limiter.connect(context.destination);
+  const noise = context.createBuffer(1, Math.ceil(context.sampleRate * 0.3), context.sampleRate);
+  const samples = noise.getChannelData(0);
+  for (let index = 0; index < samples.length; index++) samples[index] = Math.random() * 2 - 1;
+  return { context, music, effects, noise };
+}
+
+function unlockAudio() {
+  if (!levels.music && !levels.effects) return;
+  try {
+    if (!graph) {
+      graph = createGraph();
+      applyLevels();
+    }
+    if (graph.context.state === 'running') {
+      syncMusic();
+    } else if (!resumeRequest) {
+      resumeRequest = graph.context.resume().then(syncMusic).catch(() => {})
+        .finally(() => { resumeRequest = undefined; });
+    }
+  } catch {
+    // The interface remains usable when audio output is unavailable.
+  }
+}
+
+function tone(when: number, hz: number, duration: number, volume: number, channel: Channel,
+  wave: OscillatorType = 'sine', endHz = hz) {
+  if (!graph) return;
+  const { context } = graph;
+  const oscillator = context.createOscillator();
+  const envelope = context.createGain();
+  oscillator.type = wave;
+  oscillator.frequency.setValueAtTime(hz, when);
+  oscillator.frequency.exponentialRampToValueAtTime(endHz, when + duration);
+  envelope.gain.setValueAtTime(0.0001, when);
+  envelope.gain.exponentialRampToValueAtTime(volume, when + 0.008);
+  envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration);
+  oscillator.connect(envelope).connect(graph[channel]);
+  if (channel === 'music') {
+    playingNotes.add(oscillator);
+    oscillator.onended = () => { playingNotes.delete(oscillator); };
+  }
+  oscillator.start(when);
+  oscillator.stop(when + duration + 0.01);
+}
+
+function texture(when: number, duration: number, volume: number, center: number) {
+  if (!graph) return;
+  const { context, noise, effects } = graph;
+  const source = context.createBufferSource();
+  const filter = context.createBiquadFilter();
+  const envelope = context.createGain();
+  source.buffer = noise;
+  filter.type = 'bandpass';
+  filter.frequency.value = center;
+  filter.Q.value = 0.75;
+  envelope.gain.setValueAtTime(volume, when);
+  envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration);
+  source.connect(filter).connect(envelope).connect(effects);
+  source.start(when);
+  source.stop(when + duration);
+}
+
+export function playSound(effect: Effect, strength = 1) {
+  if (!graph || graph.context.state !== 'running' || !levels.effects || document.hidden) return;
+  const time = graph.context.currentTime;
+  switch (effect) {
+    case 'click':
+      if (time - lastEffect < 0.055) return;
+      lastEffect = time;
+      tone(time, 540, .07, .12, 'effects', 'sine', 360);
+      break;
+    case 'navigate':
+      tone(time, 520, .13, .07, 'effects', 'sine', 730);
+      tone(time + .035, 830, .12, .055, 'effects');
+      break;
+    case 'place':
+      texture(time, .045, .35, 1900);
+      tone(time, 720, .1, .16, 'effects', 'sine', 390);
+      break;
+    case 'doubleThree':
+      texture(time, .055, .31, 1900);
+      [62, 69, 76].forEach((note, index) => tone(time + index * .055, frequency(note), .22, .16, 'effects', 'triangle'));
+      break;
+    case 'flick':
+      texture(time, .12, .19 + strength * .12, 1200);
+      tone(time, 230, .16, .18, 'effects', 'triangle', 100);
+      break;
+    case 'impact': {
+      const gain = .055 + Math.min(1, strength) * .28;
+      texture(time, .065, gain, 2750);
+      tone(time, 1660, .075, gain * .6, 'effects', 'sine', 1080);
+      tone(time, 680, .12, gain * .35, 'effects', 'triangle', 530);
+      break;
+    }
+    case 'drop':
+      tone(time, 270, .21, .18, 'effects', 'sine', 73);
+      texture(time, .14, .16, 490);
+      break;
+    case 'win':
+      [60, 64, 67, 72].forEach((note, index) => tone(time + index * .085, frequency(note), .33, .14, 'effects', 'triangle'));
+      break;
+  }
+}
+
+function scheduleMusic() {
+  if (!graph || graph.context.state !== 'running') return;
+  const time = graph.context.currentTime;
+  const { chords, pattern, interval } = scores[musicScene];
+  nextBeat = Math.max(nextBeat, time + 0.015);
+  while (nextBeat < time + .16) {
+    const step = beat % pattern.length;
+    const notes = chords[Math.floor(beat / pattern.length) % chords.length];
+    if (step === 0) {
+      tone(nextBeat, frequency(notes[0] - 12), 1.4, .2, 'music');
+      tone(nextBeat, frequency(notes[1]), 1.1, .05, 'music');
+    }
+    const noteIndex = pattern[step];
+    if (noteIndex !== -1) {
+      const note = notes[noteIndex] + 12;
+      tone(nextBeat, frequency(note), .42, .11, 'music', 'triangle');
+      tone(nextBeat + .105, frequency(note), .26, .023, 'music');
+    }
+    if (musicScene === 'physics' && step === 4) tone(nextBeat, frequency(notes[0] - 12), .52, .12, 'music');
+    nextBeat += interval;
+    beat++;
+  }
+}
+
+function syncMusic() {
+  const enabled = graph?.context.state === 'running' && levels.music > 0 && !document.hidden;
+  if (enabled && clock === undefined) {
+    scheduleMusic();
+    clock = window.setInterval(scheduleMusic, 75);
+  } else if (!enabled && clock !== undefined) {
+    window.clearInterval(clock);
+    clock = undefined;
+  }
+}
+
+export function bindPageAudio() {
+  function click(event: MouseEvent) {
+    if (!(event.target instanceof Element) || !event.isTrusted) return;
+    unlockAudio();
+    if (event.target.closest('button:enabled, a[href], summary')) playSound('click');
+  }
+  function change(event: Event) {
+    if (event.isTrusted && event.target instanceof Element && event.target.matches('select, input[type=radio]')) playSound('click');
+  }
+  function visibility() {
+    applyLevels();
+    syncMusic();
+  }
+  document.addEventListener('click', click, true);
+  document.addEventListener('pointerup', unlockAudio, true);
+  document.addEventListener('keydown', unlockAudio, true);
+  document.addEventListener('change', change);
+  document.addEventListener('visibilitychange', visibility);
+  return () => {
+    document.removeEventListener('click', click, true);
+    document.removeEventListener('pointerup', unlockAudio, true);
+    document.removeEventListener('keydown', unlockAudio, true);
+    document.removeEventListener('change', change);
+    document.removeEventListener('visibilitychange', visibility);
+  };
+}
