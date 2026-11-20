@@ -1,12 +1,15 @@
-import { useDeferredValue, useState } from 'react';
+import { useDeferredValue, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import heroArt from '../assets/hero-orbit.jpg';
+import { apiAvailable } from '../network/api.ts';
+import type { BoardGame } from '../games/board-rules.ts';
 import type { GameId } from '../games/scenes.ts';
-import { gameIds, games } from './game-catalog.ts';
+import { gameIds, games, matchesGame } from './game-catalog.ts';
+import { cardsPerPage, pageNumbers } from './library-pagination.ts';
 import { gamePath, RouteLink } from './navigation.tsx';
 import type { GameMode, Navigate } from './navigation.tsx';
 
-type Filter = 'all' | 'strategy' | 'action';
+type Filter = 'all' | 'favorites' | 'strategy' | 'action';
 export type Power = 'standard' | 'fast';
 
 function Tags({ id }: { id: GameId }) {
@@ -14,28 +17,140 @@ function Tags({ id }: { id: GameId }) {
   return <div className="game-tags"><span>{t(games[id].category)}</span><span>{t(games[id].players)}</span></div>;
 }
 
-function GameCard({ id, navigate }: { id: GameId; navigate: Navigate }) {
+function GameCard({ id, selected, onSelect, favorite, disableFavorite, onFavorite }: {
+  id: GameId; selected: boolean; onSelect: (id: GameId, button: HTMLButtonElement) => void;
+  favorite: boolean; disableFavorite: boolean; onFavorite: (id: GameId) => void;
+}) {
   const { t } = useTranslation();
   const game = games[id];
   return (
-    <article className="game-card">
-      <RouteLink href={gamePath(id)} navigate={navigate} className="card-link" aria-label={t(id)}>
-        <div className={'card-art card-art-' + id}><img src={game.art} alt="" width="880" height="587" decoding="async" /></div>
-        <div className="card-copy">
-          <Tags id={id} />
-          <h3>{t(id)}</h3>
-          <p>{t(game.description)}</p>
-          <span className="card-play" aria-hidden="true"><i className="play-glyph" /></span>
-        </div>
-      </RouteLink>
+    <article className="game-card" data-selected={selected}>
+      <button type="button" className="card-link" aria-label={t(id)} aria-pressed={selected}
+        aria-controls={selected ? 'catalog-preview' : undefined} onClick={event => onSelect(id, event.currentTarget)}>
+        <span className={'card-art card-art-' + id}><img src={game.art} alt="" width="880" height="587" decoding="async" /></span>
+        <span className="card-copy">
+          <strong>{t(id)}</strong>
+          <small>{t(game.category)} · {t(game.players)}</small>
+        </span>
+      </button>
+      <button type="button" className="favorite-button" aria-pressed={favorite} disabled={disableFavorite}
+        aria-label={t(favorite ? 'removeFavorite' : 'addFavorite', { game: t(id) })} onClick={() => onFavorite(id)}>
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill={favorite ? 'currentColor' : 'none'} stroke="currentColor"
+          strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20.8 8.7c0 4.2-8.8 9.5-8.8 9.5S3.2 12.9 3.2 8.7a4.4 4.4 0 0 1 8.8-.5 4.4 4.4 0 0 1 8.8.5Z" />
+        </svg>
+      </button>
     </article>
   );
 }
 
-export function CatalogPage({ home, navigate }: { home: boolean; navigate: Navigate }) {
+function GamePreview({ id, active, navigate, onClose }: { id: GameId; active: boolean; navigate: Navigate; onClose: () => void }) {
+  const { t } = useTranslation();
+  const title = useRef<HTMLHeadingElement>(null);
+  const game = games[id];
+  useLayoutEffect(() => {
+    if (!active) return;
+    const heading = title.current;
+    heading?.focus({ preventScroll: true });
+    if (heading && heading.getBoundingClientRect().top < 0) heading.scrollIntoView({ block: 'nearest' });
+  }, [active, id]);
+
+  return (
+    <aside className="surface catalog-preview" id="catalog-preview" aria-labelledby="catalog-preview-title"
+      onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); onClose(); } }}>
+      <img className={'catalog-preview-art card-art-' + id} src={game.art} alt="" width="880" height="587" />
+      <div className="catalog-preview-content">
+        <div className="catalog-preview-heading">
+          <h3 ref={title} id="catalog-preview-title" tabIndex={-1}>{t(id)}</h3>
+          <button type="button" className="settings-close" aria-label={t('closePreview')} onClick={onClose}>
+            <span aria-hidden="true" />
+          </button>
+        </div>
+        <Tags id={id} />
+        <p>{t(game.description)}</p>
+        <section>
+          <h4>{t('rules')}</h4>
+          <p>{t(game.rules)}</p>
+        </section>
+        <div className="preview-modes">
+          <span>{t('gameMode')}</span>
+          <strong>{t('local')} · {t(id === 'physics' ? 'practice' : 'online')}</strong>
+        </div>
+        <RouteLink href={gamePath(id, 'setup')} navigate={navigate} className="button button-primary preview-play">
+          <i className="play-glyph" aria-hidden="true" />{t('selectGame')}
+        </RouteLink>
+      </div>
+    </aside>
+  );
+}
+
+export function CatalogPage({ home, navigate, favorites, disableFavorite, favoriteError, onFavorite }: {
+  home: boolean; navigate: Navigate; favorites: GameId[]; disableFavorite: boolean;
+  favoriteError: boolean; onFavorite: (id: GameId) => void;
+}) {
   const { t } = useTranslation();
   const [filter, setFilter] = useState<Filter>('all');
+  const [query, setQuery] = useState('');
+  const [selection, setSelection] = useState<GameId>();
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [pageAnchor, setPageAnchor] = useState(0);
+  const [capacity, setCapacity] = useState(4);
+  const grid = useRef<HTMLDivElement>(null);
+  const previewSlot = useRef<HTMLDivElement>(null);
+  const lastCard = useRef<HTMLButtonElement>(null);
+  const search = useRef<HTMLInputElement>(null);
   const visibleFilter = useDeferredValue(filter);
+  const visibleQuery = useDeferredValue(query);
+  const visibleGames = gameIds.filter(id => {
+    const game = games[id];
+    const matchesFilter = visibleFilter === 'all'
+      || (visibleFilter === 'favorites' ? favorites.includes(id) : game.category === visibleFilter);
+    return matchesFilter && matchesGame(id, visibleQuery, t(id));
+  });
+  const selected = previewOpen && selection && visibleGames.includes(selection) ? selection : undefined;
+  const pageCount = Math.max(1, Math.ceil(visibleGames.length / capacity));
+  const page = Math.min(pageCount, Math.floor(pageAnchor / capacity) + 1);
+  const pageGames = visibleGames.slice((page - 1) * capacity, page * capacity);
+
+  useLayoutEffect(() => {
+    const container = grid.current;
+    const card = container?.querySelector<HTMLElement>('.game-card');
+    if (!container || !card) return;
+
+    function measure() {
+      if (!container || !card) return;
+      const style = getComputedStyle(container);
+      const columns = style.gridTemplateColumns.split(/\s+/).filter(Boolean).length;
+      setCapacity(cardsPerPage(columns, card.offsetHeight, Number.parseFloat(style.rowGap) || 0,
+        container.getBoundingClientRect().top + window.scrollY, window.innerHeight));
+    }
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    observer.observe(card);
+    if (previewSlot.current) observer.observe(previewSlot.current);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [pageGames[0], selected, visibleFilter, visibleQuery]);
+
+  function select(id: GameId, button: HTMLButtonElement) {
+    lastCard.current = button;
+    setPageAnchor(visibleGames.indexOf(id));
+    setSelection(id);
+    setPreviewOpen(true);
+  }
+
+  function closePreview() {
+    setPreviewOpen(false);
+    (lastCard.current?.isConnected ? lastCard.current : search.current)?.focus({ preventScroll: true });
+  }
+
+  function selectPage(number: number) {
+    setPageAnchor((number - 1) * capacity);
+  }
   return (
     <div className="site-width">
       {home && (
@@ -58,15 +173,49 @@ export function CatalogPage({ home, navigate }: { home: boolean; navigate: Navig
             {home ? <h2 id="catalog-title">{t('library')}</h2> : <h1 id="catalog-title" tabIndex={-1}>{t('library')}</h1>}
             <p>{t('libraryIntro')}</p>
           </div>
-          <div className="filter" aria-label={t('games')}>
-            {(['all', 'strategy', 'action'] as const).map(option => (
-              <button key={option} type="button" aria-pressed={filter === option} onClick={() => setFilter(option)}>{t(option)}</button>
-            ))}
+          <div className="catalog-controls">
+            <div className="library-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
+                <circle cx="10.8" cy="10.8" r="5.7" /><path d="m15 15 4.4 4.4" />
+              </svg>
+              <input ref={search} type="search" aria-label={t('gameSearch')} placeholder={t('gameSearchHint')} value={query}
+                onChange={event => { setQuery(event.target.value); setPageAnchor(0); setPreviewOpen(false); }} />
+            </div>
+            <div className="filter" aria-label={t('games')}>
+              {(['all', 'favorites', 'strategy', 'action'] as const).map(option => (
+                <button key={option} type="button" aria-pressed={filter === option} onClick={() => {
+                  setFilter(option); setPageAnchor(0); setPreviewOpen(false);
+                }}>{t(option)}</button>
+              ))}
+            </div>
           </div>
         </div>
-        <div className="game-grid" aria-busy={visibleFilter !== filter}>
-          {gameIds.filter(id => visibleFilter === 'all' || visibleFilter === games[id].category).map(id =>
-            <GameCard key={id} id={id} navigate={navigate} />)}
+        {favoriteError && <p role="alert" className="muted favorite-error">{t('profileError')}</p>}
+        <div className="catalog-layout">
+          <div ref={previewSlot} className="catalog-preview-slot" data-open={Boolean(selected)} inert={!selected}>
+            <div className="catalog-preview-clip">
+              {selection && <GamePreview id={selection} active={Boolean(selected)} navigate={navigate} onClose={closePreview} />}
+            </div>
+          </div>
+          <div className="catalog-list">
+            <div ref={grid} className="game-grid" aria-busy={visibleFilter !== filter || visibleQuery !== query}>
+              {pageGames.map(id => <GameCard key={id} id={id} selected={selected === id} onSelect={select}
+                favorite={favorites.includes(id)} disableFavorite={disableFavorite} onFavorite={onFavorite} />)}
+              {visibleGames.length === 0 && <p className="surface library-empty" role="status">
+                {t(visibleFilter === 'favorites' && favorites.length === 0
+                  ? apiAvailable ? 'emptyFavorites' : 'serviceUnavailable'
+                  : 'noSearchResults')}
+              </p>}
+            </div>
+            {pageCount > 1 && <nav className="catalog-pagination" aria-label={t('gamePages')}>
+              <button type="button" disabled={page === 1} onClick={() => selectPage(page - 1)}>{t('previousPage')}</button>
+              {pageNumbers(page, pageCount).map((number, index) => number === 'gap'
+                ? <span key={'gap-' + index} aria-hidden="true">…</span>
+                : <button key={number} type="button" aria-label={t('pageNumber', { number })}
+                  aria-current={number === page ? 'page' : undefined} onClick={() => selectPage(number)}>{number}</button>)}
+              <button type="button" disabled={page === pageCount} onClick={() => selectPage(page + 1)}>{t('nextPage')}</button>
+            </nav>}
+          </div>
         </div>
       </section>
       <section className="invite-banner">
@@ -101,14 +250,15 @@ export function GameDetail({ id, navigate }: { id: GameId; navigate: Navigate })
   );
 }
 
-export function GameSetup({ id, online, practice, power, onPower, allowDoubleThree, onRule, onStart, navigate, hasRoom }: {
+export function GameSetup({ id, online, practice, power, onPower, allowDoubleThree, onRule, onStart, navigate, activeGame }: {
   id: GameId; online: boolean; practice: boolean; power: Power; onPower: (power: Power) => void;
   allowDoubleThree: boolean; onRule: (allow: boolean) => void;
-  onStart: (mode: GameMode) => void; navigate: Navigate; hasRoom: boolean;
+  onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: BoardGame;
 }) {
   const { t } = useTranslation();
-  const [mode, setMode] = useState<GameMode>(id === 'omok' && online ? 'online' : id === 'physics' && practice ? 'practice' : 'local');
-  const alternative = id === 'omok' ? 'online' : 'practice';
+  const [mode, setMode] = useState<GameMode>(id !== 'physics' && online && apiAvailable ? 'online' : id === 'physics' && practice ? 'practice' : 'local');
+  const alternative = id === 'physics' ? 'practice' : 'online';
+  const onlineUnavailable = alternative === 'online' && !apiAvailable;
   return (
     <div className="site-width subpage">
       <RouteLink href={gamePath(id)} navigate={navigate} className="back-link">{t(id)}</RouteLink>
@@ -122,11 +272,12 @@ export function GameSetup({ id, online, practice, power, onPower, allowDoubleThr
               <span><strong>{t('local')}</strong><small>{t(id === 'physics' ? 'localFlickCopy' : 'localCopy')}</small></span>
             </label>
             <label className="choice">
-              <input type="radio" name="mode" value={alternative} checked={mode === alternative} onChange={() => setMode(alternative)} />
-              <span><strong>{t(alternative)}</strong><small>{t(alternative === 'online' ? 'onlineCopy' : 'practiceCopy')}</small></span>
+              <input type="radio" name="mode" value={alternative} checked={mode === alternative} disabled={onlineUnavailable} onChange={() => setMode(alternative)} />
+              <span><strong>{t(alternative)}</strong><small>{t(onlineUnavailable ? 'serviceUnavailable' : alternative === 'online' ? 'onlineCopy' : 'practiceCopy')}</small></span>
             </label>
           </fieldset>
-          {id === 'omok' && (mode === 'local' || !hasRoom) && (
+          {mode === 'online' && activeGame && activeGame !== id && <p className="muted">{t('otherGameRoom', { game: t(activeGame) })}</p>}
+          {id === 'omok' && (mode === 'local' || !activeGame) && (
             <fieldset>
               <legend>{t('rule33')}</legend>
               <p className="muted">{t('rule33Help')}</p>
@@ -150,7 +301,7 @@ export function GameSetup({ id, online, practice, power, onPower, allowDoubleThr
             </fieldset>
           )}
           <button type="button" className="button button-primary" onClick={() => onStart(mode)}>
-            {t(mode === 'online' ? (hasRoom ? 'goToRoom' : 'newRoom') : 'start')}
+            {t(mode === 'online' ? (activeGame ? 'goToRoom' : 'newRoom') : 'start')}
           </button>
         </section>
         <aside className="surface setup-summary">

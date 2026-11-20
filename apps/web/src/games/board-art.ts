@@ -11,6 +11,10 @@ export const stoneTexture = (color: Stone) => color === 1 ? 'black-stone' : 'whi
 
 export function preloadBoard(scene: Phaser.Scene) {
   scene.load.image(boardTexture, boardArt);
+  preloadStones(scene);
+}
+
+export function preloadStones(scene: Phaser.Scene) {
   scene.load.image(stoneTexture(1), blackStone);
   scene.load.image(stoneTexture(2), whiteStone);
 }
@@ -49,6 +53,11 @@ export function createBoardArt(scene: Phaser.Scene, edge: number, gridInset: num
     for (const [x, y] of marks) details.fillCircle(coordinate(x), coordinate(y), 2.4);
   }
 
+  createStoneShadow(scene);
+  return { paint, coordinate };
+}
+
+export function createStoneShadow(scene: Phaser.Scene) {
   const shadow = scene.textures.createCanvas(shadowTexture, 64, 64);
   if (shadow) {
     const context = shadow.getContext();
@@ -60,7 +69,6 @@ export function createBoardArt(scene: Phaser.Scene, edge: number, gridInset: num
     context.fillRect(0, 0, 64, 64);
     shadow.refresh();
   }
-  return { paint, coordinate };
 }
 
 export function addStoneShadow(scene: Phaser.Scene, x: number, y: number, diameter: number) {

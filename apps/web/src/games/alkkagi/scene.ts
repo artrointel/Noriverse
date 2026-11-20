@@ -54,7 +54,7 @@ export function alkkagiScene(view: () => GameView) {
   }
 
   function available(stone: Piece) {
-    return !stone.out && canFlick(status, stone.owner, view().practice);
+    return !view().finished && !stone.out && canFlick(status, stone.owner, view().practice);
   }
 
   function showAim(dx: number, dy: number) {
@@ -245,6 +245,13 @@ export function alkkagiScene(view: () => GameView) {
       if (dark !== view().dark) {
         dark = view().dark;
         board.paint(dark);
+      }
+      if (view().finished) {
+        if (!stage.physics.world.isPaused) {
+          stage.physics.world.pause();
+          clearAim();
+        }
+        return;
       }
       if (status.phase !== 'moving') return;
       let moving = false;

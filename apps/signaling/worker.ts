@@ -4,7 +4,7 @@ import type { Role, RoomMessage } from '../../packages/protocol/rooms.ts';
 import { profileRequest, ProfileStore } from './profiles.ts';
 export { ProfileStore };
 
-interface Env { ROOMS: DurableObjectNamespace<Room>; PROFILES: DurableObjectNamespace<ProfileStore> }
+interface Env { ROOMS: DurableObjectNamespace<Room>; PROFILES: DurableObjectNamespace<ProfileStore>; APP_ORIGIN?: string }
 interface Reservation { host: string; guest?: string; expires: number }
 const roomLifetime = 30 * 60 * 1000;
 const roomRoute = /^\/api\/rooms\/([^/]+)$/;
@@ -17,24 +17,41 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin');
-    if (origin && origin !== url.origin) return new Response(null, { status: 403 });
-    if (url.pathname.startsWith('/api/profiles/')) return profileRequest(request, env, url);
+    const external = Boolean(origin && origin !== url.origin);
+    if (external && origin !== env.APP_ORIGIN) return new Response(null, { status: 403 });
+
+    const cors = (response: Response) => {
+      if (external && origin) {
+        response.headers.set('Access-Control-Allow-Origin', origin);
+        response.headers.set('Access-Control-Expose-Headers', 'X-Noriverse-Session');
+        response.headers.append('Vary', 'Origin');
+      }
+      return response;
+    };
+    if (external && request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
+      return cors(new Response(null, { status: 204, headers: {
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+        'Access-Control-Max-Age': '600',
+      } }));
+    }
+    if (url.pathname.startsWith('/api/profiles/')) return cors(await profileRequest(request, env, url, external));
 
     if (url.pathname === '/api/rooms' && request.method === 'POST') {
       for (let attempt = 0; attempt < 4; attempt++) {
         const code = createRoomCode();
         const room = env.ROOMS.getByName(code);
         const token = await room.reserve();
-        if (token) return Response.json({ code, token }, { status: 201 });
+        if (token) return cors(Response.json({ code, token }, { status: 201 }));
       }
-      return new Response(null, { status: 503 });
+      return cors(new Response(null, { status: 503 }));
     }
 
     const code = url.pathname.match(roomRoute)?.[1];
     if (code && roomCodePattern.test(code) && request.headers.get('Upgrade') === 'websocket') {
       return env.ROOMS.getByName(code).fetch(request);
     }
-    return new Response(null, { status: 404 });
+    return cors(new Response(null, { status: 404 }));
   },
 } satisfies ExportedHandler<Env>;
 

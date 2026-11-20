@@ -6,9 +6,11 @@ import { formatPlayTime } from './profiles.tsx';
 import { RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 
-export function GameResult({ report, winner, room, record, rematch, back, navigate }: {
+export function GameResult({ report, winner, surrendered, scores, visible, onClose, room, record, rematch, back, navigate }: {
   report: MatchReport;
   winner: Stone | 'draw' | 'practice';
+  surrendered?: Stone;
+  scores?: readonly [number, number]; visible: boolean; onClose: () => void;
   room?: { canRematch: boolean; reconnect?: () => void };
   record?: (report: MatchReport) => Promise<boolean>;
   rematch: () => void; back: string; navigate: Navigate;
@@ -17,7 +19,7 @@ export function GameResult({ report, winner, room, record, rematch, back, naviga
   const heading = useRef<HTMLHeadingElement>(null);
   const [attempt, setAttempt] = useState(0);
   const [saved, setSaved] = useState<'waiting' | 'saved' | 'failed'>('waiting');
-  useEffect(() => { heading.current?.focus({ preventScroll: true }); }, []);
+  useEffect(() => { if (visible) heading.current?.focus({ preventScroll: true }); }, [visible]);
   useEffect(() => {
     if (!record) return;
     let current = true;
@@ -29,10 +31,19 @@ export function GameResult({ report, winner, room, record, rematch, back, naviga
   const label = winner === 'practice' ? t('practiceDone') : winner === 'draw' ? t('draw')
     : t('winner', { stone: t(winner === 1 ? 'black' : 'white') });
   return (
-    <section className="surface result-card">
+    <section className="surface result-card" role="dialog" aria-labelledby="match-result-title"
+      onKeyDown={event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          onClose();
+        }
+      }}>
+      <button type="button" className="settings-close result-close" aria-label={t('viewBoard')} onClick={onClose}><span aria-hidden="true" /></button>
       <div className="result-medal" aria-hidden="true">✦</div>
       <p>{t('matchResult', { game: t(report.game) })}</p>
-      <h2 ref={heading} tabIndex={-1}>{label}</h2>
+      <h2 id="match-result-title" ref={heading} tabIndex={-1}>{label}</h2>
+      {surrendered && <p>{t('resignedBy', { stone: t(surrendered === 1 ? 'black' : 'white') })}</p>}
+      {scores && <p>{t('discScore', { black: scores[0], white: scores[1] })}</p>}
       <div className="result-summary">
         <div><span>{t('playTime')}</span><strong>{formatPlayTime(report.seconds)}</strong></div>
         <div><span>{t('gameMode')}</span><strong>{t(report.mode)}</strong></div>

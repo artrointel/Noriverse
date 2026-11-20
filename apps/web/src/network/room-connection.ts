@@ -10,7 +10,7 @@ interface RoomEvents {
 }
 
 export function connectToRoom(code: string, token: string | undefined, events: RoomEvents) {
-  const url = new URL('/api/rooms/' + code, location.href);
+  const url = apiUrl('/api/rooms/' + code);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   if (token) url.searchParams.set('seat', token);
   const socket = new WebSocket(url);
@@ -160,3 +160,4 @@ export function connectToRoom(code: string, token: string | undefined, events: R
     },
   };
 }
+import { apiUrl } from './api.ts';

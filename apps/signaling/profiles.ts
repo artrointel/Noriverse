@@ -1,9 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
-import { matchXp, profileIdPattern, readName, readReport } from '../../packages/protocol/profile.ts';
-import type { GameStats, MatchReport, PublicProfile } from '../../packages/protocol/profile.ts';
+import { avatarLevel, defaultAvatar, levelFromPlayTime, profileGames, profileIdPattern, readName, readProfilePreferences, readReport } from '../../packages/protocol/profile.ts';
+import type { AvatarId, GameStats, MatchReport, ProfileGame, ProfilePreferences, PublicProfile } from '../../packages/protocol/profile.ts';
 
 const cookieName = 'noriverse_profile';
-type Identity = { id: string; secret: string; name: string };
+type Identity = { id: string; secret: string; name: string; avatar?: AvatarId; favorites?: ProfileGame[] };
 interface Env { PROFILES: DurableObjectNamespace<ProfileStore> }
 
 function json(data: unknown, status: number, headers?: HeadersInit) {
@@ -19,16 +19,17 @@ async function readBody(request: Request) {
   try { return JSON.parse(body) as unknown; } catch { return undefined; }
 }
 
-function session(request: Request) {
-  const cookie = request.headers.get('Cookie')?.split(';').map(value => value.trim())
+function session(request: Request, external: boolean) {
+  const cookie = external ? request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1]
+    : request.headers.get('Cookie')?.split(';').map(value => value.trim())
     .find(value => value.startsWith(cookieName + '='))?.slice(cookieName.length + 1);
   const [id, secret, extra] = cookie?.split('.') ?? [];
   return id && secret && !extra && profileIdPattern.test(id) && profileIdPattern.test(secret) ? { id, secret } : undefined;
 }
 
-export async function profileRequest(request: Request, env: Env, url: URL) {
+export async function profileRequest(request: Request, env: Env, url: URL, external: boolean) {
   const path = url.pathname;
-  const auth = session(request);
+  const auth = session(request, external);
   const store = auth && env.PROFILES.getByName(auth.id);
   if (path === '/api/profiles/me' && request.method === 'GET') {
     const profile = store && await store.readOwn(auth.secret);
@@ -45,10 +46,18 @@ export async function profileRequest(request: Request, env: Env, url: URL) {
     const id = crypto.randomUUID();
     const secret = crypto.randomUUID();
     const profile = await env.PROFILES.getByName(id).create({ id, secret, name });
+    if (external) return json(profile, 201, { 'X-Noriverse-Session': id + '.' + secret });
     const secure = url.protocol === 'https:' ? '; Secure' : '';
     return json(profile, 201, {
       'Set-Cookie': cookieName + '=' + id + '.' + secret + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000' + secure,
     });
+  }
+  if (path === '/api/profiles/me/preferences' && request.method === 'POST') {
+    if (!store) return json(null, 401);
+    const update = readProfilePreferences(await readBody(request));
+    if (!update) return json(null, 400);
+    const profile = await store.preferences(auth.secret, update);
+    return profile ? json(profile, 200) : json(null, 401);
   }
   if (path === '/api/profiles/me/matches' && request.method === 'POST') {
     if (!store) return json(null, 401);
@@ -112,26 +121,50 @@ export class ProfileStore extends DurableObject<Env> {
     const identity = await this.ctx.storage.get<Identity>('identity');
     if (identity?.secret !== secret) return null;
     this.ctx.storage.sql.exec('INSERT OR IGNORE INTO matches VALUES (?, ?, ?, ?, ?, ?, ?)',
-      report.id, report.game, report.mode, report.outcome, report.seconds, matchXp[report.outcome], Date.now());
+      report.id, report.game, report.mode, report.outcome, report.seconds, report.seconds, Date.now());
     return this.publicView(identity);
   }
 
+  async preferences(secret: string, update: ProfilePreferences) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const identity = await this.ctx.storage.get<Identity>('identity');
+      if (identity?.secret !== secret) return null;
+      const next = { ...identity };
+      if ('avatar' in update) {
+        if (this.publicView(identity).level < avatarLevel[update.avatar]) return null;
+        next.avatar = update.avatar;
+      } else {
+        const favorites = new Set(identity.favorites);
+        if (update.favorite.selected) favorites.add(update.favorite.game);
+        else favorites.delete(update.favorite.game);
+        next.favorites = [...favorites];
+      }
+      await this.ctx.storage.put('identity', next);
+      return this.publicView(next);
+    });
+  }
+
   private publicView(identity: Identity): PublicProfile {
-    const games = { omok: emptyStats(), physics: emptyStats() };
-    let xp = 0;
+    const games = Object.fromEntries(profileGames.map(game => [game, emptyStats()])) as PublicProfile['games'];
+    let totalSeconds = 0;
     const totals = this.ctx.storage.sql.exec<{
-      game: MatchReport['game']; seconds: number; wins: number; losses: number; draws: number; sessions: number; xp: number;
+      game: MatchReport['game']; seconds: number; wins: number; losses: number; draws: number; sessions: number;
     }>(`SELECT game, sum(seconds) AS seconds, sum(outcome = 'win') AS wins,
-      sum(outcome = 'loss') AS losses, sum(outcome = 'draw') AS draws, count(*) AS sessions, sum(xp) AS xp
+      sum(outcome = 'loss') AS losses, sum(outcome = 'draw') AS draws, count(*) AS sessions
       FROM matches GROUP BY game`);
-    for (const { game, xp: gameXp, ...stats } of totals) {
+    for (const { game, ...stats } of totals) {
       games[game] = stats;
-      xp += gameXp;
+      totalSeconds += stats.seconds;
     }
-    const recent = this.ctx.storage.sql.exec<{
+    type MatchRow = {
       id: string; game: MatchReport['game']; mode: MatchReport['mode']; outcome: MatchReport['outcome']; seconds: number; playedAt: number;
-    }>(
-      'SELECT id, game, mode, outcome, seconds, playedAt FROM matches ORDER BY playedAt DESC LIMIT 20').toArray();
-    return { id: identity.id, name: identity.name, level: 1 + Math.floor(xp / 100), xp, games, recent };
+    };
+    const recent = profileGames.flatMap(game => this.ctx.storage.sql.exec<MatchRow>(
+      'SELECT id, game, mode, outcome, seconds, playedAt FROM matches WHERE game = ? ORDER BY playedAt DESC LIMIT 20', game).toArray())
+      .sort((left, right) => right.playedAt - left.playedAt);
+    return {
+      id: identity.id, name: identity.name, avatar: identity.avatar ?? defaultAvatar,
+      favorites: identity.favorites ?? [], level: levelFromPlayTime(totalSeconds), xp: totalSeconds, totalSeconds, games, recent,
+    };
   }
 }

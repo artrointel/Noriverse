@@ -1,9 +1,15 @@
 import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useTranslation } from 'react-i18next';
+import { elapsedPlaySeconds } from '../../../packages/protocol/profile.ts';
+import licenseUrl from '../../../LICENSE?url&no-inline';
 import logo from './assets/noriverse-icon.png';
-import { place, result } from './games/omok/rules.ts';
+import { boardRules, isBoardGame } from './games/board-rules.ts';
+import type { BoardGame } from './games/board-rules.ts';
 import { useRoomBoard } from './network/use-room-board.ts';
+import { apiAvailable } from './network/api.ts';
+import type { GameId } from './games/scenes.ts';
+import type { Stone } from './games/table.ts';
 import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setMusicScene } from './platform/audio.ts';
 import type { AudioLevels } from './platform/audio.ts';
 import { CatalogPage, GameDetail, GameSetup } from './platform/catalog-pages.tsx';
@@ -14,8 +20,12 @@ import { createLocalRound, PlayPage } from './platform/play-page.tsx';
 import { RoomPage } from './platform/room-page.tsx';
 import { usePreferences } from './platform/preferences.ts';
 import { SettingsMenu } from './platform/settings-menu.tsx';
-import { NameDialog, ProfilePage, useProfile } from './platform/profiles.tsx';
+import { NameDialog, ProfileNav, ProfilePage, useProfile } from './platform/profiles.tsx';
 import './styles.css';
+
+function createLocalBoard(allowDoubleThree = true) {
+  return { ...createLocalRound(), history: [] as number[], allowDoubleThree };
+}
 
 function App() {
   const { t, i18n } = useTranslation();
@@ -23,14 +33,18 @@ function App() {
   const { route, path, navigate } = useNavigation();
   const room = useRoomBoard();
   const profile = useProfile();
-  const [localOmok, setLocalOmok] = useState(() => ({ ...createLocalRound(), history: [] as number[], allowDoubleThree: true }));
+  const [localBoards, setLocalBoards] = useState(() => ({ omok: createLocalBoard(), othello: createLocalBoard() }));
   const [power, setPower] = useState<Power>('standard');
   const [allowDoubleThree, setAllowDoubleThree] = useState(true);
   const [nameDismissed, setNameDismissed] = useState(false);
   const [editName, setEditName] = useState(false);
+  const [pendingFavorite, setPendingFavorite] = useState<GameId>();
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const [favoriteError, setFavoriteError] = useState(false);
   const [audioLevels, setLevelState] = useState(loadAudioLevels);
   const lastPath = useRef(path);
   const matchOpened = useRef(false);
+  const lastAwayResult = useRef('');
 
   useEffect(bindPageAudio, []);
   useEffect(() => { setAudioLevels(audioLevels); }, [audioLevels]);
@@ -45,6 +59,20 @@ function App() {
   useEffect(() => { setMusicScene(route.page === 'play' ? route.id : 'lobby'); }, [route.page, route.id]);
 
   useEffect(() => {
+    if (!profile.profile || !room.role || !room.finishedAt || !room.matchId || lastAwayResult.current === room.matchId
+      || (route.page === 'play' && route.id === room.game && route.online)) return;
+    const winner = room.surrendered ? (room.surrendered === 1 ? 2 : 1) : boardRules[room.game].result(room.history);
+    if (!winner) return;
+    const matchId = room.matchId;
+    lastAwayResult.current = matchId;
+    const side = room.role === 'host' ? 1 : 2;
+    void profile.record({
+      id: matchId, game: room.game, mode: 'online', outcome: winner === 'draw' ? 'draw' : winner === side ? 'win' : 'loss',
+      seconds: elapsedPlaySeconds(room.startedAt, room.finishedAt),
+    }).then(saved => { if (!saved && lastAwayResult.current === matchId) lastAwayResult.current = ''; });
+  }, [profile.profile, profile.record, room.game, room.role, room.finishedAt, room.matchId, room.history, room.surrendered, room.startedAt, route]);
+
+  useEffect(() => {
     const view = route.id ? t(route.id) : route.page === 'room' ? t('room')
       : route.page === 'games' ? t('library') : null;
     const brand = i18n.resolvedLanguage === 'ko' ? '놀이버스' : 'Noriverse';
@@ -56,31 +84,46 @@ function App() {
       matchOpened.current = false;
     } else if (!matchOpened.current) {
       matchOpened.current = true;
-      if (room.role === 'guest' && route.page === 'room') navigate(gamePath('omok', 'play', 'online'));
+      if (room.role === 'guest' && route.page === 'room') navigate(gamePath(room.game, 'play', 'online'));
     }
-  }, [room.started, room.role, route.page, navigate]);
+  }, [room.game, room.started, room.role, route.page, navigate]);
 
   function startGame(mode: GameMode) {
     if (route.page !== 'setup') return;
-    if (mode === 'online') {
-      if (!room.code && room.state !== 'joining') void room.create(allowDoubleThree);
+    const id = route.id;
+    if (mode === 'online' && isBoardGame(id)) {
+      if (!room.code && room.state !== 'joining') void room.create(id, allowDoubleThree);
       navigate('/room');
     } else {
-      if (route.id === 'omok') resetOmok(allowDoubleThree);
-      navigate(gamePath(route.id, 'play', mode));
+      if (isBoardGame(id)) resetBoard(id, allowDoubleThree);
+      navigate(gamePath(id, 'play', mode));
     }
   }
 
-  function resetOmok(allowRule = localOmok.allowDoubleThree) {
-    setLocalOmok({ ...createLocalRound(), history: [], allowDoubleThree: allowRule });
+  function resetBoard(id: BoardGame, allowRule = localBoards[id].allowDoubleThree) {
+    setLocalBoards(previous => ({ ...previous, [id]: createLocalBoard(allowRule) }));
   }
 
-  function placeLocal(index: number) {
+  function placeLocal(id: BoardGame, index: number) {
     const time = Date.now();
-    setLocalOmok(current => {
-      const history = place(current.history, index, current.allowDoubleThree);
-      return history ? { ...current, history, finishedAt: result(history) ? time : 0 } : current;
+    setLocalBoards(previous => {
+      const current = previous[id];
+      if (current.finishedAt) return previous;
+      const rules = boardRules[id];
+      const history = rules.place(current.history, index, current.allowDoubleThree);
+      return history ? { ...previous, [id]: { ...current, history, finishedAt: rules.result(history) ? time : 0 } } : previous;
     });
+  }
+
+  function surrenderBoard(id: BoardGame, color: Stone) {
+    const time = Date.now();
+    setLocalBoards(previous => previous[id].finishedAt ? previous
+      : { ...previous, [id]: { ...previous[id], finishedAt: time, surrendered: color } });
+  }
+
+  function enterRoomGame() {
+    room.start();
+    navigate(gamePath(room.game, 'play', 'online'));
   }
 
   function changeVolume(channel: keyof AudioLevels, value: number) {
@@ -89,11 +132,36 @@ function App() {
     try { localStorage.setItem('noriverse.audio', JSON.stringify(levels)); } catch { /* Storage is optional. */ }
   }
 
+  async function changeFavorite(game: GameId, selected: boolean) {
+    setFavoriteBusy(true);
+    setFavoriteError(false);
+    try { await profile.setPreferences({ favorite: { game, selected } }); }
+    catch { setFavoriteError(true); }
+    finally { setFavoriteBusy(false); }
+  }
+
+  function toggleFavorite(game: GameId) {
+    if (favoriteBusy || !apiAvailable) return;
+    if (!profile.profile) {
+      setPendingFavorite(game);
+      setEditName(true);
+      return;
+    }
+    void changeFavorite(game, !profile.profile.favorites.includes(game));
+  }
+
+  async function saveProfileName(name: string) {
+    await profile.saveName(name);
+    if (pendingFavorite) await changeFavorite(pendingFavorite, true);
+  }
+
   const page = (() => {
     switch (route.page) {
       case 'home':
       case 'games':
-        return <CatalogPage home={route.page === 'home'} navigate={navigate} />;
+        return <CatalogPage home={route.page === 'home'} navigate={navigate} favorites={profile.profile?.favorites ?? []}
+          disableFavorite={!apiAvailable || profile.status === 'loading' || favoriteBusy} favoriteError={favoriteError}
+          onFavorite={toggleFavorite} />;
       case 'profile':
       case 'publicProfile':
         return <ProfilePage own={route.page === 'profile'} id={route.profileId} model={profile} navigate={navigate}
@@ -102,22 +170,24 @@ function App() {
         return <GameDetail id={route.id} navigate={navigate} />;
       case 'setup':
         return <GameSetup id={route.id} online={route.online} practice={route.practice} power={power} onPower={setPower}
-          allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree} hasRoom={Boolean(room.code)} onStart={startGame} navigate={navigate} />;
+          allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree} activeGame={room.code ? room.game : undefined} onStart={startGame} navigate={navigate} />;
       case 'room':
-        return <RoomPage room={room} invite={route.invite} navigate={navigate} onPlay={() => {
-          room.start();
-          navigate(gamePath('omok', 'play', 'online'));
-        }} />;
+        return <RoomPage room={room} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
       case 'play': {
-        const online = route.id === 'omok' && route.online;
-        if (online && (!room.code || !room.started)) {
-          return <RoomPage room={room} invite="" navigate={navigate} onPlay={room.start} />;
+        const id = route.id;
+        const board = isBoardGame(id) ? id : undefined;
+        const online = Boolean(board && route.online);
+        const local = board ? localBoards[board] : undefined;
+        if (online && (!room.code || !room.started || room.game !== id)) {
+          return <RoomPage room={room} invite="" navigate={navigate} onPlay={enterRoomGame} />;
         }
-        return <PlayPage id={route.id} dark={preferences.dark} power={power} practice={route.id === 'physics' && route.practice} navigate={navigate}
-          room={online ? room : undefined} history={online ? room.history : route.id === 'omok' ? localOmok.history : []}
-          omokRound={route.id === 'omok' && !online ? localOmok : undefined}
-          allowDoubleThree={online ? room.allowDoubleThree : localOmok.allowDoubleThree} record={profile.profile ? profile.record : undefined}
-          move={online ? room.move : placeLocal} reset={online ? room.rematch : resetOmok} />;
+        return <PlayPage id={id} dark={preferences.dark} power={power} practice={id === 'physics' && route.practice} navigate={navigate}
+          room={online ? room : undefined} history={online ? room.history : local?.history ?? []}
+          boardRound={online ? undefined : local}
+          allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true} record={profile.profile ? profile.record : undefined}
+          move={online ? room.move : index => { if (board) placeLocal(board, index); }}
+          reset={online ? room.rematch : () => { if (board) resetBoard(board); }}
+          surrenderLocal={color => { if (board) surrenderBoard(board, color); }} />;
       }
       default:
         return <div className="site-width subpage missing">
@@ -129,7 +199,12 @@ function App() {
 
   return (
     <>
-      <a className="skip-link" href="#main">{t('skip')}</a>
+      <a className="skip-link" href="#main" onClick={event => {
+        event.preventDefault();
+        const main = document.getElementById('main');
+        main?.focus();
+        main?.scrollIntoView();
+      }}>{t('skip')}</a>
       <header className="site-header">
         <div className="site-width header-row">
           <RouteLink href="/" navigate={navigate} className="brand" aria-label="Noriverse">
@@ -140,15 +215,11 @@ function App() {
             <RouteLink href="/games" navigate={navigate} aria-current={'id' in route || route.page === 'games' ? 'page' : undefined}>{t('games')}</RouteLink>
           </nav>
           <div className="header-actions">
-            <RouteLink href="/room" navigate={navigate} className="header-join">
+            <RouteLink href="/room" navigate={navigate} className="header-join" aria-label={t(room.code ? 'activeRoom' : 'joinRoom')}>
               <span className={room.code ? 'room-marker room-marker-active' : 'room-marker'} aria-hidden="true" />
-              {t(room.code ? 'activeRoom' : 'joinRoom')}
+              <span className="header-join-label">{t(room.code ? 'activeRoom' : 'joinRoom')}</span>
             </RouteLink>
-            <RouteLink href="/profile" navigate={navigate} className="profile-link" aria-label={t('myProfile')} title={profile.profile?.name ?? t('myProfile')}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
-                <circle cx="12" cy="8" r="3.2" /><path d="M5 20v-2a7 5 0 0 1 14 0v2" />
-              </svg>
-            </RouteLink>
+            <ProfileNav profile={profile.profile} navigate={navigate} />
             <SettingsMenu preferences={preferences} levels={audioLevels} onVolume={changeVolume} path={path} />
           </div>
         </div>
@@ -156,12 +227,22 @@ function App() {
       <main id="main" tabIndex={-1} className="route-frame"><div className="route-content" key={path}>{page}</div></main>
       <footer className="site-footer">
         <div className="site-width footer-row">
-          <RouteLink href="/" navigate={navigate} className="brand"><img src={logo} alt="" width="30" height="30" /><strong>Nori<span>verse</span></strong></RouteLink>
-          <p>{t('siteSummary')}</p>
+          <div className="footer-identity">
+            <RouteLink href="/" navigate={navigate} className="brand"><img src={logo} alt="" width="30" height="30" /><strong>Nori<span>verse</span></strong></RouteLink>
+            <p>{t('footerInfo')}</p>
+          </div>
+          <nav className="footer-links" aria-label={t('siteLinks')}>
+            <RouteLink href="/games" navigate={navigate}>{t('games')}</RouteLink>
+            <a href="https://github.com/artrointel/Noriverse">{t('sourceCode')}</a>
+            <a href={licenseUrl} target="_blank" rel="noopener">{t('license')}</a>
+          </nav>
         </div>
+        <div className="site-width footer-meta"><small>© {new Date().getFullYear()} Noriverse</small></div>
       </footer>
       {(editName || (profile.status === 'missing' && !nameDismissed && route.page !== 'publicProfile')) && (
-        <NameDialog name={profile.profile?.name} close={() => { setNameDismissed(true); setEditName(false); }} save={profile.saveName} />
+        <NameDialog name={profile.profile?.name} close={() => {
+          setNameDismissed(true); setEditName(false); setPendingFavorite(undefined);
+        }} save={saveProfileName} />
       )}
     </>
   );
