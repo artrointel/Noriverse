@@ -32,7 +32,6 @@ export function sichuanScene(view: () => GameView) {
   const offset = 15 + pitch;
   const center = ([x, y]: TilePoint) => [offset + x * pitch, offset + y * pitch] as const;
   const tileCenter = (index: number) => center(tilePoint(index, size));
-  let base: Phaser.GameObjects.Graphics;
   let hints: Phaser.GameObjects.Graphics;
   let effects: ReturnType<typeof createSichuanEffects>;
   let comboBanner: ReturnType<typeof createComboBanner>;
@@ -40,11 +39,6 @@ export function sichuanScene(view: () => GameView) {
   let previous: GameView | undefined;
   const pieces = new Map<number, RenderedTile>();
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
-
-  function paintTable(dark: boolean) {
-    base.clear().fillStyle(dark ? 0x241f32 : 0xeaddca).fillRect(0, 0, tableSize, sichuanSceneHeight);
-    base.fillStyle(0x181724, .35).fillRoundedRect(20, 27, 440, 435, 24);
-  }
 
   function syncTiles(scene: Phaser.Scene, board: readonly Tile[], combo?: number) {
     for (let index = 0; index < board.length; index++) {
@@ -141,7 +135,8 @@ export function sichuanScene(view: () => GameView) {
     },
     create(this: Phaser.Scene) {
       prepareTileMotifs(this, theme, backFrame + 1);
-      base = this.add.graphics();
+      this.add.graphics().fillStyle(0xeaddca).fillRect(0, 0, tableSize, sichuanSceneHeight)
+        .fillStyle(0x181724, .35).fillRoundedRect(20, 27, 440, 435, 24);
       this.add.image(240, 240, boardKey).setDisplaySize(438, 438);
       hints = this.add.graphics().setDepth(2);
       effects = createSichuanEffects(this, theme, pitch);
@@ -168,7 +163,6 @@ export function sichuanScene(view: () => GameView) {
       const current = view(), data = current.sichuan;
       if (!data) return;
       const before = previous?.sichuan;
-      if (current.dark !== previous?.dark) paintTable(current.dark);
       const match = data.match !== before?.match ? data.match : undefined;
       if (data.board !== before?.board) syncTiles(this, data.board, match?.combo);
       if (data.flip && data.flip !== before?.flip) flipTiles(this, data.flip);

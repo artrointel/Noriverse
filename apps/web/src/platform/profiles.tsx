@@ -415,7 +415,9 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
           {profile && apiAvailable && <button type="button" className="button button-secondary" onClick={() => void share()}>
             {t(copied ? 'copied' : 'shareProfile')}
           </button>}
-          {apiAvailable && <RouteLink className="button button-secondary" href="/friends" navigate={navigate}>{t('friends')}</RouteLink>}
+          {apiAvailable && <RouteLink className="button button-secondary" href="/friends" navigate={navigate}>{t('manageFriends')}
+            {friends.incoming.length > 0 && <span className="lobby-count" aria-label={t('incomingFriends')}>{friends.incoming.length}</span>}
+          </RouteLink>}
         </div>}
         {!own && profile && <div className="panel-actions"><FriendButton id={profile.id} model={friends} /></div>}
         {showLink && <input aria-label={t('shareProfile')} readOnly value={shareUrl} onFocus={event => event.currentTarget.select()} />}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { isRoomGame, isRoomRole, readTouch, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import { isRoomGame, isRoomRole, readTouch, roomCapacity, roomCodePattern, roomRoles } from '../../../../packages/protocol/rooms.ts';
 import type { Participant, Role, RoomGame, TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import { elapsedPlaySeconds, profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
@@ -35,6 +35,7 @@ type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: number; 
 const blankMatch: Match = { id: '', game: 'omok', hostColor: 1, startedAt: 0, finishedAt: 0, allowDoubleThree: true,
   overline: defaultOmokOverline, history: [], turnLimit: 0, deadline: 0 };
 type Seat = { code: string; role: Role; token: string };
+const lobbySlots = assignReactionSlots(roomRoles);
 
 function lobbyMatch(game: RoomGame, settings: MatchSettings): Match {
   const { allowDoubleThree, overline, power, turnLimit, flick, puzzle } = settings;
@@ -50,6 +51,12 @@ function matchColor(match: Match, role: Role): FlickPlayer | undefined {
 
 function inRound(match: Match, role: Role) {
   return (!match.puzzle || match.puzzle.players.includes(role)) && (!match.physicsSeats || match.physicsSeats.includes(role));
+}
+
+function roundSeats(game: RoomGame, peers: Role[], participants: Participant[]): Role[] | undefined {
+  if (!peers.length || peers.length + 1 > roomCapacity[game]
+    || participants.some(person => person.role !== 'host' && !peers.includes(person.role))) return;
+  return ['host', ...peers];
 }
 
 function matchTurn(match: Match) {
@@ -82,7 +89,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const [rematchNotice, setRematchNotice] = useState<{ id: string; kind: 'incoming' | 'sent' }>();
   const [remoteTouch, setRemoteTouch] = useState<TouchPoint & { matchId: string; receivedAt: number }>();
   const [reactions, setReactions] = useState<TimedReaction[]>([]);
-  const activeReactions = useRef<TimedReaction[]>([]);
+  const [lobbyReactions, setLobbyReactions] = useState<TimedReaction[]>([]);
   const lastIncomingTouch = useRef(-Infinity);
   const lastOutgoingTouch = useRef(-Infinity);
   const { id: matchId, game, hostColor, startedAt, finishedAt, allowDoubleThree, overline, history, surrendered, timedOut, timeoutPending, turnLimit, deadline } = round;
@@ -129,10 +136,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function update(next: Match) {
     const currentSeat = seat.current;
     const previous = match.current;
-    if (next.id !== previous.id && activeReactions.current.length) {
-      activeReactions.current = [];
-      setReactions([]);
-    }
+    if (next.id !== previous.id) setReactions([]);
     if (currentSeat && next.startedAt && (previous.id !== next.id || !previous.startedAt)) rememberRecentRoom(currentSeat.code, next.game);
     if (currentSeat && currentSeat.role !== 'host' && next.id && (previous.id !== next.id || previous.startedAt !== next.startedAt || previous.finishedAt !== next.finishedAt)) {
       rememberGuestRoom(currentSeat.code, next.startedAt && !next.finishedAt && inRound(next, currentSeat.role) ? next.game : undefined);
@@ -160,21 +164,20 @@ export function useRoomBoard(profile?: ProfileSummary) {
     link.current?.send({ type: 'snapshot', ...match.current, sentAt: Date.now() }, target);
   }
 
-  function displayReaction(reaction: Reaction, now: number) {
-    activeReactions.current = showReaction(activeReactions.current, reaction, now);
-    setReactions(activeReactions.current);
+  function displayReaction(reaction: Reaction, lobby: boolean) {
+    const now = performance.now();
+    (lobby ? setLobbyReactions : setReactions)(previous => showReaction(previous, reaction, now));
   }
 
-  function broadcastReaction(role: Role, emoji: Emoji) {
+  function broadcastReaction(role: Role, emoji: Emoji, lobby: boolean) {
     const current = match.current;
-    if (!ready.current || !current.startedAt || current.finishedAt || !inRound(current, role)) return;
-    const now = performance.now();
-    const corner = matchRoster.current?.reactionSlots.get(role);
+    if (!lobby && (!ready.current || !current.startedAt || current.finishedAt || !inRound(current, role))) return;
+    const corner = (lobby ? lobbySlots : matchRoster.current?.reactionSlots)?.get(role);
     if (!corner) return;
     const profile = (role === 'host' ? ownProfile.current : undefined) ?? roster.current.find(person => person.role === role)?.profile;
     const reaction = { id: crypto.randomUUID(), role, emoji, corner, sender: profile && { name: profile.name, avatar: profile.avatar } };
-    displayReaction(reaction, now);
-    link.current?.send({ type: 'reaction', matchId: current.id, reaction });
+    displayReaction(reaction, lobby);
+    link.current?.send({ type: 'reaction', scope: lobby ? 'lobby' : undefined, matchId: lobby ? undefined : current.id, reaction });
   }
 
   function clearRoomHistory() {
@@ -182,6 +185,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     matchRoster.current = undefined;
     previousMatch.current = undefined;
     setRoomHistory([]);
+    setLobbyReactions([]);
   }
 
   function sendRoomHistory(peer: Role, offset: number) {
@@ -359,16 +363,15 @@ export function useRoomBoard(profile?: ProfileSummary) {
           return;
         }
         const current = match.current;
-        if (raw.type === 'reaction-request') {
-          if (seat.current?.role === 'host' && 'matchId' in raw && raw.matchId === current.id && 'emoji' in raw && isEmoji(raw.emoji)) {
-            broadcastReaction(peer, raw.emoji);
-          }
-          return;
-        }
-        if (raw.type === 'reaction') {
-          if (peer === 'host' && current.startedAt && !current.finishedAt && 'matchId' in raw && raw.matchId === current.id && 'reaction' in raw) {
+        if (raw.type === 'reaction-request' || raw.type === 'reaction') {
+          const lobby = 'scope' in raw && raw.scope === 'lobby';
+          const matches = 'matchId' in raw && raw.matchId === current.id && current.startedAt > 0 && !current.finishedAt;
+          if (!lobby && !matches) return;
+          if (raw.type === 'reaction-request' && seat.current?.role === 'host' && 'emoji' in raw && isEmoji(raw.emoji)) {
+            broadcastReaction(peer, raw.emoji, lobby);
+          } else if (raw.type === 'reaction' && peer === 'host' && 'reaction' in raw) {
             const event = readRoomReaction(raw.reaction);
-            if (event) displayReaction(event, performance.now());
+            if (event) displayReaction(event, lobby);
           }
           return;
         }
@@ -499,6 +502,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
       if (attempt !== operation.current) return false;
       if (!roomCodePattern.test(room.code) || !profileIdPattern.test(room.token)) throw new Error();
       seat.current = { ...room, role: 'host' };
+      setRole('host');
       update(lobbyMatch(game, settings));
       connect(room.code, room.token);
       return true;
@@ -590,16 +594,18 @@ export function useRoomBoard(profile?: ProfileSummary) {
     }
   }
 
-  function roundSeats(): Role[] | undefined {
-    const peers = link.current?.connectedPeers() ?? [];
-    if (!peers.length || peers.length + 1 > roomCapacity[match.current.game]
-      || participants.some(person => person.role !== 'host' && !peers.includes(person.role))) return;
-    return ['host', ...peers];
+  function sendReaction(emoji: Emoji, lobby: boolean) {
+    const current = match.current;
+    const own = seat.current?.role;
+    if (!own || !isEmoji(emoji) || (!ready.current && (!lobby || own !== 'host'))) return;
+    if (!lobby && (!current.startedAt || current.finishedAt || !inRound(current, own))) return;
+    if (own === 'host') broadcastReaction(own, emoji, lobby);
+    else link.current?.send({ type: 'reaction-request', scope: lobby ? 'lobby' : undefined, matchId: lobby ? undefined : current.id, emoji });
   }
 
   function startRound(rematch: boolean) {
     const current = match.current;
-    const seats = roundSeats();
+    const seats = roundSeats(current.game, link.current?.connectedPeers() ?? [], roster.current);
     if (seat.current?.role !== 'host' || !seats || gameChange.current || (rematch ? !current.finishedAt : current.startedAt)) return false;
     const previous = rematch ? current : previousMatch.current;
     const winner = previous && matchWinner(previous);
@@ -631,7 +637,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   return {
     code, role, state, game, hostColor, playerColor, history, roomHistory, started, matchId, startedAt, finishedAt, surrendered, timedOut, timeoutPending, turnLimit,
     inMatch: Boolean(role && inRound(round, role)),
-    canStart: Boolean(connectedPeers.length && participants.every(person => person.role === 'host' || connectedPeers.includes(person.role))),
+    canStart: Boolean(roundSeats(game, connectedPeers, participants)),
     settings: { allowDoubleThree, overline, power: round.power ?? 1, turnLimit, flick: round.flickSettings ?? defaultFlickSettings,
       puzzle: round.puzzleConfig ?? defaultSichuanRoomSettings } satisfies MatchSettings,
     physicsSeats: round.physicsSeats,
@@ -665,13 +671,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
     reactions: {
       events: reactions,
       enabled: state === 'connected' && Boolean(started && !finishedAt && role && inRound(round, role)),
-      send(emoji: Emoji) {
-        const current = match.current;
-        const own = seat.current?.role;
-        if (!own || !ready.current || !current.startedAt || current.finishedAt || !inRound(current, own) || !isEmoji(emoji)) return;
-        if (own === 'host') broadcastReaction(own, emoji);
-        else link.current?.send({ type: 'reaction-request', matchId: current.id, emoji });
-      },
+      send: (emoji: Emoji) => sendReaction(emoji, false),
+    },
+    lobbyReactions: {
+      events: lobbyReactions,
+      enabled: role === 'host' || state === 'connected',
+      send: (emoji: Emoji) => sendReaction(emoji, true),
     },
     remoteTouch: remoteTouch?.matchId === matchId && performance.now() - remoteTouch.receivedAt < 500 ? remoteTouch : undefined,
     sendTouch(point: TouchPoint) {

@@ -28,7 +28,7 @@ import { SichuanPage } from './platform/sichuan-page.tsx';
 import { defaultMatchSettings } from './games/match-settings.ts';
 import { puzzleOutcome } from './games/sichuan/multiplayer.ts';
 import { RoomPage } from './platform/room-page.tsx';
-import { FriendsPage, useFriends } from './platform/friends.tsx';
+import { FriendRequestToast, FriendsPage, useFriends } from './platform/friends.tsx';
 import { InvitationToasts, useInvitations } from './platform/invitations.tsx';
 import { usePreferences } from './platform/preferences.ts';
 import { SettingsMenu } from './platform/settings-menu.tsx';
@@ -45,7 +45,7 @@ function App() {
   const { route, path, navigate, backNavigation } = useNavigation();
   const profile = useProfile(route.page === 'profile');
   const room = useRoomBoard(profile.profile);
-  const friends = useFriends(profile.profile?.id, route.page === 'friends');
+  const friends = useFriends(profile.profile?.id, route.page === 'friends', route.page === 'room');
   const presence = profile.profile?.presence ?? 'online';
   const invitations = useInvitations(profile.profile?.id, presence, profile.syncPresence);
   const playGame = route.page === 'play' && (!route.online || (room.code && room.inMatch && room.started && room.game === route.id
@@ -346,9 +346,8 @@ function App() {
         if (room.code !== invite.code) room.join(invite.code);
         navigate('/room?room=' + invite.code);
       }} />
-      {presence === 'online' && route.page !== 'friends' && friends.incoming.length > 0 && <div className="friend-request-toast surface" role="status">
-        <RouteLink href="/friends" navigate={navigate}>{t('reviewFriendRequests', { count: friends.incoming.length })}</RouteLink>
-      </div>}
+      <FriendRequestToast key={friends.owner} model={friends} navigate={navigate}
+        enabled={route.page === 'room' || (presence === 'online' && route.page !== 'friends')} />
       {(editName || (profile.status === 'missing' && !nameDismissed)) && (
         <NameDialog name={profile.profile?.name} close={() => {
           setNameDismissed(true); setEditName(false); setPendingFavorite(undefined);

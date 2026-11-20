@@ -12,7 +12,7 @@ import { games } from './game-catalog.ts';
 import { formatPlayTime } from './profiles.tsx';
 import { SettingsSection, SettingsSelect } from './settings-fields.tsx';
 
-export function GameFeature({ game, heading, children }: { game: GameId; heading: string; children?: ReactNode }) {
+export function GameFeature({ game, heading, children, overlay }: { game: GameId; heading: string; children?: ReactNode; overlay?: ReactNode }) {
   const { t } = useTranslation();
   const entry = games[game];
   return <section className="match-feature" aria-label={heading}>
@@ -23,6 +23,7 @@ export function GameFeature({ game, heading, children }: { game: GameId; heading
         <h2>{t(game)}</h2>
         <p>{t(entry.description)}</p>
       </div>
+      {overlay}
     </div>
     {children}
   </section>;

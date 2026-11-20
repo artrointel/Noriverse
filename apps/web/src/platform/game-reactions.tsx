@@ -47,7 +47,7 @@ function ReactionBubble({ event }: { event: TimedReaction }) {
   </div>;
 }
 
-function ReactionLayer({ events }: { events: TimedReaction[] }) {
+export function ReactionLayer({ events }: { events: TimedReaction[] }) {
   const { t } = useTranslation();
   const [clock, setClock] = useState(0);
   const now = Math.max(clock, performance.now());
@@ -64,10 +64,8 @@ function ReactionLayer({ events }: { events: TimedReaction[] }) {
   </div>;
 }
 
-export function GameReactions({ matchId, room, profile, enabled, size, children }: {
-  matchId: string;
-  room?: RoomReactions; profile?: ReactionSender; enabled: boolean;
-  size: { width: number; height: number }; children: ReactNode;
+export function ReactionPicker({ scope, enabled, send, lobby = false }: {
+  scope: string; enabled: boolean; send: (emoji: Emoji) => void; lobby?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const uid = useId();
@@ -82,27 +80,25 @@ export function GameReactions({ matchId, room, profile, enabled, size, children 
   const [tab, setTab] = useState<(typeof reactionTabs)[number]>('emoji');
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [local, setLocal] = useState<TimedReaction[]>([]);
-  const active = enabled && (!room || room.enabled);
-  const pickerOpen = open && active;
+  const pickerOpen = open && enabled;
   const searchVisible = pickerOpen && tab === 'emoji' && searchOpen;
   const quickEmojis = [...new Set<Emoji>([...added, ...defaultEmojiIds])];
   const options = tab === 'recent' ? recent : tab === 'emoji' ? quickEmojis : [];
   const searchResults = searchVisible ? searchEmojis(query).filter(emoji => !quickEmojis.includes(emoji)) : [];
 
-  useEffect(() => { setLocal([]); setOpen(false); }, [matchId]);
+  useEffect(() => { setOpen(false); }, [scope]);
   useEffect(() => { if (!pickerOpen || tab !== 'emoji') { setSearchOpen(false); setQuery(''); } }, [pickerOpen, tab]);
   useEffect(() => { if (searchVisible) searchInput.current?.focus(); }, [searchVisible]);
 
   useEffect(() => {
-    if (!active) setOpen(false);
+    if (!enabled) setOpen(false);
     if (!pickerOpen) return;
     function dismiss(event: PointerEvent) {
       if (event.target instanceof Node && !control.current?.contains(event.target)) setOpen(false);
     }
     document.addEventListener('pointerdown', dismiss);
     return () => document.removeEventListener('pointerdown', dismiss);
-  }, [active, pickerOpen]);
+  }, [enabled, pickerOpen]);
 
   function close() {
     setOpen(false);
@@ -119,11 +115,7 @@ export function GameReactions({ matchId, room, profile, enabled, size, children 
     const next = recentEmojis([emoji, ...recent]);
     setRecent(next);
     saveEmojiCookie(recentCookie, next);
-    if (room) room.send(emoji);
-    else {
-      const now = performance.now(), id = crypto.randomUUID();
-      setLocal(previous => showReaction(previous, { id, emoji, corner: reactionCorners[0], sender: profile }, now));
-    }
+    send(emoji);
     close();
   }
 
@@ -140,16 +132,11 @@ export function GameReactions({ matchId, room, profile, enabled, size, children 
       onClick={() => select(emoji)}>{emojiChoices[emoji]}</button>;
   }
 
-  return <div className="stage-stack" style={{ width: size.width, '--reaction-board-width': size.width + 'px' } as CSSProperties}>
-    <div className="stage-frame" style={size}>
-      {children}
-      <ReactionLayer events={room?.events ?? local} />
-    </div>
-    <div className="stage-reaction-bar" ref={control} onKeyDown={event => {
+  return <div className={lobby ? 'stage-reaction-bar lobby-reaction-picker' : 'stage-reaction-bar'} ref={control} onKeyDown={event => {
       if (pickerOpen && event.key === 'Escape') { event.preventDefault(); if (searchVisible) closeSearch(); else close(); }
     }}>
       <button type="button" className="button button-secondary stage-reaction-toggle" ref={trigger}
-        aria-label={t('gameReactions')} title={t('gameReactions')} disabled={!active}
+        aria-label={t('gameReactions')} title={t('gameReactions')} disabled={!enabled}
         aria-expanded={pickerOpen} aria-controls={pickerOpen ? uid + '-picker' : undefined} onClick={() => setOpen(value => !value)}>
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round">
           <circle cx="12" cy="12" r="9" /><path d="M8 13.5a4.3 4.3 0 0 0 8 0M9 9.5h.01M15 9.5h.01" />
@@ -187,6 +174,26 @@ export function GameReactions({ matchId, room, profile, enabled, size, children 
           </div>}
         </div>
       </BlurredSurface>}
+  </div>;
+}
+
+export function GameReactions({ matchId, room, profile, enabled, size, children }: {
+  matchId: string;
+  room?: RoomReactions; profile?: ReactionSender; enabled: boolean;
+  size: { width: number; height: number }; children: ReactNode;
+}) {
+  const [local, setLocal] = useState<TimedReaction[]>([]);
+  useEffect(() => { setLocal([]); }, [matchId]);
+  function send(emoji: Emoji) {
+    if (room) { room.send(emoji); return; }
+    const now = performance.now(), id = crypto.randomUUID();
+    setLocal(previous => showReaction(previous, { id, emoji, corner: reactionCorners[0], sender: profile }, now));
+  }
+  return <div className="stage-stack" style={{ width: size.width, '--reaction-board-width': size.width + 'px' } as CSSProperties}>
+    <div className="stage-frame" style={size}>
+      {children}
+      <ReactionLayer events={room?.events ?? local} />
     </div>
+    <ReactionPicker scope={matchId} enabled={enabled && (!room || room.enabled)} send={send} />
   </div>;
 }

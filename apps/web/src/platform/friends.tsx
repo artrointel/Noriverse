@@ -12,8 +12,9 @@ import type { Navigate } from './navigation.tsx';
 
 const endpoint = '/api/profiles/me/social';
 
-export function useFriends(owner: string | undefined, presence: boolean) {
-  const [list, setList] = useState<FriendList>();
+export function useFriends(owner: string | undefined, presence: boolean, watchRequests = false) {
+  const [snapshot, setSnapshot] = useState<{ owner: string; list: FriendList }>();
+  const list = snapshot?.owner === owner ? snapshot?.list : undefined;
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const revision = useRef(0);
@@ -22,7 +23,7 @@ export function useFriends(owner: string | undefined, presence: boolean) {
     const response = await apiFetch(endpoint + (presence ? '?presence=1' : ''), { signal });
     if (!response.ok) throw new Error('Friends unavailable');
     const list = await response.json() as FriendList;
-    if (request === revision.current && !signal?.aborted) setList(list);
+    if (owner && request === revision.current && !signal?.aborted) setSnapshot({ owner, list });
   }
 
   useEffect(() => {
@@ -38,16 +39,16 @@ export function useFriends(owner: string | undefined, presence: boolean) {
     }
     const visibleRefresh = () => { if (!document.hidden) refresh(); };
     refresh();
-    const timer = presence ? window.setInterval(visibleRefresh, 15_000) : undefined;
+    const timer = presence || watchRequests ? window.setInterval(visibleRefresh, 15_000) : undefined;
     window.addEventListener(socialChangeEvent, refresh);
-    if (presence) document.addEventListener('visibilitychange', visibleRefresh);
+    document.addEventListener('visibilitychange', visibleRefresh);
     return () => {
       controller.abort();
       window.clearInterval(timer);
       window.removeEventListener(socialChangeEvent, refresh);
       document.removeEventListener('visibilitychange', visibleRefresh);
     };
-  }, [owner, presence]);
+  }, [owner, presence, watchRequests]);
 
   async function change(id: string, action: FriendAction) {
     if (!owner || !apiAvailable || owner === id || busy) return false;
@@ -68,6 +69,39 @@ export function useFriends(owner: string | undefined, presence: boolean) {
 }
 
 export type Friends = ReturnType<typeof useFriends>;
+
+export function FriendRequestToast({ model, navigate, enabled }: { model: Friends; navigate: Navigate; enabled: boolean }) {
+  const { t } = useTranslation();
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  const [failedId, setFailedId] = useState<string>();
+  const request = enabled ? model.incoming.find(friend => !dismissed.includes(friend.id)) : undefined;
+  const id = request?.id;
+  useEffect(() => {
+    setDismissed(previous => {
+      const pending = previous.filter(id => model.incoming.some(friend => friend.id === id));
+      return pending.length === previous.length ? previous : pending;
+    });
+  }, [model.incoming]);
+  useEffect(() => {
+    if (!id) return;
+    const timer = window.setTimeout(() => setDismissed(previous => [...previous, id]), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [id]);
+  if (!request) return null;
+  return <aside className="friend-request-toast surface" aria-label={t('friendRequests')}>
+    <img src={avatars[request.avatar]} width="36" height="36" alt="" />
+    <div>
+      <p role="status">{t('friendRequestReceived', { player: request.name })}</p>
+      <div className="friend-request-actions">
+        <button className="button button-primary" type="button" disabled={model.busy}
+          onClick={async () => setFailedId(await model.change(request.id, 'accept') ? undefined : request.id)}>{t('acceptFriend')}</button>
+        <RouteLink href="/friends" navigate={navigate}>{t('reviewFriendRequests')}</RouteLink>
+      </div>
+      {failedId === request.id && <small role="alert">{t('friendError')}</small>}
+    </div>
+    <button className="settings-close" type="button" aria-label={t('close')} onClick={() => setDismissed(previous => [...previous, request.id])}><span aria-hidden="true" /></button>
+  </aside>;
+}
 
 function FriendGroups({ friends, navigate, action }: { friends: FriendSummary[]; navigate: Navigate; action: (friend: FriendSummary) => ReactNode }) {
   const { t } = useTranslation();
@@ -127,7 +161,7 @@ export function FriendButton({ id, model }: { id: string; model: Friends }) {
   const received = model.incoming.some(friend => friend.id === id);
   const sent = model.outgoing.some(friend => friend.id === id);
   return <>
-    <button type="button" className="button button-secondary" disabled={model.busy} onClick={async () => {
+    <button type="button" className={'button ' + (received ? 'button-primary' : 'button-secondary')} disabled={model.busy} onClick={async () => {
       setFailed(!await model.change(id, added ? 'remove' : received ? 'accept' : sent ? 'cancel' : 'request'));
     }}>{t(added ? 'removeFriend' : received ? 'acceptFriend' : sent ? 'cancelFriend' : 'addFriend')}</button>
     {failed && <small role="alert">{t('friendError')}</small>}
@@ -194,10 +228,10 @@ export function FriendsPage({ model, navigate, openProfile, follow }: { model: F
           {failed && <p role="alert">{t('friendError')}</p>}
           {sent && <p role="status">{t('friendRequestSent')}</p>}
         </form>
-        {(model.incoming.length > 0 || model.outgoing.length > 0) && <section className="friend-requests" aria-label={t('friendRequests')}>
-          {(['incoming', 'outgoing'] as const).map(group => model[group].length > 0 && <div key={group}>
+        {(model.friends || model.incoming.length > 0 || model.outgoing.length > 0) && <section className="friend-requests" aria-label={t('friendRequests')}>
+          {(['incoming', 'outgoing'] as const).map(group => (group === 'incoming' || model[group].length > 0) && <div key={group}>
             <h2>{t(group === 'incoming' ? 'incomingFriends' : 'outgoingFriends')}</h2>
-            <ul className="people-list">{model[group].map(profile => <li key={profile.id}>
+            {model[group].length === 0 ? <p className="muted">{t('emptyIncomingFriends')}</p> : <ul className="people-list">{model[group].map(profile => <li key={profile.id}>
               <RouteLink href={'/profiles/' + profile.id} navigate={navigate} className="person-link">
                 <img src={avatars[profile.avatar]} alt="" width="38" height="38" /><strong>{profile.name}</strong>
               </RouteLink>
@@ -205,7 +239,7 @@ export function FriendsPage({ model, navigate, openProfile, follow }: { model: F
                 key={action} className={'button ' + (action === 'accept' ? 'button-primary' : 'button-secondary')} type="button" disabled={model.busy}
                 onClick={async () => setActionFailed(!await model.change(profile.id, action))}>
                 {t(action === 'accept' ? 'acceptFriend' : action === 'decline' ? 'declineFriend' : 'cancelFriend')}</button>)}</div>
-            </li>)}</ul>
+            </li>)}</ul>}
           </div>)}
           {actionFailed && <p role="alert">{t('friendError')}</p>}
         </section>}

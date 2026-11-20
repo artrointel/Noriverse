@@ -19,6 +19,7 @@ import { GameSelectionGrid } from './catalog-pages.tsx';
 import { GameFeature, GameRulesEditor, GameRulesSummary } from './game-settings.tsx';
 import { formatPlayTime } from './profiles.tsx';
 import { GearIcon } from './gear-icon.tsx';
+import { ReactionLayer, ReactionPicker } from './game-reactions.tsx';
 
 type Room = ReturnType<typeof useRoomBoard>;
 
@@ -214,23 +215,26 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
     <BackLink fallback="/games" fallbackLabel="backToGames" navigate={navigate} />
     <header className="lobby-heading">
       <h1 className="match-page-title" tabIndex={-1}>{t('room')}</h1>
-      <button type="button" className="button button-secondary lobby-leave"
-        onClick={() => { room.leave(); setCopyState('idle'); setInviteOpen(false); setSettingsOpen(false); setGamesOpen(false); }}>{t('leave')}</button>
+      <div className="lobby-heading-actions">
+        {(room.role === 'host' || (connected && room.started && room.inMatch)) &&
+          <button type="button" className="button button-primary" disabled={room.changingGame || (!room.started && !room.canStart)}
+            aria-describedby={!room.started && !room.canStart ? 'lobby-connection' : undefined}
+            onClick={onPlay}>{t(room.finishedAt ? 'resultTitle' : room.started ? 'resume' : 'start')}</button>}
+        <button type="button" className="button button-secondary lobby-leave"
+          onClick={() => { room.leave(); setCopyState('idle'); setInviteOpen(false); setSettingsOpen(false); setGamesOpen(false); }}>{t('leave')}</button>
+      </div>
     </header>
-    <GameFeature game={activeGame} heading={t(activeGame)}>
+    <GameFeature game={activeGame} heading={t(activeGame)} overlay={<ReactionLayer events={room.lobbyReactions.events} />}>
       <div className="lobby-feature-rules"><GameRulesSummary game={activeGame} settings={room.settings} /></div>
     </GameFeature>
     <div className="surface lobby-toolbar">
-      {room.state && <p className="connection lobby-connection" role="status">{t(connected && room.role !== 'host'
+      {room.state && <p id="lobby-connection" className="connection lobby-connection" role="status">{t(room.role === 'host' && !room.started && connected && !room.canStart ? 'waitingAllConnections' : connected && room.role !== 'host'
         ? room.started && !room.inMatch ? 'waitingNextRound' : !room.started ? 'waitingStart' : room.state : room.state)}</p>}
       <div className="panel-actions">
         {canEdit && <button type="button" className="button button-secondary" disabled={room.changingGame || !room.matchId}
           onClick={() => setSettingsOpen(true)}><GearIcon />{t('settings')}</button>}
         {room.role === 'host' && gameChoices.length > 0 && <button type="button" className="button button-secondary"
           onClick={() => setGamesOpen(true)}>{t('changeRoomGame')}</button>}
-        {connected && ((room.started && room.inMatch) || room.role === 'host') &&
-          <button type="button" className="button button-primary" disabled={room.changingGame || (!room.started && !room.canStart)}
-            onClick={onPlay}>{t(room.finishedAt ? 'resultTitle' : room.started ? 'resume' : 'start')}</button>}
         {(room.state === 'failed' || room.state === 'disconnected' || (connected && room.role === 'host' && !room.canStart)) &&
           <button type="button" className="button button-secondary" onClick={room.reconnect}>{t('retry')}</button>}
       </div>
@@ -238,7 +242,10 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
     </div>
     <div className="lobby-grid">
       <section className="surface lobby-panel room-participants" aria-label={t('participants')}>
-        <header className="room-panel-heading"><h2>{t('participants')}</h2><span className="lobby-count">{participants.length}/{capacity}</span></header>
+        <header className="room-panel-heading"><h2>{t('participants')}</h2><div className="lobby-participant-tools">
+          <span className="lobby-count">{participants.length}/{capacity}</span>
+          <ReactionPicker lobby scope={room.code ?? ''} enabled={room.lobbyReactions.enabled} send={room.lobbyReactions.send} />
+        </div></header>
         <ul className="people-list">{participants.map(({ role, profile }) => {
           const color = room.colorFor(role) ?? (role === 'host' ? room.hostColor : oppositeStone(room.hostColor));
           const own = room.role === role;
