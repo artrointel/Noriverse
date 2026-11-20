@@ -11,6 +11,7 @@ const scores = {
   omok: { chords: [[48, 55, 62, 64], [45, 52, 57, 60], [41, 48, 57, 60], [43, 50, 57, 62]], pattern: [1, -1, -1, 3, 2, -1, 0, -1], interval: .45 },
   othello: { chords: [[50, 57, 60, 65], [46, 53, 60, 62], [48, 55, 62, 67], [45, 52, 55, 61]], pattern: [2, -1, 3, -1, 1, 2, -1, 0], interval: .36 },
   chess: { chords: [[45, 52, 60, 64], [47, 54, 59, 62], [43, 55, 59, 62], [44, 52, 59, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, -1], interval: .4 },
+  sichuan: { chords: [[50, 57, 62, 66], [48, 55, 60, 64], [47, 54, 59, 62], [45, 52, 57, 64]], pattern: [2, -1, 1, 3, -1, 2, 1, -1], interval: .49 },
   physics: { chords: [[43, 50, 58, 62], [46, 53, 60, 65], [41, 48, 57, 60], [45, 52, 55, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, 1], interval: .265 },
 } as const;
 const lobbyTracks = ['orbit', 'skylight', 'lantern', 'paperComet'] as const;

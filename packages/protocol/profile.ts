@@ -1,5 +1,5 @@
 export const profileIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-export const profileGames = ['omok', 'physics', 'othello', 'chess'] as const;
+export const profileGames = ['omok', 'physics', 'othello', 'chess', 'sichuan'] as const;
 export type ProfileGame = (typeof profileGames)[number];
 
 export function isProfileGame(value: unknown): value is ProfileGame {

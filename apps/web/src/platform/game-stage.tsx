@@ -9,6 +9,7 @@ import type { RenderResolution } from '../games/render-resolution.ts';
 import { boardSize as omokSize } from '../games/omok/rules.ts';
 import { othelloSize, othelloState } from '../games/othello/rules.ts';
 import { chessSize } from '../games/chess/rules.ts';
+import { sichuanSize } from '../games/sichuan/rules.ts';
 import { TouchBurst } from './touch-burst.tsx';
 import { GearIcon } from './gear-icon.tsx';
 
@@ -40,8 +41,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const [status, setStatus] = useState<'ready' | 'loading' | 'error'>('loading');
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [expanded, setExpanded] = useState<'native' | 'page' | null>(null);
-  const boardSize = id === 'othello' ? othelloSize : id === 'chess' ? chessSize : omokSize;
-  const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : 'board';
+  const boardSize = id === 'othello' ? othelloSize : id === 'chess' ? chessSize : id === 'sichuan' ? sichuanSize : omokSize;
+  const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : id === 'sichuan' ? 'sichuanBoard' : 'board';
 
   useLayoutEffect(() => { current.current = view; }, [view]);
 
@@ -183,7 +184,10 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     const index = view.cursor ?? first ?? center * (boardSize + 1);
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      if (view.canMove) view.move(index);
+      if (view.canMove) {
+        if (id === 'sichuan') setCursor(index);
+        view.move(index);
+      }
     } else if (moves[event.key]) {
       event.preventDefault();
       const [dx, dy] = moves[event.key];
@@ -195,6 +199,9 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const position = view.cursor === null ? '' : t('position', {
     row: Math.floor(view.cursor / boardSize) + 1, column: view.cursor % boardSize + 1,
   });
+  const focusTile = view.cursor === null ? undefined : view.sichuan?.board[view.cursor];
+  const focusLabel = !position || !view.sichuan ? position : position + ' · ' + (focusTile == null
+    ? t('sichuanEmptyTile') : t('sichuanMotifNames').split('|')[focusTile]);
 
   return (
     <section className={expanded === 'page' ? 'surface stage stage-expanded' : 'surface stage'} ref={shell}>
@@ -267,9 +274,9 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
           {status === 'error' && <button type="button" className="button button-secondary" onClick={() => setLoadAttempt(attempt => attempt + 1)}>{t('retryLoad')}</button>}
         </div>
       )}
-      <div className="visually-hidden" aria-live="polite">{position}</div>
-      <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : 'boardHelp')}
-        {id !== 'physics' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
+      <div className="visually-hidden" aria-live="polite">{focusLabel}</div>
+      <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp' : 'boardHelp')}
+        {id !== 'physics' && id !== 'sichuan' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
       </p>
     </section>
   );

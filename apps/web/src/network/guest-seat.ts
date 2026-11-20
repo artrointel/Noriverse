@@ -1,24 +1,24 @@
-import { isProfileGame, profileIdPattern } from '../../../../packages/protocol/profile.ts';
-import type { ProfileGame } from '../../../../packages/protocol/profile.ts';
-import { roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
+import { isRoomGame, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import type { RoomGame } from '../../../../packages/protocol/rooms.ts';
 
 const prefix = 'noriverse.guest-seat.';
 const resumeKey = 'noriverse.active-guest-room';
 const recentKey = 'noriverse.recent-rooms';
 const lifetime = 30 * 60 * 1000;
-export type GuestRoom = { code: string; game: ProfileGame };
+export type GuestRoom = { code: string; game: RoomGame };
 
 export function readRecentRooms(): GuestRoom[] {
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(recentKey) ?? '[]');
     const rooms = Array.isArray(saved) ? saved.filter((room): room is GuestRoom => room && typeof room.code === 'string'
-      && roomCodePattern.test(room.code) && isProfileGame(room.game)) : [];
+      && roomCodePattern.test(room.code) && isRoomGame(room.game)) : [];
     const previous = readGuestRoom();
     return (previous && !rooms.some(room => room.code === previous.code) ? [previous, ...rooms] : rooms).slice(0, 8);
   } catch { return []; }
 }
 
-export function rememberRecentRoom(code: string, game: ProfileGame) {
+export function rememberRecentRoom(code: string, game: RoomGame) {
   try {
     const rooms = [{ code, game }, ...readRecentRooms().filter(room => room.code !== code)].slice(0, 8);
     localStorage.setItem(recentKey, JSON.stringify(rooms));
@@ -28,12 +28,12 @@ export function rememberRecentRoom(code: string, game: ProfileGame) {
 export function readGuestRoom(): GuestRoom | undefined {
   try {
     const [code, game] = (localStorage.getItem(resumeKey) ?? '').split(':');
-    if (roomCodePattern.test(code) && isProfileGame(game) && readGuestSeat(code)) return { code, game };
+    if (roomCodePattern.test(code) && isRoomGame(game) && readGuestSeat(code)) return { code, game };
     localStorage.removeItem(resumeKey);
   } catch { /* Storage may be disabled. */ }
 }
 
-export function writeGuestRoom(code: string, game?: ProfileGame) {
+export function writeGuestRoom(code: string, game?: RoomGame) {
   try {
     if (game) localStorage.setItem(resumeKey, code + ':' + game);
     else if (localStorage.getItem(resumeKey)?.startsWith(code + ':')) localStorage.removeItem(resumeKey);

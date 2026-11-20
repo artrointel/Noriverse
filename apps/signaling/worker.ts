@@ -1,15 +1,16 @@
 import { DurableObject } from 'cloudflare:workers';
-import { createRoomCode, readSignal, roomCapacity, roomCodePattern } from '../../packages/protocol/rooms.ts';
+import { createRoomCode, isRoomGame, readSignal, roomCapacity, roomCodePattern } from '../../packages/protocol/rooms.ts';
+import type { RoomGame } from '../../packages/protocol/rooms.ts';
 import type { Participant, Role, RoomMessage } from '../../packages/protocol/rooms.ts';
-import { isProfileGame, profileIdPattern } from '../../packages/protocol/profile.ts';
-import type { ProfileGame, ProfileSummary } from '../../packages/protocol/profile.ts';
+import { profileIdPattern } from '../../packages/protocol/profile.ts';
+import type { ProfileSummary } from '../../packages/protocol/profile.ts';
 import { notifyFriends, profileRequest, profileSession, readBody, ProfileStore, verifiedFriends } from './profiles.ts';
 import { FriendGraph } from './friend-graph.ts';
 export { ProfileStore };
 export { FriendGraph };
 
 interface Env { ROOMS: DurableObjectNamespace<Room>; PROFILES: DurableObjectNamespace<ProfileStore>; FRIENDS: DurableObjectNamespace<FriendGraph>; APP_ORIGIN?: string }
-interface Reservation { host: string; hostJoined?: boolean; guest?: string; game?: ProfileGame; expires: number; profiles?: Partial<Record<Role, ProfileSummary>> }
+interface Reservation { host: string; hostJoined?: boolean; guest?: string; game?: RoomGame; expires: number; profiles?: Partial<Record<Role, ProfileSummary>> }
 type AttachedSeat = { role: Role; token?: string };
 const roomLifetime = 30 * 60 * 1000;
 const roomRoute = /^\/api\/rooms\/([^/]+)$/;
@@ -89,7 +90,7 @@ export default {
     const gameRoomCode = url.pathname.match(/^\/api\/rooms\/([^/]+)\/game$/)?.[1];
     if (gameRoomCode && roomCodePattern.test(gameRoomCode) && request.method === 'POST') {
       const input = await readBody(request) as { seat?: unknown; game?: unknown } | undefined;
-      if (typeof input?.seat !== 'string' || !profileIdPattern.test(input.seat) || !isProfileGame(input.game)) {
+      if (typeof input?.seat !== 'string' || !profileIdPattern.test(input.seat) || !isRoomGame(input.game)) {
         return cors(new Response(null, { status: 400 }));
       }
       const changed = await env.ROOMS.getByName(gameRoomCode).changeGame(input.seat, input.game);
@@ -113,7 +114,7 @@ export default {
     if (url.pathname === '/api/rooms' && request.method === 'POST') {
       const body = await readBody(request);
       const game = body && typeof body === 'object' && 'game' in body ? body.game : 'omok';
-      if (!isProfileGame(game)) return cors(new Response(null, { status: 400 }));
+      if (!isRoomGame(game)) return cors(new Response(null, { status: 400 }));
       const session = profileSession(request, external);
       const profile = session && await env.PROFILES.getByName(session.id).summary(session.secret);
       for (let attempt = 0; attempt < 4; attempt++) {
@@ -134,7 +135,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 export class Room extends DurableObject<Env> {
-  async reserve(game: ProfileGame, profile?: ProfileSummary): Promise<string | null> {
+  async reserve(game: RoomGame, profile?: ProfileSummary): Promise<string | null> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const previous = await this.ctx.storage.get<Reservation>('reservation');
       if (previous && previous.expires > Date.now()) return null;
@@ -147,7 +148,7 @@ export class Room extends DurableObject<Env> {
     });
   }
 
-  async changeGame(seat: string, game: ProfileGame) {
+  async changeGame(seat: string, game: RoomGame) {
     return this.ctx.blockConcurrencyWhile(async () => {
       const reservation = await this.ctx.storage.get<Reservation>('reservation');
       if (!reservation || reservation.host !== seat || reservation.expires <= Date.now() || !this.socketFor('host')) return false;

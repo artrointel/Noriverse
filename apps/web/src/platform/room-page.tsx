@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import { isRoomGame, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import type { RoomGame } from '../../../../packages/protocol/rooms.ts';
 import { oppositeStone, sideLabel } from '../games/table.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import { apiAvailable, apiFetch } from '../network/api.ts';
-import { isProfileGame } from '../../../../packages/protocol/profile.ts';
 import { readGuestSeat, readRecentRooms } from '../network/guest-seat.ts';
 import type { GuestRoom } from '../network/guest-seat.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { gameIds, games } from './game-catalog.ts';
-import type { GameId } from '../games/scenes.ts';
 import { avatars } from './avatars.ts';
 import { FriendButton, InviteDialog } from './friends.tsx';
 import type { Friends } from './friends.tsx';
@@ -25,7 +24,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const [code, setCode] = useState(() => invite.trim().toUpperCase().slice(0, 8));
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'manual'>('idle');
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [gameChoice, setGameChoice] = useState<GameId>();
+  const [gameChoice, setGameChoice] = useState<RoomGame>();
   const [gameError, setGameError] = useState(false);
   const [recent, setRecent] = useState<GuestRoom[]>([]);
   const activeGame = room.matchId ? room.game : 'omok';
@@ -34,7 +33,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const hasRoom = Boolean(room.code) && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full';
   const participants = (['host', 'guest'] as const).map(role => room.participants.find(participant => participant.role === role)
     ?? (room.role === role || connected ? { role, profile: undefined } : undefined)).filter(participant => participant !== undefined);
-  const gameChoices = gameIds.filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
+  const gameChoices = gameIds.filter(isRoomGame).filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
 
   useEffect(() => {
     if (hasRoom || !apiAvailable) return;
@@ -49,7 +48,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           body: JSON.stringify(candidates), signal: controller.signal });
         const rooms: unknown = response.ok ? await response.json() : [];
         if (!controller.signal.aborted && current === revision) setRecent(Array.isArray(rooms) ? rooms.filter(room => room
-          && candidates.some(candidate => candidate.code === room.code) && isProfileGame(room.game)) : []);
+          && candidates.some(candidate => candidate.code === room.code) && isRoomGame(room.game)) : []);
       } catch { if (!controller.signal.aborted && current === revision) setRecent([]); }
     }
     void check();

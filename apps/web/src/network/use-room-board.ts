@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { readTouch, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
-import type { Participant, Role, TouchPoint } from '../../../../packages/protocol/rooms.ts';
-import { isProfileGame } from '../../../../packages/protocol/profile.ts';
-import type { ProfileGame, ProfileSummary } from '../../../../packages/protocol/profile.ts';
+import { isRoomGame, readTouch, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import type { Participant, Role, RoomGame, TouchPoint } from '../../../../packages/protocol/rooms.ts';
+import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { boardRules, isBoardGame, rematchFirstColor } from '../games/board-rules.ts';
 import { defaultOmokOverline, isOmokOverline } from '../games/omok/rules.ts';
 import type { OmokOverline } from '../games/omok/rules.ts';
@@ -17,7 +16,7 @@ import { oppositeStone } from '../games/table.ts';
 import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../games/turn-clock.ts';
 import type { PendingTimeout, TimeoutChoice, TurnLimit } from '../games/turn-clock.ts';
 
-type Match = { id: string; game: ProfileGame; hostColor: Stone; startedAt: number; finishedAt: number; allowDoubleThree: boolean; overline: OmokOverline;
+type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: number; finishedAt: number; allowDoubleThree: boolean; overline: OmokOverline;
   history: number[]; physics?: FlickRound; power?: FlickPower; surrendered?: Stone; timedOut?: Stone; timeoutPending?: PendingTimeout;
   turnLimit: TurnLimit; deadline: number; clockOffset?: number };
 const blankMatch: Match = { id: '', game: 'omok', hostColor: 1, startedAt: 0, finishedAt: 0, allowDoubleThree: true,
@@ -81,7 +80,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     return () => { request.abort(); window.clearTimeout(retry); };
   }, [assignedSeat, profile?.id, profile?.name, profile?.avatar, profile?.level]);
 
-  function rememberGuestRoom(code: string, game?: ProfileGame) {
+  function rememberGuestRoom(code: string, game?: RoomGame) {
     writeGuestRoom(code, game);
     setGuestRoom(previous => game
       ? previous?.code === code && previous.game === game ? previous : { code, game }
@@ -242,7 +241,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
           && Number.isSafeInteger(raw.finishedAt) && (raw.finishedAt === 0 || raw.finishedAt >= raw.startedAt)
           && 'allowDoubleThree' in raw && typeof raw.allowDoubleThree === 'boolean') {
           const game = 'game' in raw ? raw.game : 'omok';
-          if (!isProfileGame(game)) return;
+          if (!isRoomGame(game)) return;
           const power = 'power' in raw ? raw.power : 1;
           if (power !== 1 && power !== 1.35) return;
           const physics = game === 'physics' && 'physics' in raw ? readFlickRound(raw.physics, power) : undefined;
@@ -281,7 +280,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     });
   }
 
-  async function create(game: ProfileGame, allowRule = true, limit: TurnLimit = 0, power: FlickPower = 1, overline: OmokOverline = defaultOmokOverline) {
+  async function create(game: RoomGame, allowRule = true, limit: TurnLimit = 0, power: FlickPower = 1, overline: OmokOverline = defaultOmokOverline) {
     const attempt = ++operation.current;
     link.current?.close();
     link.current = undefined;
@@ -339,7 +338,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     setState(undefined);
   }
 
-  async function changeGame(game: ProfileGame) {
+  async function changeGame(game: RoomGame) {
     const host = seat.current;
     const attempt = operation.current;
     if (host?.role !== 'host' || gameChange.current === host || game === match.current.game

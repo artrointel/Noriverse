@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import heroArt from '../assets/hero-orbit.jpg';
 import { apiAvailable } from '../network/api.ts';
 import type { GuestRoom } from '../network/guest-seat.ts';
+import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
 import { omokOverlineRules } from '../games/omok/rules.ts';
 import type { OmokOverline } from '../games/omok/rules.ts';
 import type { GameId } from '../games/scenes.ts';
@@ -78,7 +79,7 @@ function GamePreview({ id, active, navigate, onClose }: { id: GameId; active: bo
         </section>
         <div className="preview-modes">
           <span>{t('gameMode')}</span>
-          <strong>{apiAvailable ? t('newRoom') + ' · ' : ''}{t('local')}</strong>
+          <strong>{apiAvailable && isRoomGame(id) ? t('newRoom') + ' · ' : ''}{t('local')}</strong>
         </div>
         <RouteLink href={gamePath(id, 'setup')} navigate={navigate} className="button button-primary preview-play">
           <i className="play-glyph" aria-hidden="true" />{t('selectGame')}
@@ -268,14 +269,15 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
   onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: GameId;
 }) {
   const { t } = useTranslation();
+  const solo = !isRoomGame(id);
   const roomUnavailable = !apiAvailable ? 'roomUnavailable' : undefined;
-  const [mode, setMode] = useState<GameMode>(online && !roomUnavailable ? 'online' : 'local');
+  const [mode, setMode] = useState<GameMode>(online && !roomUnavailable && !solo ? 'online' : 'local');
   const preset = turnLimits.some(limit => limit === turnLimit);
   const [customLimit, setCustomLimit] = useState(!preset);
   const [customSeconds, setCustomSeconds] = useState(preset ? '' : String(turnLimit));
   const customValue = Number(customSeconds);
   const validCustom = customValue > 0 && isTurnLimit(customValue);
-  const showLimit = mode === 'local' || !activeGame;
+  const showLimit = !solo && (mode === 'local' || !activeGame);
   return (
     <div className="site-width subpage">
       <RouteLink href={gamePath(id)} navigate={navigate} className="back-link">{t(id)}</RouteLink>
@@ -284,13 +286,13 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
           <h1 tabIndex={-1}>{t('settings')}</h1>
           <fieldset>
             <legend>{t('gameMode')}</legend>
-            <label className="choice">
+            {!solo && <label className="choice">
               <input type="radio" name="mode" value="online" checked={mode === 'online'} disabled={Boolean(roomUnavailable)} onChange={() => setMode('online')} />
               <span><strong>{t('newRoom')}</strong><small>{t(roomUnavailable ?? 'onlineCopy')}</small></span>
-            </label>
+            </label>}
             <label className="choice">
               <input type="radio" name="mode" value="local" checked={mode === 'local'} onChange={() => setMode('local')} />
-              <span><strong>{t('local')}</strong><small>{t('localCopy')}</small></span>
+              <span><strong>{t('local')}</strong><small>{t(solo ? 'sichuanCopy' : 'localCopy')}</small></span>
             </label>
           </fieldset>
           {mode === 'online' && activeGame && activeGame !== id && <p className="muted">{t('otherGameRoom', { game: t(activeGame) })}</p>}

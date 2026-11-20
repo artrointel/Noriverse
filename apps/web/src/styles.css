@@ -325,6 +325,7 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 @keyframes touch-ring { from { transform: scale(.4); } to { transform: scale(2); } }
 @keyframes touch-particle { to { transform: translate(var(--dx),var(--dy)) scale(.45); } }
 .stage-help { color: var(--muted); font-size: .89rem; padding: 10px 2px 2px; }
+.sichuan-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--muted); font-size: .87rem; }
 .touch-move-help { display: none; }
 @media (any-pointer: coarse) { .touch-move-help { display: inline; } }
 .stage-message { position: absolute; inset: 35% 10px auto; display: grid; justify-items: center; gap: 10px; pointer-events: none; }

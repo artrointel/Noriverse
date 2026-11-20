@@ -2,6 +2,7 @@ import omokArt from '../assets/omok.jpg';
 import physicsArt from '../assets/disc-practice.jpg';
 import othelloArt from '../assets/othello.jpg';
 import chessArt from '../assets/chess.jpg';
+import sichuanAtlas from '../assets/sichuan-atlas.jpg';
 import type { GameId } from '../games/scenes.ts';
 
 export const games = {
@@ -9,6 +10,7 @@ export const games = {
   physics: { art: physicsArt, category: 'action', players: 'soloOrPair', description: 'physicsCopy', rules: 'physicsRules', searchNames: '알까기 alkkagi disc flick' },
   othello: { art: othelloArt, category: 'strategy', players: 'twoPlayers', description: 'othelloCopy', rules: 'othelloRules', searchNames: '오델로 리버시 othello reversi flip discs' },
   chess: { art: chessArt, category: 'strategy', players: 'twoPlayers', description: 'chessCopy', rules: 'chessRules', searchNames: '체스 chess checkmate' },
+  sichuan: { art: sichuanAtlas, category: 'strategy', players: 'onePlayer', description: 'sichuanCopy', rules: 'sichuanRules', searchNames: '사천성 sichuan shisen-sho shisensho tile matching' },
 } as const;
 
 export const gameIds = Object.keys(games) as GameId[];

@@ -29,7 +29,7 @@ import { formatPlayTime } from './profiles.tsx';
 const GameStage = lazy(() => import('./game-stage.tsx').then(module => ({ default: module.GameStage })));
 type Room = ReturnType<typeof useRoomBoard>;
 
-function PlayTime({ startedAt }: { startedAt: number }) {
+export function PlayTime({ startedAt }: { startedAt: number }) {
   const { t } = useTranslation();
   const [seconds, setSeconds] = useState(() => elapsedPlaySeconds(startedAt, Date.now()));
   useEffect(() => {

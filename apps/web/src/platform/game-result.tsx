@@ -30,7 +30,7 @@ export function GameResult({ report, winner, surrendered, timedOut, scores, visi
     return () => { current = false; };
   }, [attempt, record, report]);
 
-  const label = winner === 'draw' ? t('draw')
+  const label = report.game === 'sichuan' ? t('sichuanClear') : winner === 'draw' ? t('draw')
     : t('winner', { stone: t(sideLabel(report.game, winner)) });
   return (
     <section className="surface result-card" role="dialog" aria-labelledby="match-result-title"
@@ -52,11 +52,11 @@ export function GameResult({ report, winner, surrendered, timedOut, scores, visi
         <div><span>{t('gameMode')}</span><strong>{t(report.mode)}</strong></div>
       </div>
       {record && <p className="muted" role="status">{t(saved === 'saved' ? 'savedResult' : saved === 'failed' ? 'failedResult' : 'savingResult')}</p>}
-      {record && report.mode === 'local' && <p className="muted result-note">{t(report.game === 'omok' ? 'localOmokRecord' : report.game === 'chess' ? 'localChessRecord' : 'localRecord')}</p>}
+      {record && report.mode === 'local' && report.game !== 'sichuan' && <p className="muted result-note">{t(report.game === 'omok' ? 'localOmokRecord' : report.game === 'chess' ? 'localChessRecord' : 'localRecord')}</p>}
       {room?.notice && <p role="status">{t(room.notice === 'incoming' ? 'rematchIncoming' : 'rematchSent')}</p>}
       <div className="panel-actions">
         {(!room || room.canRematch) && <button type="button" className="button button-primary" onClick={rematch}>
-          {t('rematch')}
+          {t(report.game === 'sichuan' ? 'sichuanNew' : 'rematch')}
         </button>}
         {room?.request && <button type="button" className="button button-primary" disabled={room.notice === 'sent'} onClick={room.request}>{t('requestRematch')}</button>}
         {room?.reconnect && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}

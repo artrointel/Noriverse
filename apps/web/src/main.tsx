@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../packages/protocol/profile.ts';
+import { isRoomGame } from '../../../packages/protocol/rooms.ts';
 import licenseUrl from '../../../LICENSE?url&no-inline';
 import logo from './assets/noriverse-icon.png';
 import { boardRules, isBoardGame, rematchFirstColor } from './games/board-rules.ts';
@@ -22,6 +23,7 @@ import type { Power } from './platform/catalog-pages.tsx';
 import { gamePath, RouteLink, useNavigation } from './platform/navigation.tsx';
 import type { GameMode } from './platform/navigation.tsx';
 import { createLocalRound, PlayPage } from './platform/play-page.tsx';
+import { SichuanPage } from './platform/sichuan-page.tsx';
 import { RoomPage } from './platform/room-page.tsx';
 import { FriendsPage, useFriends } from './platform/friends.tsx';
 import { InvitationToasts, useInvitations } from './platform/invitations.tsx';
@@ -112,14 +114,14 @@ function App() {
   function startGame(mode: GameMode) {
     if (route.page !== 'setup') return;
     const id = route.id;
-    if (mode === 'online') {
+    if (mode === 'online' && isRoomGame(id)) {
       if ((!room.code || room.state === 'closed' || room.state === 'missing' || room.state === 'full') && room.state !== 'joining') {
         void room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1, overline);
       }
       navigate('/room');
     } else {
       if (isBoardGame(id)) setLocalBoards(previous => ({ ...previous, [id]: createLocalBoard(allowDoubleThree, 1, turnLimit, overline) }));
-      navigate(gamePath(id, 'play', mode));
+      navigate(gamePath(id, 'play'));
     }
   }
 
@@ -247,6 +249,10 @@ function App() {
         return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
       case 'play': {
         const id = route.id;
+        if (id === 'sichuan') return <SichuanPage dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
+          onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
+          onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'} navigate={navigate}
+          record={apiAvailable && profile.profile ? profile.record : undefined} />;
         const board = isBoardGame(id) ? id : undefined;
         const online = route.online;
         const local = board ? localBoards[board] : undefined;

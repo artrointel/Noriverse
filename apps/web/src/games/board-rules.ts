@@ -1,4 +1,4 @@
-import type { ProfileGame } from '../../../../packages/protocol/profile.ts';
+import type { RoomGame } from '../../../../packages/protocol/rooms.ts';
 import { nextStone, place, readHistory, result } from './omok/rules.ts';
 import type { OmokOverline } from './omok/rules.ts';
 import { othelloState, placeOthello, readOthelloHistory } from './othello/rules.ts';
@@ -6,7 +6,7 @@ import type { Stone } from './table.ts';
 import { oppositeStone } from './table.ts';
 import { chessResult, chessTurn, placeChess, readChessHistory } from './chess/rules.ts';
 
-export type BoardGame = Exclude<ProfileGame, 'physics'>;
+export type BoardGame = Exclude<RoomGame, 'physics'>;
 export const isBoardGame = (id: unknown): id is BoardGame => id === 'omok' || id === 'othello' || id === 'chess';
 
 interface BoardRules {

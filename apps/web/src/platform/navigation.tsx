@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentPropsWithoutRef } from 'react';
 import { flushSync } from 'react-dom';
 import { isProfileGame, profileIdPattern } from '../../../../packages/protocol/profile.ts';
+import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
 import type { GameId } from '../games/scenes.ts';
 
 export type Navigate = (destination: string, replace?: boolean) => void;
@@ -28,7 +29,7 @@ export function readRoute(url: URL) {
   if (section === 'games' && !id) return { page: 'games' } as const;
   if (section === 'games' && isProfileGame(id) && !extra) {
     if (!step) return { page: 'detail', id } as const;
-    if (step === 'setup' || step === 'play') return { page: step, id, online } as const;
+    if (step === 'setup' || step === 'play') return { page: step, id, online: online && isRoomGame(id) } as const;
   }
   return { page: 'missing' } as const;
 }
