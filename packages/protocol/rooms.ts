@@ -1,7 +1,10 @@
+import type { ProfileSummary } from './profile.ts';
+
 const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 export const roomCodePattern = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
 
 export type Role = 'host' | 'guest';
+export interface Participant { role: Role; profile?: ProfileSummary }
 interface IceCandidate {
   candidate?: string;
   sdpMid?: string | null;
@@ -13,6 +16,7 @@ export type Signal =
 export type RoomMessage =
   | Signal
   | { type: 'welcome'; role: Role; token: string }
+  | { type: 'roster'; participants: Participant[] }
   | { type: 'paired' | 'peer-left' }
   | { type: 'error'; reason: 'missing' | 'full' | 'token' };
 
@@ -20,7 +24,6 @@ export function createRoomCode(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(8)),
     value => alphabet[value % alphabet.length]).join('');
 }
-
 export function readSignal(raw: unknown, role: Role): Signal | undefined {
   if (!raw || typeof raw !== 'object' || !('type' in raw)) return;
   if (raw.type === 'ice' && 'candidate' in raw) {

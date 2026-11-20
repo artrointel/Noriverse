@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { alkkagiEdge, canFlick, endShot, initialAlkkagi, isOffBoard } from '../apps/web/src/games/alkkagi/rules.ts';
+import { alkkagiEdge, canFlick, endShot, initialAlkkagi, initialFlickRound, isOffBoard, readFlick, readFlickRound, settledStatus } from '../apps/web/src/games/alkkagi/rules.ts';
 import { tableSize } from '../apps/web/src/games/table.ts';
 
 test('only the current player can shoot, and moving discs lock the board', () => {
@@ -25,4 +25,19 @@ test('an empty side loses and simultaneous elimination is a draw', () => {
   assert.equal(tie.winner, 'draw');
   assert.equal(tie.phase, 'finished');
   assert.equal(canFlick(tie, 1), false);
+});
+
+test('online flicks validate owner and speed, and settled layouts decide the winner', () => {
+  const shot = { stone: 0, vx: 0, vy: -740 };
+  assert.deepEqual(readFlick(shot, initialFlickRound, 1), shot);
+  assert.equal(readFlick({ ...shot, stone: 1 }, initialFlickRound, 1), undefined);
+  assert.equal(readFlick({ ...shot, vy: -820 }, initialFlickRound, 1), undefined);
+  assert.equal(readFlick({ ...shot, vy: -820 }, initialFlickRound, 1.35)?.vy, -820);
+  assert.equal(readFlick({ ...shot, vx: Number.NaN }, initialFlickRound, 1), undefined);
+  const moving = readFlickRound({ ...initialFlickRound, shot }, 1);
+  assert.equal(settledStatus(moving!).phase, 'moving');
+  const layout = initialFlickRound.layout.map((point, index) => index % 2 === 0 ? point : null);
+  const settled = readFlickRound({ layout, revision: 1 }, 1);
+  assert.equal(settledStatus(settled!).winner, 1);
+  assert.equal(readFlickRound({ layout: [[10, 10], ...layout.slice(1)], revision: 1 }, 1), undefined);
 });

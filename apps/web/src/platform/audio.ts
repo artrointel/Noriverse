@@ -1,4 +1,4 @@
-type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'finish';
+type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish';
 type Channel = 'music' | 'effects';
 export type AudioLevels = Record<Channel, number>;
 
@@ -7,6 +7,7 @@ const scores = {
   lobby: { chords: [[45, 52, 57, 60], [41, 48, 53, 57], [48, 55, 60, 64], [43, 50, 55, 59]], pattern: [0, -1, 2, 1, -1, 3, 2, -1], interval: .38 },
   omok: { chords: [[48, 55, 62, 64], [45, 52, 57, 60], [41, 48, 57, 60], [43, 50, 57, 62]], pattern: [1, -1, -1, 3, 2, -1, 0, -1], interval: .45 },
   othello: { chords: [[50, 57, 60, 65], [46, 53, 60, 62], [48, 55, 62, 67], [45, 52, 55, 61]], pattern: [2, -1, 3, -1, 1, 2, -1, 0], interval: .36 },
+  chess: { chords: [[45, 52, 60, 64], [47, 54, 59, 62], [43, 55, 59, 62], [44, 52, 59, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, -1], interval: .4 },
   physics: { chords: [[43, 50, 58, 62], [46, 53, 60, 65], [41, 48, 57, 60], [45, 52, 55, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, 1], interval: .265 },
 } as const;
 const frequency = (note: number) => 440 * 2 ** ((note - 69) / 12);
@@ -176,6 +177,10 @@ export function playSound(effect: Effect, strength = 1) {
       break;
     case 'turn':
       [69, 74].forEach((note, index) => tone(time + index * .07, frequency(note), .17, .105, 'effects', 'sine'));
+      break;
+    case 'tick':
+      texture(time, .028, .16, strength % 2 ? 2450 : 1750);
+      tone(time, strength % 2 ? 1150 : 890, .044, .08, 'effects', 'triangle');
       break;
     case 'finish':
       tone(time, frequency(57), .31, .12, 'effects', 'triangle');

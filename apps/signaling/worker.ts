@@ -1,11 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
 import { createRoomCode, readSignal, roomCodePattern } from '../../packages/protocol/rooms.ts';
-import type { Role, RoomMessage } from '../../packages/protocol/rooms.ts';
-import { profileRequest, ProfileStore } from './profiles.ts';
+import type { Participant, Role, RoomMessage } from '../../packages/protocol/rooms.ts';
+import { profileIdPattern } from '../../packages/protocol/profile.ts';
+import type { ProfileSummary } from '../../packages/protocol/profile.ts';
+import { profileRequest, profileSession, readBody, ProfileStore } from './profiles.ts';
 export { ProfileStore };
 
 interface Env { ROOMS: DurableObjectNamespace<Room>; PROFILES: DurableObjectNamespace<ProfileStore>; APP_ORIGIN?: string }
-interface Reservation { host: string; guest?: string; expires: number }
+interface Reservation { host: string; guest?: string; expires: number; profiles?: Partial<Record<Role, ProfileSummary>> }
 const roomLifetime = 30 * 60 * 1000;
 const roomRoute = /^\/api\/rooms\/([^/]+)$/;
 
@@ -36,6 +38,20 @@ export default {
       } }));
     }
     if (url.pathname.startsWith('/api/profiles/')) return cors(await profileRequest(request, env, url, external));
+
+    const rosterCode = url.pathname.match(/^\/api\/rooms\/([^/]+)\/participants$/)?.[1];
+    if (rosterCode && roomCodePattern.test(rosterCode) && request.method === 'POST') {
+      const session = profileSession(request, external);
+      if (!session) return cors(new Response(null, { status: 401 }));
+      const body = await readBody(request);
+      if (!body || typeof body !== 'object' || !('seat' in body) || typeof body.seat !== 'string' || !profileIdPattern.test(body.seat)) {
+        return cors(new Response(null, { status: 400 }));
+      }
+      const profile = await env.PROFILES.getByName(session.id).summary(session.secret);
+      if (!profile) return cors(new Response(null, { status: 401 }));
+      const saved = await env.ROOMS.getByName(rosterCode).identify(body.seat, profile);
+      return cors(new Response(null, { status: saved ? 204 : 404 }));
+    }
 
     if (url.pathname === '/api/rooms' && request.method === 'POST') {
       for (let attempt = 0; attempt < 4; attempt++) {
@@ -68,6 +84,19 @@ export class Room extends DurableObject<Env> {
     });
   }
 
+  async identify(seat: string, profile: ProfileSummary) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const reservation = await this.ctx.storage.get<Reservation>('reservation');
+      if (!reservation || reservation.expires <= Date.now()) return false;
+      const role = seat === reservation.host ? 'host' : seat === reservation.guest ? 'guest' : undefined;
+      if (!role) return false;
+      reservation.profiles = { ...reservation.profiles, [role]: profile };
+      await this.ctx.storage.put('reservation', reservation);
+      this.sendRoster(reservation);
+      return true;
+    });
+  }
+
   async fetch(request: Request): Promise<Response> {
     const reservation = await this.ctx.storage.get<Reservation>('reservation');
     const [client, server] = Object.values(new WebSocketPair());
@@ -97,6 +126,7 @@ export class Room extends DurableObject<Env> {
         send(other, { type: 'paired' });
         send(server, { type: 'paired' });
       }
+      this.sendRoster(reservation);
     }
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -113,12 +143,16 @@ export class Room extends DurableObject<Env> {
     }
   }
 
-  webSocketClose(socket: WebSocket, code: number) {
+  async webSocketClose(socket: WebSocket, code: number) {
     const role = socket.deserializeAttachment() as Role | null;
     socket.close(code === 1006 || code === 1005 ? 1000 : code);
     if (!role || this.socketFor(role, socket)) return;
     const other = this.socketFor(role === 'host' ? 'guest' : 'host');
-    if (other) send(other, { type: 'peer-left' });
+    if (other) {
+      send(other, { type: 'peer-left' });
+      const reservation = await this.ctx.storage.get<Reservation>('reservation');
+      if (reservation) this.sendRoster(reservation, socket);
+    }
   }
 
   async alarm() {
@@ -133,6 +167,18 @@ export class Room extends DurableObject<Env> {
 
   private closeExpiredSockets() {
     for (const socket of this.ctx.getWebSockets()) socket.close(1000, 'Room expired');
+  }
+
+  private sendRoster(reservation: Reservation, excluded?: WebSocket) {
+    const participants: Participant[] = [];
+    const sockets: WebSocket[] = [];
+    for (const role of ['host', 'guest'] as const) {
+      const socket = this.socketFor(role, excluded);
+      if (!socket) continue;
+      sockets.push(socket);
+      participants.push({ role, profile: reservation.profiles?.[role] });
+    }
+    for (const socket of sockets) send(socket, { type: 'roster', participants });
   }
 
   private socketFor(role: Role, excluded?: WebSocket) {

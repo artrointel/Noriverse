@@ -23,6 +23,7 @@ export function readRoute(url: URL) {
   if (section === 'room' || (!section && invite)) return { page: 'room', invite } as const;
   if (!section) return { page: 'home' } as const;
   if (section === 'profile' && !id) return { page: 'profile' } as const;
+  if (section === 'friends' && !id) return { page: 'friends' } as const;
   if (section === 'profiles' && id && !step && profileIdPattern.test(id)) return { page: 'publicProfile', profileId: id } as const;
   if (section === 'games' && !id) return { page: 'games' } as const;
   if (section === 'games' && isProfileGame(id) && !extra) {

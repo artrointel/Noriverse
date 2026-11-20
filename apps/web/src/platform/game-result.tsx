@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchReport } from '../../../../packages/protocol/profile.ts';
 import type { Stone } from '../games/table.ts';
+import { sideLabel } from '../games/table.ts';
 import { formatPlayTime } from './profiles.tsx';
 import { RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 
-export function GameResult({ report, winner, surrendered, scores, visible, onClose, room, record, rematch, back, navigate }: {
+export function GameResult({ report, winner, surrendered, timedOut, scores, visible, onClose, room, record, rematch, back, navigate }: {
   report: MatchReport;
   winner: Stone | 'draw';
   surrendered?: Stone;
+  timedOut?: Stone;
   scores?: readonly [number, number]; visible: boolean; onClose: () => void;
   room?: { canRematch: boolean; reconnect?: () => void };
   record?: (report: MatchReport) => Promise<boolean>;
@@ -29,7 +31,7 @@ export function GameResult({ report, winner, surrendered, scores, visible, onClo
   }, [attempt, record, report]);
 
   const label = winner === 'draw' ? t('draw')
-    : t('winner', { stone: t(winner === 1 ? 'black' : 'white') });
+    : t('winner', { stone: t(sideLabel(report.game, winner)) });
   return (
     <section className="surface result-card" role="dialog" aria-labelledby="match-result-title"
       onKeyDown={event => {
@@ -42,14 +44,15 @@ export function GameResult({ report, winner, surrendered, scores, visible, onClo
       <div className="result-medal" aria-hidden="true">✦</div>
       <p>{t('matchResult', { game: t(report.game) })}</p>
       <h2 id="match-result-title" ref={heading} tabIndex={-1}>{label}</h2>
-      {surrendered && <p>{t('resignedBy', { stone: t(surrendered === 1 ? 'black' : 'white') })}</p>}
+      {surrendered && <p>{t('resignedBy', { stone: t(sideLabel(report.game, surrendered)) })}</p>}
+      {timedOut && <p>{t('turnTimeout', { stone: t(sideLabel(report.game, timedOut)) })}</p>}
       {scores && <p>{t('discScore', { black: scores[0], white: scores[1] })}</p>}
       <div className="result-summary">
         <div><span>{t('playTime')}</span><strong>{formatPlayTime(report.seconds)}</strong></div>
         <div><span>{t('gameMode')}</span><strong>{t(report.mode)}</strong></div>
       </div>
       {record && <p className="muted" role="status">{t(saved === 'saved' ? 'savedResult' : saved === 'failed' ? 'failedResult' : 'savingResult')}</p>}
-      {record && report.mode === 'local' && <p className="muted result-note">{t('localRecord')}</p>}
+      {record && report.mode === 'local' && <p className="muted result-note">{t(report.game === 'omok' ? 'localOmokRecord' : report.game === 'chess' ? 'localChessRecord' : 'localRecord')}</p>}
       <div className="panel-actions">
         {(!room || room.canRematch) && <button type="button" className="button button-primary" onClick={rematch}>
           {t('rematch')}

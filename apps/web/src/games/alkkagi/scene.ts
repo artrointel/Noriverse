@@ -4,8 +4,8 @@ import { addStoneShadow, createBoardArt, preloadBoard, stoneTexture } from '../b
 import { tableSize } from '../table.ts';
 import type { Stone } from '../table.ts';
 import type { GameView } from '../scenes.ts';
-import { alkkagiEdge, canFlick, endShot, initialAlkkagi, isOffBoard } from './rules.ts';
-import type { AlkkagiStatus } from './rules.ts';
+import { alkkagiEdge, canFlick, endShot, initialAlkkagi, initialFlickRound, isOffBoard, pieceOwner, settledStatus } from './rules.ts';
+import type { AlkkagiStatus, Flick, FlickRound, StonePosition } from './rules.ts';
 
 type Piece = {
   owner: Stone;
@@ -34,6 +34,7 @@ export function alkkagiScene(view: () => GameView) {
   let lastImpact = -100;
   let slowSince: number | undefined;
   let dark: boolean;
+  let previousRound: FlickRound | undefined;
   const stones: Piece[] = [];
 
   function publish(next: AlkkagiStatus) {
@@ -54,7 +55,9 @@ export function alkkagiScene(view: () => GameView) {
   }
 
   function available(stone: Piece) {
-    return !view().finished && !stone.out && canFlick(status, stone.owner);
+    const { canMove, deadline, onlineFlick } = view();
+    if (onlineFlick && (onlineFlick.shot || onlineFlick.layout !== previousRound?.layout)) return false;
+    return canMove && (!deadline || Date.now() < deadline) && !stone.out && canFlick(status, stone.owner);
   }
 
   function showAim(dx: number, dy: number) {
@@ -88,10 +91,38 @@ export function alkkagiScene(view: () => GameView) {
     if (!stone || !available(stone) || length < minPull) return;
     const strength = Math.min(length, maxPull) / maxPull;
     const velocity = Math.min(820, (55 + strength * 685) * view().force);
-    stone.sprite.setVelocity(dx / length * velocity, dy / length * velocity);
+    const shot = { stone: stones.indexOf(stone), vx: dx / length * velocity, vy: dy / length * velocity };
+    const online = view().onlineFlick;
+    if (online) online.send(shot);
+    else launch(shot);
+  }
+
+  function launch(shot: Flick) {
+    stones[shot.stone].sprite.setVelocity(shot.vx, shot.vy);
     slowSince = undefined;
     publish({ ...status, phase: 'moving' });
-    playSound('flick', strength);
+    playSound('flick', Math.hypot(shot.vx, shot.vy) / 820);
+  }
+
+  function applyLayout(round: FlickRound) {
+    clearAim();
+    stage.physics.world.resume();
+    const next = settledStatus({ ...round, shot: undefined });
+    round.layout.forEach((point, index) => {
+      const { sprite, shadow } = stones[index];
+      stage.tweens.killTweensOf(sprite);
+      sprite.setVelocity(0).setAlpha(1).setDisplaySize(diameter, diameter);
+      stones[index].out = point === null;
+      if (point) {
+        sprite.enableBody(true, point[0], point[1], true, true);
+        shadow.setPosition(point[0] + 1.8, point[1] + 3.5).setVisible(true);
+      } else {
+        sprite.disableBody(true, true);
+        shadow.setVisible(false);
+      }
+    });
+    keyboardAim = { angle: next.turn === 1 ? -Math.PI / 2 : Math.PI / 2, power: 68 };
+    publish(next);
   }
 
   function removeStone(stone: Piece) {
@@ -153,10 +184,8 @@ export function alkkagiScene(view: () => GameView) {
       board.paint(dark);
       aim = this.add.graphics().setDepth(2);
       group = this.physics.add.group({ classType: Phaser.Physics.Arcade.Image });
-      const rows = [357, 331, 351, 331, 357];
-      rows.forEach((y, index) => {
-        addPiece(1, 100 + index * 70, y);
-        addPiece(2, 100 + index * 70, tableSize - y);
+      initialFlickRound.layout.forEach((point, index) => {
+        if (point) addPiece(pieceOwner(index), point[0], point[1]);
       });
       publish(initialAlkkagi);
 
@@ -228,6 +257,16 @@ export function alkkagiScene(view: () => GameView) {
         dark = view().dark;
         board.paint(dark);
       }
+      const online = view().onlineFlick;
+      if (online) {
+        const layoutChanged = online.layout !== previousRound?.layout;
+        if (layoutChanged) applyLayout(online);
+        if (online.shot && !view().finished && (layoutChanged || online.shot !== previousRound?.shot)) {
+          clearAim();
+          launch(online.shot);
+        }
+        previousRound = online;
+      }
       if (view().finished) {
         if (!stage.physics.world.isPaused) {
           stage.physics.world.pause();
@@ -257,6 +296,10 @@ export function alkkagiScene(view: () => GameView) {
       const next = endShot(status);
       keyboardAim = { angle: next.turn === 1 ? -Math.PI / 2 : Math.PI / 2, power: 68 };
       publish(next);
+      if (online?.host && online.shot) {
+        const layout = stones.map(({ out, sprite }): StonePosition => out ? null : [sprite.x, sprite.y]);
+        online.settle(layout, online.revision);
+      }
     },
   };
 }

@@ -48,8 +48,9 @@ export function othelloScene(view: () => GameView) {
       marks = this.add.graphics().setDepth(2);
       this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
         if (!view().canMove) return;
-        const x = Math.floor((pointer.x - edge) / cell);
-        const y = Math.floor((pointer.y - edge) / cell);
+        const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const x = Math.floor((point.x - edge) / cell);
+        const y = Math.floor((point.y - edge) / cell);
         if (x >= 0 && x < othelloSize && y >= 0 && y < othelloSize) view().move(y * othelloSize + x);
       });
     },

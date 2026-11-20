@@ -1,14 +1,19 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport } from '../../../../packages/protocol/profile.ts';
-import { initialAlkkagi } from '../games/alkkagi/rules.ts';
+import { initialAlkkagi, settledStatus } from '../games/alkkagi/rules.ts';
 import type { AlkkagiStatus } from '../games/alkkagi/rules.ts';
-import { isBoardGame } from '../games/board-rules.ts';
-import { doubleThreeAxes, isForbiddenDoubleThree, nextStone, result } from '../games/omok/rules.ts';
+import { boardRules, isBoardGame } from '../games/board-rules.ts';
+import { chessIndex, chessPosition, chessSquare, encodeChessMove, promotions } from '../games/chess/rules.ts';
+import type { Promotion } from '../games/chess/rules.ts';
+import { doubleThreeAxes, isForbiddenDoubleThree } from '../games/omok/rules.ts';
 import { othelloState } from '../games/othello/rules.ts';
 import type { GameId } from '../games/scenes.ts';
 import type { Stone } from '../games/table.ts';
+import { oppositeStone, sideLabel } from '../games/table.ts';
+import { nextDeadline, secondsRemaining } from '../games/turn-clock.ts';
+import type { TurnLimit } from '../games/turn-clock.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import type { Power } from './catalog-pages.tsx';
 import { gamePath, RouteLink } from './navigation.tsx';
@@ -37,18 +42,50 @@ function PlayTime({ startedAt }: { startedAt: number }) {
   return <p className="match-time"><span>{t('playTime')}</span><time dateTime={'PT' + seconds + 'S'}>{formatPlayTime(seconds)}</time></p>;
 }
 
-export function PlayPage({ id, dark, room, power, history, boardRound, allowDoubleThree, move, reset, surrenderLocal, record, navigate }: {
-  id: GameId; dark: boolean; room?: Room; power: Power; history: number[];
-  boardRound?: ReturnType<typeof createLocalRound>;
+function TurnClock({ deadline, enabled, audible, onExpired }: {
+  deadline: number; enabled: boolean; audible: boolean; onExpired: () => void;
+}) {
+  const { t } = useTranslation();
+  const [seconds, setSeconds] = useState(() => secondsRemaining(deadline, Date.now()));
+  const lastTick = useRef<number>(0);
+  const expire = useEffectEvent(onExpired);
+  const tick = useEffectEvent((left: number) => { if (audible) playSound('tick', left); });
+  useEffect(() => {
+    if (!deadline) return;
+    const update = () => {
+      const remaining = deadline - Date.now();
+      const left = secondsRemaining(deadline, Date.now());
+      setSeconds(left);
+      if (left === 0) { expire(); return; }
+      if (left <= 3 && lastTick.current !== left) {
+        lastTick.current = left;
+        tick(left);
+      }
+      timeout = window.setTimeout(update, Math.max(1, remaining - (left - 1) * 1000));
+    };
+    let timeout: number | undefined;
+    update();
+    return () => window.clearTimeout(timeout);
+  }, [deadline]);
+  return <p className="match-time turn-clock" data-low={Boolean(deadline && seconds <= 3)}>
+    <span>{t('turnLimit')}</span>
+    {deadline ? <time dateTime={'PT' + seconds + 'S'}>{t('turnSeconds', { count: seconds })}</time>
+      : <strong>{t(enabled ? 'turnClockPaused' : 'unlimitedTurns')}</strong>}
+  </p>;
+}
+
+export function PlayPage({ id, dark, antialias, room, power, turnLimit, history, boardRound, allowDoubleThree, move, reset, endLocal, record, navigate }: {
+  id: GameId; dark: boolean; antialias: boolean; room?: Room; power: Power; turnLimit: TurnLimit; history: number[];
+  boardRound?: ReturnType<typeof createLocalRound> & { firstPlayerColor: Stone };
   allowDoubleThree: boolean; move: (index: number) => void; reset: () => void;
-  surrenderLocal: (color: Stone) => void;
+  endLocal: (color: Stone, expiredDeadline?: number) => void;
   record?: (report: MatchReport) => Promise<boolean>; navigate: Navigate;
 }) {
   const { t } = useTranslation();
   const [cursor, setCursor] = useState<number | null>(null);
-  const [restartKey, setRestartKey] = useState(0);
+  const [chessChoice, setChessChoice] = useState<{ history: number[]; from: number; to?: number }>();
   const [alkkagi, setAlkkagi] = useState(initialAlkkagi);
-  const [localRound, setLocalRound] = useState(createLocalRound);
+  const [localRound, setLocalRound] = useState(() => createLocalRound(turnLimit));
   const [confirmSurrender, setConfirmSurrender] = useState(false);
   const [waitingSurrender, setWaitingSurrender] = useState(false);
   const [rejected, setRejected] = useState(false);
@@ -57,20 +94,29 @@ export function PlayPage({ id, dark, room, power, history, boardRound, allowDoub
   const isOmok = id === 'omok';
   const isBoard = isBoardGame(id);
   const othello = useMemo(() => id === 'othello' ? othelloState(history) : undefined, [id, history]);
+  const chess = id === 'chess' ? chessPosition(history) : undefined;
+  const choice = chessChoice?.history === history ? chessChoice : undefined;
+  const chessMoves = useMemo(() => chess && choice ? chess.moves({ square: chessSquare(choice.from), verbose: true }) : [], [chess, choice]);
+  const chessTargets = useMemo(() => chessMoves.map(move => chessIndex(move.to)), [chessMoves]);
+  const flickStatus = room?.physics ? settledStatus(room.physics) : alkkagi;
   const surrendered = room?.surrendered ?? boardRound?.surrendered ?? localRound.surrendered;
-  const outcome = surrendered ? (surrendered === 1 ? 2 : 1)
-    : isOmok ? result(history) : othello ? othello.winner : alkkagi.winner;
+  const timedOut = room?.timedOut ?? boardRound?.timedOut ?? localRound.timedOut;
+  const loser = surrendered ?? timedOut;
+  const outcome = loser ? oppositeStone(loser) : isBoardGame(id) ? boardRules[id].result(history) : flickStatus.winner;
   const canReset = !room || (room.role === 'host' && room.state === 'connected');
   const back = room ? '/room' : gamePath(id, 'setup');
   const backLabel = room ? 'goToRoom' : 'settings';
-  const busy = !isBoard && alkkagi.phase === 'moving';
-  const turn = isOmok ? nextStone(history) : othello ? othello.turn ?? 1 : alkkagi.turn;
-  const status = busy ? t('settling') : t('turns', { stone: t(turn === 1 ? 'black' : 'white') });
+  const busy = !isBoard && flickStatus.phase === 'moving';
+  const turn = isBoardGame(id) ? boardRules[id].turn(history) ?? 1 : flickStatus.turn;
+  const status = busy ? t('settling') : t('turns', { stone: t(sideLabel(id, turn)) });
   const matchId = room?.matchId ?? boardRound?.id ?? localRound.id;
   const startedAt = room?.startedAt ?? boardRound?.startedAt ?? localRound.startedAt;
   const finishedAt = room?.finishedAt ?? boardRound?.finishedAt ?? localRound.finishedAt;
+  const deadline = room?.displayDeadline ?? boardRound?.deadline ?? localRound.deadline;
+  const limit = room?.turnLimit ?? boardRound?.turnLimit ?? localRound.turnLimit;
   const mode = room ? 'online' : 'local';
-  const playerColor = room?.role === 'guest' ? 2 : 1;
+  const firstPlayerColor = boardRound?.firstPlayerColor ?? 1;
+  const playerColor = room?.playerColor ?? firstPlayerColor;
   const canMove = !outcome && !waitingSurrender && (room ? room.canMove : !busy);
   const report = useMemo<MatchReport | undefined>(() => {
     if (!outcome || !matchId) return;
@@ -88,11 +134,11 @@ export function PlayPage({ id, dark, room, power, history, boardRound, allowDoub
 
   useEffect(() => {
     if (!canMove) return;
-    const cue = [matchId, turn, history.length, ...alkkagi.remaining].join('/');
+    const cue = [matchId, turn, history.length, room?.physics?.revision, ...flickStatus.remaining].join('/');
     if (cue === lastTurnCue.current) return;
     lastTurnCue.current = cue;
     playSound('turn');
-  }, [alkkagi.remaining, canMove, history.length, matchId, turn]);
+  }, [flickStatus.remaining, canMove, history.length, matchId, turn, room?.physics?.revision]);
 
   useEffect(() => {
     setWaitingSurrender(false);
@@ -101,21 +147,36 @@ export function PlayPage({ id, dark, room, power, history, boardRound, allowDoub
 
   function tryMove(index: number) {
     if (!canMove) return;
+    if (chess) {
+      if (choice?.to !== undefined) return;
+      const target = chessMoves.find(move => chessIndex(move.to) === index);
+      if (target && choice) {
+        if (target.promotion) setChessChoice({ ...choice, to: index });
+        else { move(encodeChessMove(choice.from, index)); setChessChoice(undefined); }
+      } else if (chess.get(chessSquare(index))?.color === chess.turn()) {
+        setChessChoice(choice?.from === index ? undefined : { history, from: index });
+      } else setChessChoice(undefined);
+      return;
+    }
     const forbidden = isOmok ? isForbiddenDoubleThree(history, index, allowDoubleThree) : Boolean(othello && !othello.legal.includes(index));
     setRejected(forbidden);
     if (!forbidden) move(index);
   }
 
   function updateAlkkagi(next: AlkkagiStatus) {
-    if (next.phase === 'finished') {
-      const endedAt = Date.now();
-      setLocalRound(current => current.finishedAt ? current : { ...current, finishedAt: endedAt });
+    if (room) return;
+    if (next.phase !== alkkagi.phase) {
+      const now = Date.now();
+      setLocalRound(current => current.finishedAt ? current : { ...current,
+        finishedAt: next.phase === 'finished' ? now : 0,
+        deadline: next.phase === 'aim' ? nextDeadline(current.turnLimit, now) : 0,
+      });
     }
     setAlkkagi(next);
   }
 
   const restart = () => {
-    if (!isBoard) setLocalRound(createLocalRound());
+    if (!isBoard) setLocalRound(createLocalRound(localRound.turnLimit));
     setRejected(false);
     setConfirmSurrender(false);
     if (isBoard) {
@@ -123,7 +184,6 @@ export function PlayPage({ id, dark, room, power, history, boardRound, allowDoub
       return;
     }
     setAlkkagi(initialAlkkagi);
-    setRestartKey(value => value + 1);
   };
 
   function surrender() {
@@ -132,9 +192,11 @@ export function PlayPage({ id, dark, room, power, history, boardRound, allowDoub
     if (room) {
       if (room.surrender() && room.role === 'guest') setWaitingSurrender(true);
     } else if (isBoard) {
-      surrenderLocal(turn);
+      endLocal(turn);
     } else {
-      setLocalRound(current => ({ ...current, finishedAt: Date.now(), surrendered: turn }));
+      const now = Date.now();
+      setLocalRound(current => current.finishedAt || (current.deadline && now >= current.deadline) ? current
+        : { ...current, finishedAt: now, surrendered: turn, deadline: 0 });
     }
   }
 
@@ -144,20 +206,27 @@ export function PlayPage({ id, dark, room, power, history, boardRound, allowDoub
       <strong>{status}</strong>{isBoard && <small>{t('played', { count: history.length })}</small>}
     </div>
     <PlayTime key={matchId} startedAt={startedAt} />
+    <TurnClock key={matchId + '/' + deadline} deadline={deadline} enabled={Boolean(limit)} audible={!room || turn === playerColor} onExpired={() => {
+      if (room) return;
+      if (isBoard) endLocal(turn, deadline);
+      else setLocalRound(current => current.finishedAt || current.deadline !== deadline ? current
+        : { ...current, finishedAt: deadline, timedOut: turn, deadline: 0 });
+    }} />
     <div className="seats">
       {([1, 2] as const).map((stone, index) => (
         <div className="seat" key={stone} data-active={!busy && turn === stone}>
-          <span className={'stone stone-' + index} aria-hidden="true" />
+          <span className={'stone stone-' + (sideLabel(id, stone) === 'black' ? 0 : 1)} aria-hidden="true" />
           <div>
-            <strong>{t(stone === 1 ? 'black' : 'white')}</strong>
-            {room && <small>{t(room.role === (stone === 1 ? 'host' : 'guest') ? 'me' : 'guest')}</small>}
+            <strong>{t(sideLabel(id, stone))}</strong>
+            {room ? <small>{t(stone === playerColor ? 'me' : 'guest')}</small>
+              : isOmok && <small>{t(stone === firstPlayerColor ? 'playerOne' : 'playerTwo')}</small>}
             {othello && <small>{t('discCount', { count: othello.scores[index] })}</small>}
-            {!isBoard && <small>{t('remaining', { count: alkkagi.remaining[index] })}</small>}
+            {!isBoard && <small>{t('remaining', { count: flickStatus.remaining[index] })}</small>}
           </div>
         </div>
       ))}
     </div>
-    {!isBoard && <p className="power-summary"><span>{t('force')}</span><strong>{t(power)}</strong></p>}
+    {!isBoard && <p className="power-summary"><span>{t('force')}</span><strong>{t(room ? room.power === 1.35 ? 'fast' : 'standard' : power)}</strong></p>}
     {isOmok && <span className="match-rule">{t(allowDoubleThree ? 'allow33' : 'ban33')}</span>}
     {room?.state && <p className="connection" role="status">{t(room.state)}</p>}
     {(room?.state === 'failed' || room?.state === 'disconnected') && (
@@ -168,7 +237,7 @@ export function PlayPage({ id, dark, room, power, history, boardRound, allowDoub
     {waitingSurrender && <p role="status" className="muted">{t('surrenderPending')}</p>}
     {confirmSurrender && (
       <div className="surrender-confirm">
-        <p>{t('confirmSurrender', { stone: t((room ? playerColor : turn) === 1 ? 'black' : 'white') })}</p>
+        <p>{t('confirmSurrender', { stone: t(sideLabel(id, room ? playerColor : turn)) })}</p>
         <div className="panel-actions">
           <button type="button" className="button button-primary" onClick={surrender}>{t('surrender')}</button>
           <button type="button" className="button button-secondary" onClick={() => setConfirmSurrender(false)}>{t('cancel')}</button>
@@ -176,7 +245,7 @@ export function PlayPage({ id, dark, room, power, history, boardRound, allowDoub
       </div>
     )}
   </>;
-  const resultPanel = outcome && report && <GameResult key={report.id} report={report} winner={outcome} surrendered={surrendered}
+  const resultPanel = outcome && report && <GameResult key={report.id} report={report} winner={outcome} surrendered={surrendered} timedOut={timedOut}
     scores={othello?.scores} visible={resultVisible} onClose={() => setClosedResult(report.id)} record={record} rematch={restart}
     room={room && { canRematch: canReset, reconnect: room.state === 'disconnected' || room.state === 'failed' ? room.reconnect : undefined }}
     back={room ? '/room' : '/games'} navigate={navigate} />;
@@ -192,24 +261,38 @@ export function PlayPage({ id, dark, room, power, history, boardRound, allowDoub
         {room?.code && <div className="play-room-code"><span>{t('code')}</span><code>{room.code}</code></div>}
       </div>
       <div className="play-layout">
+        {!outcome && choice?.to !== undefined && <section className="surface chess-promotion" aria-label={t('chessPromotion')}>
+          <strong>{t('chessPromotion')}</strong>
+          <div className="panel-actions">{promotions.map((promotion: Promotion, index) => <button className="button button-secondary" key={promotion}
+            autoFocus={index === 0} type="button" onClick={() => {
+              if (canMove && choice.to !== undefined) move(encodeChessMove(choice.from, choice.to, promotion));
+              setChessChoice(undefined);
+            }}>{t('chessPiece_' + promotion)}</button>)}</div>
+        </section>}
         <Suspense fallback={<div className="surface stage-loading" role="status">{t('loading')}</div>}>
-          <GameStage key={restartKey} id={id} setCursor={setCursor} info={info}
+          <GameStage key={id === 'physics' ? matchId : id} id={id} matchId={matchId} antialias={antialias} setCursor={setCursor} info={info}
             infoStatus={status} result={resultPanel} resultVisible={resultVisible}
             onShowResult={() => setClosedResult('')} view={{
-            history, cursor, dark, allowDoubleThree, onAlkkagi: updateAlkkagi, force: power === 'fast' ? 1.35 : 1,
-            canMove, finished: Boolean(outcome), move: tryMove,
+            history, cursor, chessSelected: choice?.from, chessTargets, dark, allowDoubleThree, onAlkkagi: updateAlkkagi,
+            force: room?.power ?? (power === 'fast' ? 1.35 : 1),
+            onlineFlick: room?.physics && { ...room.physics, host: room.role === 'host', send: room.flick, settle: room.settleFlick },
+            canMove, deadline, finished: Boolean(outcome), move: tryMove,
           }} />
         </Suspense>
         {!outcome && <div className="play-feedback" aria-live="polite">
           {madeDoubleThree && <p className="double-three-badge">{t('made33')}</p>}
           {rejected && <p className="muted">{t(isOmok ? 'blocked33' : 'invalidOthello')}</p>}
           {othello?.passed && <p className="muted">{t('othelloPass', { stone: t(othello.passed === 1 ? 'black' : 'white') })}</p>}
+          {chess?.inCheck() && <p className="muted">{t('chessCheck')}</p>}
         </div>}
       </div>
     </div>
   );
 }
 
-export function createLocalRound(): { id: string; startedAt: number; finishedAt: number; surrendered?: Stone } {
-  return { id: crypto.randomUUID(), startedAt: Date.now(), finishedAt: 0 };
+export function createLocalRound(turnLimit: TurnLimit = 0): {
+  id: string; startedAt: number; finishedAt: number; surrendered?: Stone; timedOut?: Stone; turnLimit: TurnLimit; deadline: number;
+} {
+  const now = Date.now();
+  return { id: crypto.randomUUID(), startedAt: now, finishedAt: 0, turnLimit, deadline: nextDeadline(turnLimit, now) };
 }

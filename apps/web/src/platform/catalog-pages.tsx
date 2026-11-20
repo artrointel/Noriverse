@@ -2,9 +2,9 @@ import { useDeferredValue, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import heroArt from '../assets/hero-orbit.jpg';
 import { apiAvailable } from '../network/api.ts';
-import { isBoardGame } from '../games/board-rules.ts';
-import type { BoardGame } from '../games/board-rules.ts';
 import type { GameId } from '../games/scenes.ts';
+import { isTurnLimit, turnLimits } from '../games/turn-clock.ts';
+import type { TurnLimit } from '../games/turn-clock.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { cardsPerPage, pageNumbers } from './library-pagination.ts';
 import { gamePath, RouteLink } from './navigation.tsx';
@@ -75,7 +75,7 @@ function GamePreview({ id, active, navigate, onClose }: { id: GameId; active: bo
         </section>
         <div className="preview-modes">
           <span>{t('gameMode')}</span>
-          <strong>{isBoardGame(id) && apiAvailable ? t('newRoom') + ' · ' : ''}{t('local')}</strong>
+          <strong>{apiAvailable ? t('newRoom') + ' · ' : ''}{t('local')}</strong>
         </div>
         <RouteLink href={gamePath(id, 'setup')} navigate={navigate} className="button button-primary preview-play">
           <i className="play-glyph" aria-hidden="true" />{t('selectGame')}
@@ -251,13 +251,14 @@ export function GameDetail({ id, navigate }: { id: GameId; navigate: Navigate })
   );
 }
 
-export function GameSetup({ id, online, power, onPower, allowDoubleThree, onRule, onStart, navigate, activeGame }: {
+export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, allowDoubleThree, onRule, onStart, navigate, activeGame }: {
   id: GameId; online: boolean; power: Power; onPower: (power: Power) => void;
+  turnLimit: TurnLimit; onTurnLimit: (limit: TurnLimit) => void;
   allowDoubleThree: boolean; onRule: (allow: boolean) => void;
-  onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: BoardGame;
+  onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: GameId;
 }) {
   const { t } = useTranslation();
-  const roomUnavailable = !isBoardGame(id) ? 'gameRoomUnavailable' : !apiAvailable ? 'roomUnavailable' : undefined;
+  const roomUnavailable = !apiAvailable ? 'roomUnavailable' : undefined;
   const [mode, setMode] = useState<GameMode>(online && !roomUnavailable ? 'online' : 'local');
   return (
     <div className="site-width subpage">
@@ -277,6 +278,16 @@ export function GameSetup({ id, online, power, onPower, allowDoubleThree, onRule
             </label>
           </fieldset>
           {mode === 'online' && activeGame && activeGame !== id && <p className="muted">{t('otherGameRoom', { game: t(activeGame) })}</p>}
+          {(mode === 'local' || !activeGame) && <fieldset>
+            <legend>{t('turnLimit')}</legend>
+            <select aria-label={t('turnLimit')} value={turnLimit} onChange={event => {
+              const seconds = Number(event.target.value);
+              if (isTurnLimit(seconds)) onTurnLimit(seconds);
+            }}>
+              {turnLimits.map(limit => <option key={limit} value={limit}>{t(limit ? 'turnSeconds' : 'unlimitedTurns', { count: limit })}</option>)}
+            </select>
+            <p className="muted">{t('turnLimitHelp')}</p>
+          </fieldset>}
           {id === 'omok' && (mode === 'local' || !activeGame) && (
             <fieldset>
               <legend>{t('rule33')}</legend>
@@ -289,7 +300,7 @@ export function GameSetup({ id, online, power, onPower, allowDoubleThree, onRule
               ))}
             </fieldset>
           )}
-          {id === 'physics' && (
+          {id === 'physics' && (mode === 'local' || !activeGame) && (
             <fieldset>
               <legend>{t('force')}</legend>
               {(['standard', 'fast'] as const).map(option => (

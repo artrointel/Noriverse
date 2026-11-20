@@ -1,5 +1,5 @@
 export const profileIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-export const profileGames = ['omok', 'physics', 'othello'] as const;
+export const profileGames = ['omok', 'physics', 'othello', 'chess'] as const;
 export type ProfileGame = (typeof profileGames)[number];
 
 export function isProfileGame(value: unknown): value is ProfileGame {
@@ -45,6 +45,14 @@ export interface PublicProfile {
   recent: (MatchReport & { playedAt: number })[];
 }
 
+export type ProfileSummary = Pick<PublicProfile, 'id' | 'name' | 'avatar' | 'level'>;
+
+export function readFriendUpdate(value: unknown) {
+  if (!value || typeof value !== 'object' || !('id' in value) || !('added' in value)
+    || typeof value.id !== 'string' || !profileIdPattern.test(value.id) || typeof value.added !== 'boolean') return;
+  return { id: value.id, added: value.added };
+}
+
 export type ProfilePreferences =
   | { avatar: AvatarId }
   | { favorite: { game: ProfileGame; selected: boolean } };
@@ -71,7 +79,7 @@ export function readReport(value: unknown): MatchReport | undefined {
   const data = value as Partial<MatchReport>;
   const { id, game, mode, outcome, seconds } = data;
   if (typeof id !== 'string' || !profileIdPattern.test(id) || !isProfileGame(game)
-    || (mode !== 'local' && mode !== 'online' && mode !== 'practice') || (mode === 'online' && game === 'physics')
+    || (mode !== 'local' && mode !== 'online' && mode !== 'practice')
     || (mode === 'practice' && game !== 'physics')
     || (outcome !== 'win' && outcome !== 'loss' && outcome !== 'draw' && outcome !== 'practice')
     || (mode === 'practice') !== (outcome === 'practice')

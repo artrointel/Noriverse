@@ -4,12 +4,15 @@ import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../packages/protocol/profile.ts';
 import licenseUrl from '../../../LICENSE?url&no-inline';
 import logo from './assets/noriverse-icon.png';
-import { boardRules, isBoardGame } from './games/board-rules.ts';
+import { boardRules, isBoardGame, rematchFirstColor } from './games/board-rules.ts';
 import type { BoardGame } from './games/board-rules.ts';
 import { useRoomBoard } from './network/use-room-board.ts';
 import { apiAvailable } from './network/api.ts';
 import type { GameId } from './games/scenes.ts';
 import type { Stone } from './games/table.ts';
+import { oppositeStone } from './games/table.ts';
+import { nextDeadline } from './games/turn-clock.ts';
+import type { TurnLimit } from './games/turn-clock.ts';
 import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setMusicScene } from './platform/audio.ts';
 import type { AudioLevels } from './platform/audio.ts';
 import { CatalogPage, GameDetail, GameSetup } from './platform/catalog-pages.tsx';
@@ -18,24 +21,27 @@ import { gamePath, RouteLink, useNavigation } from './platform/navigation.tsx';
 import type { GameMode } from './platform/navigation.tsx';
 import { createLocalRound, PlayPage } from './platform/play-page.tsx';
 import { RoomPage } from './platform/room-page.tsx';
+import { FriendsPage, useFriends } from './platform/friends.tsx';
 import { usePreferences } from './platform/preferences.ts';
 import { SettingsMenu } from './platform/settings-menu.tsx';
 import { NameDialog, ProfileNav, ProfilePage, useProfile } from './platform/profiles.tsx';
 import './styles.css';
 
-function createLocalBoard(allowDoubleThree = true) {
-  return { ...createLocalRound(), history: [] as number[], allowDoubleThree };
+function createLocalBoard(allowDoubleThree = true, firstPlayerColor: Stone = 1, turnLimit: TurnLimit = 0) {
+  return { ...createLocalRound(turnLimit), history: [] as number[], allowDoubleThree, firstPlayerColor };
 }
 
 function App() {
   const { t, i18n } = useTranslation();
   const preferences = usePreferences();
   const { route, path, navigate } = useNavigation();
-  const room = useRoomBoard();
   const profile = useProfile();
-  const [localBoards, setLocalBoards] = useState(() => ({ omok: createLocalBoard(), othello: createLocalBoard() }));
+  const room = useRoomBoard(profile.profile);
+  const friends = useFriends(profile.profile?.id, route.page === 'friends' || route.page === 'publicProfile' || route.page === 'room');
+  const [localBoards, setLocalBoards] = useState(() => ({ omok: createLocalBoard(), othello: createLocalBoard(), chess: createLocalBoard() }));
   const [power, setPower] = useState<Power>('standard');
   const [allowDoubleThree, setAllowDoubleThree] = useState(true);
+  const [turnLimit, setTurnLimit] = useState<TurnLimit>(0);
   const [nameDismissed, setNameDismissed] = useState(false);
   const [editName, setEditName] = useState(false);
   const [pendingFavorite, setPendingFavorite] = useState<GameId>();
@@ -59,18 +65,18 @@ function App() {
   useEffect(() => { setMusicScene(route.page === 'play' ? route.id : 'lobby'); }, [route.page, route.id]);
 
   useEffect(() => {
-    if (!profile.profile || !room.role || !room.finishedAt || !room.matchId || lastAwayResult.current === room.matchId
+    if (!profile.profile || !room.playerColor || !room.finishedAt || !room.matchId || lastAwayResult.current === room.matchId
       || (route.page === 'play' && route.id === room.game && route.online)) return;
-    const winner = room.surrendered ? (room.surrendered === 1 ? 2 : 1) : boardRules[room.game].result(room.history);
+    const loser = room.surrendered ?? room.timedOut;
+    const winner = loser ? oppositeStone(loser) : room.winner;
     if (!winner) return;
     const matchId = room.matchId;
     lastAwayResult.current = matchId;
-    const side = room.role === 'host' ? 1 : 2;
     void profile.record({
-      id: matchId, game: room.game, mode: 'online', outcome: winner === 'draw' ? 'draw' : winner === side ? 'win' : 'loss',
+      id: matchId, game: room.game, mode: 'online', outcome: winner === 'draw' ? 'draw' : winner === room.playerColor ? 'win' : 'loss',
       seconds: elapsedPlaySeconds(room.startedAt, room.finishedAt),
     }).then(saved => { if (!saved && lastAwayResult.current === matchId) lastAwayResult.current = ''; });
-  }, [profile.profile, profile.record, room.game, room.role, room.finishedAt, room.matchId, room.history, room.surrendered, room.startedAt, route]);
+  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.startedAt, route]);
 
   useEffect(() => {
     const view = route.id ? t(route.id) : route.page === 'room' ? t('room')
@@ -91,34 +97,49 @@ function App() {
   function startGame(mode: GameMode) {
     if (route.page !== 'setup') return;
     const id = route.id;
-    if (mode === 'online' && isBoardGame(id)) {
-      if (!room.code && room.state !== 'joining') void room.create(id, allowDoubleThree);
+    if (mode === 'online') {
+      if (!room.code && room.state !== 'joining') void room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1);
       navigate('/room');
     } else {
-      if (isBoardGame(id)) resetBoard(id, allowDoubleThree);
+      if (isBoardGame(id)) setLocalBoards(previous => ({ ...previous, [id]: createLocalBoard(allowDoubleThree, 1, turnLimit) }));
       navigate(gamePath(id, 'play', mode));
     }
   }
 
-  function resetBoard(id: BoardGame, allowRule = localBoards[id].allowDoubleThree) {
-    setLocalBoards(previous => ({ ...previous, [id]: createLocalBoard(allowRule) }));
+  function rematchBoard(id: BoardGame) {
+    setLocalBoards(previous => {
+      const current = previous[id];
+      if (!current.finishedAt) return previous;
+      const firstPlayerColor = rematchFirstColor(id, current.firstPlayerColor, current.history, current.surrendered ?? current.timedOut);
+      return { ...previous, [id]: createLocalBoard(current.allowDoubleThree, firstPlayerColor, current.turnLimit) };
+    });
   }
 
   function placeLocal(id: BoardGame, index: number) {
     const time = Date.now();
     setLocalBoards(previous => {
       const current = previous[id];
-      if (current.finishedAt) return previous;
+      if (current.finishedAt || (current.deadline && time >= current.deadline)) return previous;
       const rules = boardRules[id];
       const history = rules.place(current.history, index, current.allowDoubleThree);
-      return history ? { ...previous, [id]: { ...current, history, finishedAt: rules.result(history) ? time : 0 } } : previous;
+      if (!history) return previous;
+      const finishedAt = rules.result(history) ? time : 0;
+      return { ...previous, [id]: { ...current, history, finishedAt, deadline: finishedAt ? 0 : nextDeadline(current.turnLimit, time) } };
     });
   }
 
-  function surrenderBoard(id: BoardGame, color: Stone) {
+  function endLocalBoard(id: BoardGame, color: Stone, expiredDeadline?: number) {
     const time = Date.now();
-    setLocalBoards(previous => previous[id].finishedAt ? previous
-      : { ...previous, [id]: { ...previous[id], finishedAt: time, surrendered: color } });
+    setLocalBoards(previous => {
+      const current = previous[id];
+      if (current.finishedAt) return previous;
+      if (expiredDeadline !== undefined) {
+        if (current.deadline !== expiredDeadline || time < expiredDeadline) return previous;
+        return { ...previous, [id]: { ...current, finishedAt: expiredDeadline, timedOut: color, deadline: 0 } };
+      }
+      if (current.deadline && time >= current.deadline) return previous;
+      return { ...previous, [id]: { ...current, finishedAt: time, surrendered: color, deadline: 0 } };
+    });
   }
 
   function enterRoomGame() {
@@ -164,30 +185,33 @@ function App() {
           onFavorite={toggleFavorite} />;
       case 'profile':
       case 'publicProfile':
-        return <ProfilePage own={route.page === 'profile'} id={route.profileId} model={profile} navigate={navigate}
+        return <ProfilePage own={route.page === 'profile'} id={route.profileId} model={profile} friends={friends} navigate={navigate}
           edit={() => setEditName(true)} />;
+      case 'friends':
+        return <FriendsPage model={friends} navigate={navigate} openProfile={() => setEditName(true)} />;
       case 'detail':
         return <GameDetail id={route.id} navigate={navigate} />;
       case 'setup':
         return <GameSetup id={route.id} online={route.online} power={power} onPower={setPower}
+          turnLimit={turnLimit} onTurnLimit={setTurnLimit}
           allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree} activeGame={room.code ? room.game : undefined} onStart={startGame} navigate={navigate} />;
       case 'room':
-        return <RoomPage room={room} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
+        return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
       case 'play': {
         const id = route.id;
         const board = isBoardGame(id) ? id : undefined;
-        const online = Boolean(board && route.online);
+        const online = route.online;
         const local = board ? localBoards[board] : undefined;
         if (online && (!room.code || !room.started || room.game !== id)) {
-          return <RoomPage room={room} invite="" navigate={navigate} onPlay={enterRoomGame} />;
+          return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite="" navigate={navigate} onPlay={enterRoomGame} />;
         }
-        return <PlayPage id={id} dark={preferences.dark} power={power} navigate={navigate}
+        return <PlayPage id={id} dark={preferences.dark} antialias={preferences.antialias} power={power} turnLimit={turnLimit} navigate={navigate}
           room={online ? room : undefined} history={online ? room.history : local?.history ?? []}
           boardRound={online ? undefined : local}
           allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true} record={apiAvailable && profile.profile ? profile.record : undefined}
           move={online ? room.move : index => { if (board) placeLocal(board, index); }}
-          reset={online ? room.rematch : () => { if (board) resetBoard(board); }}
-          surrenderLocal={color => { if (board) surrenderBoard(board, color); }} />;
+          reset={online ? room.rematch : () => { if (board) rematchBoard(board); }}
+          endLocal={(color, deadline) => { if (board) endLocalBoard(board, color, deadline); }} />;
       }
       default:
         return <div className="site-width subpage missing">

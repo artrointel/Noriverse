@@ -85,6 +85,13 @@ export function SettingsMenu({ preferences, levels, onVolume, path }: {
             ))}
           </div>
         </details>
+        <details className="settings-section">
+          <summary>{t('graphics')}</summary>
+          <label className="choice">
+            <input type="checkbox" checked={preferences.antialias} onChange={event => preferences.changeAntialias(event.target.checked)} />
+            <span><strong>{t('antialias')}</strong><small>{t('graphicsHelp')}</small></span>
+          </label>
+        </details>
         <details className="settings-section settings-sound">
           <summary>{t('sound')}</summary>
           {(['music', 'effects'] as const).map(channel => (

@@ -12,7 +12,7 @@ function browserProfile(id: string, name: string): PublicProfile {
   const emptyStats = (): GameStats => ({ seconds: 0, wins: 0, losses: 0, draws: 0, sessions: 0 });
   return {
     id, name, avatar: defaultAvatar, favorites: [], level: 1, xp: 0, totalSeconds: 0,
-    games: { omok: emptyStats(), physics: emptyStats(), othello: emptyStats() }, recent: [],
+    games: { omok: emptyStats(), physics: emptyStats(), othello: emptyStats(), chess: emptyStats() }, recent: [],
   };
 }
 

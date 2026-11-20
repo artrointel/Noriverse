@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { rematchFirstColor } from '../apps/web/src/games/board-rules.ts';
 import { doubleThreeAxes, nextStone, place, readHistory, result } from '../apps/web/src/games/omok/rules.ts';
 import { createRoomCode, readSignal, roomCodePattern } from '../packages/protocol/rooms.ts';
 
@@ -18,6 +19,19 @@ test('rejects invalid coordinates and repeated intersections', () => {
     assert.equal(place([0], index), undefined);
   }
   assert.deepEqual(place([0], 1), [0, 1]);
+});
+
+test('Omok rematches assign black to the previous loser', () => {
+  const blackWin = [0, 15, 1, 16, 2, 17, 3, 18, 4];
+  const whiteWin = [15, 0, 16, 1, 17, 2, 18, 3, 30, 4];
+  assert.equal(result(whiteWin), 2);
+  assert.equal(rematchFirstColor('omok', 1, blackWin), 2);
+  assert.equal(rematchFirstColor('omok', 2, blackWin), 1);
+  assert.equal(rematchFirstColor('omok', 2, whiteWin), 2);
+  assert.equal(rematchFirstColor('omok', 1, [], 2), 2);
+  assert.equal(rematchFirstColor('omok', 2, [], 1), 2);
+  assert.equal(rematchFirstColor('omok', 2, []), 2);
+  assert.equal(rematchFirstColor('othello', 1, [], 2), 1);
 });
 
 test('room codes and signals conform to the two-seat protocol', () => {

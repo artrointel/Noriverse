@@ -1,4 +1,4 @@
-import type { Role, RoomMessage, Signal } from '../../../../packages/protocol/rooms.ts';
+import type { Participant, Role, RoomMessage, Signal } from '../../../../packages/protocol/rooms.ts';
 
 export type ConnectionState = 'joining' | 'waiting' | 'connecting' | 'connected' | 'disconnected' | 'failed' | 'full' | 'missing';
 
@@ -7,6 +7,7 @@ interface RoomEvents {
   seat: (role: Role, token: string) => void;
   open: () => void;
   receive: (message: unknown) => void;
+  roster: (participants: Participant[]) => void;
 }
 
 export function connectToRoom(code: string, token: string | undefined, events: RoomEvents) {
@@ -54,7 +55,7 @@ export function connectToRoom(code: string, token: string | undefined, events: R
       if (channel === dataChannel) state('disconnected');
     };
     dataChannel.onmessage = (event: MessageEvent) => {
-      if (channel !== dataChannel || typeof event.data !== 'string' || event.data.length > 4096) return;
+      if (channel !== dataChannel || typeof event.data !== 'string' || event.data.length > 65536) return;
       try { events.receive(JSON.parse(event.data)); } catch { /* Ignore invalid JSON. */ }
     };
   }
@@ -96,6 +97,9 @@ export function connectToRoom(code: string, token: string | undefined, events: R
         role = message.role;
         events.seat(role, message.token);
         state('waiting');
+        return;
+      case 'roster':
+        events.roster(message.participants);
         return;
       case 'peer-left':
         if (channel?.readyState === 'open') return;

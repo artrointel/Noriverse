@@ -28,8 +28,9 @@ export function omokScene(view: () => GameView) {
       board.paint(view().dark);
       markers = this.add.graphics().setDepth(3);
       this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-        const x = Math.round((pointer.x - (edge + inset)) / pitch);
-        const y = Math.round((pointer.y - (edge + inset)) / pitch);
+        const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const x = Math.round((point.x - (edge + inset)) / pitch);
+        const y = Math.round((point.y - (edge + inset)) / pitch);
         const current = view();
         if (current.canMove && x >= 0 && y >= 0 && x < boardSize && y < boardSize) current.move(y * boardSize + x);
       });

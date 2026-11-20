@@ -4,9 +4,10 @@ import { useTranslation } from 'react-i18next';
 import type { GameId, GameView } from '../games/scenes.ts';
 import { boardSize as omokSize } from '../games/omok/rules.ts';
 import { othelloSize, othelloState } from '../games/othello/rules.ts';
+import { chessSize } from '../games/chess/rules.ts';
 
-export function GameStage({ id, view, setCursor, info, infoStatus, result, resultVisible, onShowResult }: {
-  id: GameId; view: GameView; setCursor: (cursor: number | null) => void;
+export function GameStage({ id, matchId, antialias, view, setCursor, info, infoStatus, result, resultVisible, onShowResult }: {
+  id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   info?: ReactNode; infoStatus?: string; result?: ReactNode;
   resultVisible: boolean; onShowResult: () => void;
 }) {
@@ -15,11 +16,14 @@ export function GameStage({ id, view, setCursor, info, infoStatus, result, resul
   const mount = useRef<HTMLDivElement>(null);
   const resultButton = useRef<HTMLButtonElement>(null);
   const current = useRef(view);
+  const [graphics, setGraphics] = useState({ matchId, antialias });
+  if (graphics.matchId !== matchId) setGraphics({ matchId, antialias });
+  const roundAntialias = graphics.antialias;
   const [status, setStatus] = useState<'ready' | 'loading' | 'error'>('loading');
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [expanded, setExpanded] = useState<'native' | 'page' | null>(null);
-  const boardSize = id === 'othello' ? othelloSize : omokSize;
-  const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : 'board';
+  const boardSize = id === 'othello' ? othelloSize : id === 'chess' ? chessSize : omokSize;
+  const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : 'board';
 
   useEffect(() => { current.current = view; }, [view]);
 
@@ -36,13 +40,13 @@ export function GameStage({ id, view, setCursor, info, infoStatus, result, resul
     setStatus('loading');
     void import('../games/scenes.ts').then(({ mountGame }) => {
       if (canceled) return;
-      unmount = mountGame(element, id, () => current.current, () => { if (!canceled) setStatus('ready'); });
+      unmount = mountGame(element, id, roundAntialias, () => current.current, () => { if (!canceled) setStatus('ready'); });
     }).catch(() => { if (!canceled) setStatus('error'); });
     return () => {
       canceled = true;
       unmount?.();
     };
-  }, [id, loadAttempt]);
+  }, [id, loadAttempt, roundAntialias]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -151,7 +155,7 @@ export function GameStage({ id, view, setCursor, info, infoStatus, result, resul
         </div>
       )}
       <div className="visually-hidden" aria-live="polite">{position}</div>
-      <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : 'boardHelp')}</p>
+      <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : 'boardHelp')}</p>
     </section>
   );
 }

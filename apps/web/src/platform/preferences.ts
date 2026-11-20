@@ -15,6 +15,10 @@ const ko = {
   othello: '오델로', othelloCopy: '흑백 돌 사이에 상대 돌을 가두어 뒤집고, 판을 내 색으로 채우세요.',
   othelloRules: '8×8 보드 중앙에 흑백 돌 두 개씩 놓고 흑부터 시작합니다. 상대 돌을 내 돌 두 개 사이에 가둘 수 있는 칸에만 둘 수 있습니다. 가로·세로·대각선에서 가둔 돌은 모두 뒤집습니다. 둘 곳이 없으면 자동으로 넘어가며, 양쪽 모두 둘 수 없을 때 돌이 많은 쪽이 이깁니다.',
   othelloBoard: '오델로 보드', othelloHelp: '표시된 칸에 둘 수 있습니다. 방향키로 이동하고 Enter로 놓을 수 있습니다.',
+  chess: '체스', chessCopy: '기물을 움직여 상대 왕을 체크메이트하세요.',
+  chessRules: '백부터 차례대로 기물을 움직입니다. 기물을 선택하면 합법적으로 이동할 수 있는 칸이 표시됩니다. 캐슬링과 앙파상을 할 수 있고, 끝줄에 도달한 폰은 승격할 수 있습니다. 체크메이트로 승리하며, 스테일메이트와 기물 부족, 동일 위치 3회 반복, 50수 규칙은 자동 무승부로 처리합니다.',
+  chessBoard: '체스 보드', chessHelp: '기물을 선택하고 이동할 칸을 고르세요. 방향키와 Enter로 조작할 수도 있습니다.',
+  chessPromotion: '폰 승격 기물 선택', chessCheck: '체크', chessPiece_q: '퀸', chessPiece_r: '룩', chessPiece_b: '비숍', chessPiece_n: '나이트',
   invalidOthello: '상대 돌을 뒤집을 수 있는 칸에 놓으세요.', othelloPass: '{{stone}}은 둘 곳이 없어 차례를 넘깁니다.',
   discCount: '돌 {{count}}개', discScore: '흑 {{black}}개 · 백 {{white}}개',
   otherGameRoom: '지금 열린 방은 {{game}} 방입니다. 새 방을 만들려면 대기실에서 먼저 나가세요.',
@@ -62,6 +66,16 @@ const ko = {
   matchResult: '{{game}} 결과', saveResult: '기록 다시 저장',
   savingResult: '기록 저장 중', savedResult: '프로필에 기록됨', failedResult: '기록을 저장하지 못했습니다.',
   localRecord: '한 기기 대전은 흑 기준으로 프로필에 기록합니다.',
+  localOmokRecord: '한 기기 오목은 1번 플레이어의 전적으로 기록합니다.',
+  localChessRecord: '한 기기 체스는 백 기준으로 프로필에 기록합니다.',
+  playerOne: '1번 플레이어', playerTwo: '2번 플레이어',
+  turnLimit: '턴 제한시간', turnSeconds: '{{count}}초', unlimitedTurns: '제한 없음', turnClockPaused: '일시 정지',
+  turnLimitHelp: '제한시간이 지나면 그 차례의 플레이어가 패배합니다.', turnTimeout: '{{stone}} 시간 초과',
+  graphics: '그래픽', antialias: '안티에일리어싱', graphicsHelp: '켜면 보드와 돌의 가장자리가 부드러워집니다. 다음 경기부터 적용됩니다.',
+  friends: '친구 목록', addFriend: '친구 추가', removeFriend: '친구 삭제', friendLink: '친구의 프로필 링크 또는 ID',
+  emptyFriends: '아직 추가한 친구가 없습니다.', friendError: '친구 목록을 변경하지 못했습니다. 프로필 링크를 확인하거나 잠시 후 다시 시도하세요.',
+  friendsUnavailable: '친구 목록을 불러올 수 없습니다.', friendsNeedProfile: '프로필을 만들면 친구를 추가할 수 있습니다.',
+  participants: '방 참가자', anonymousPlayer: '게스트',
   rule33: '오목 3–3', allow33: '3–3 허용', ban33: '흑 3–3 금지',
   rule33Help: '한 수로 두 방향에 열린 삼을 만드는 수입니다. 금지 모드에서는 흑의 3–3 착수를 막습니다.',
   made33: '3–3!', blocked33: '흑의 3–3은 이 경기에서 금지된 수입니다.',
@@ -76,7 +90,6 @@ const ko = {
   userProfilesUnavailable: '이 주소에서는 공개 프로필을 조회할 수 없습니다.',
   favoritesUnavailable: '이 주소에서는 즐겨찾기를 아직 저장할 수 없습니다.',
   roomUnavailable: '이 주소에 온라인 방 서버가 아직 연결되지 않았습니다.',
-  gameRoomUnavailable: '알까기는 현재 한 기기에서 플레이할 수 있습니다.',
   totalPlayTime: '누적 플레이 시간', levelProgress: '다음 레벨까지의 진행도', gameHistory: '게임별 전적', winRate: '승률',
   close: '닫기', cancel: '취소', surrender: '기권',
   confirmSurrender: '{{stone}}이 기권할까요?',
@@ -96,6 +109,10 @@ const en: Record<keyof typeof ko, string> = {
   othello: 'Othello', othelloCopy: 'Trap and flip your opponent’s discs to claim the board.',
   othelloRules: 'Start with two discs of each color on the middle of an 8×8 board. Black goes first. Place a disc only where you can trap an opposing line between your own discs. Flip every trapped disc in every direction. Pass automatically if you have no legal move. When neither side can move, the side with more discs wins.',
   othelloBoard: 'Othello board', othelloHelp: 'Place a disc on a marked square. Use arrow keys to move and Enter to place.',
+  chess: 'Chess', chessCopy: 'Move your pieces and checkmate the opposing king.',
+  chessRules: 'White goes first. Select a piece to see its legal destinations. Castling, en passant, and promotion are supported. Checkmate wins. Stalemate, insufficient material, threefold repetition, and the fifty-move rule automatically end the match in a draw.',
+  chessBoard: 'Chess board', chessHelp: 'Select a piece and then its destination. You can also use the arrow keys and Enter.',
+  chessPromotion: 'Choose a promotion piece', chessCheck: 'Check', chessPiece_q: 'Queen', chessPiece_r: 'Rook', chessPiece_b: 'Bishop', chessPiece_n: 'Knight',
   invalidOthello: 'Choose a square that flips at least one opposing disc.', othelloPass: '{{stone}} has no legal move and passes.',
   discCount: '{{count}} discs', discScore: 'Black {{black}} · White {{white}}',
   otherGameRoom: 'Your active room is for {{game}}. Leave it in the lobby to create a new room.',
@@ -143,6 +160,16 @@ const en: Record<keyof typeof ko, string> = {
   matchResult: '{{game}} result', saveResult: 'Retry saving result',
   savingResult: 'Saving your result', savedResult: 'Saved to your profile', failedResult: 'Could not save this result.',
   localRecord: 'Same-device matches are recorded from Black’s side.',
+  localOmokRecord: 'Same-device Omok results are recorded for Player 1.',
+  localChessRecord: 'Same-device chess matches are recorded from White’s side.',
+  playerOne: 'Player 1', playerTwo: 'Player 2',
+  turnLimit: 'Turn time limit', turnSeconds: '{{count}} sec', unlimitedTurns: 'No limit', turnClockPaused: 'Paused',
+  turnLimitHelp: 'Running out of time loses the match.', turnTimeout: '{{stone}} ran out of time',
+  graphics: 'Graphics', antialias: 'Antialiasing', graphicsHelp: 'Smooths board and stone edges. Changes apply next match.',
+  friends: 'Friends', addFriend: 'Add friend', removeFriend: 'Remove friend', friendLink: 'Friend’s profile link or ID',
+  emptyFriends: 'You haven’t added any friends yet.', friendError: 'Could not update your friends. Check the profile link or try again.',
+  friendsUnavailable: 'Friends are unavailable.', friendsNeedProfile: 'Create a profile to add friends.',
+  participants: 'Room participants', anonymousPlayer: 'Guest',
   rule33: 'Omok double three', allow33: 'Allow double three', ban33: 'Ban double three for Black',
   rule33Help: 'This move creates open threes in two directions. With the ban on, Black cannot play it.',
   made33: 'Double three!', blocked33: 'Black cannot play a double three in this match.',
@@ -157,7 +184,6 @@ const en: Record<keyof typeof ko, string> = {
   userProfilesUnavailable: 'Public profiles are unavailable at this address.',
   favoritesUnavailable: 'Saving favorites is unavailable at this address.',
   roomUnavailable: 'An online room server has not been connected to this site yet.',
-  gameRoomUnavailable: 'Alkkagi currently supports play on a shared device.',
   totalPlayTime: 'Total play time', levelProgress: 'Progress to the next level', gameHistory: 'Game records', winRate: 'Win rate',
   close: 'Close', cancel: 'Cancel', surrender: 'Resign',
   confirmSurrender: 'Should {{stone}} resign?',
@@ -211,6 +237,7 @@ export function usePreferences() {
   const { i18n } = useTranslation();
   const [language, setLanguage] = useState(getLanguagePreference);
   const [theme, setTheme] = useState(getTheme);
+  const [antialias, setAntialias] = useState(() => readPreference('antialias') !== 'off');
   const [systemIsDark, setSystemIsDark] = useState(systemDark.matches);
   const dark = theme === 'system' ? systemIsDark : theme === 'dark';
 
@@ -231,7 +258,11 @@ export function usePreferences() {
   useLayoutEffect(() => { document.documentElement.lang = i18n.resolvedLanguage ?? 'en'; }, [i18n.resolvedLanguage]);
 
   return {
-    language, theme, dark,
+    language, theme, dark, antialias,
+    changeAntialias(value: boolean) {
+      setAntialias(value);
+      savePreference('antialias', value ? 'on' : 'off');
+    },
     changeLanguage(value: LanguagePreference) {
       setLanguage(value);
       savePreference('language', value);

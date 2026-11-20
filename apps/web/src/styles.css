@@ -183,6 +183,8 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .card-art-omok { background: #553b84; }
 .card-art-physics { background: #5940a6; }
 .card-art-othello { background: #215a43; }
+.card-art-chess { background: #4f334f; }
+.chess-promotion { display: grid; gap: 8px; padding: 12px; }
 .card-art img, .detail-art img, .setup-summary > img { width: 100%; height: 100%; object-fit: cover; }
 .card-art img { transition: transform .48s var(--ease); }
 .game-card:hover img { transform: scale(1.045); }
@@ -300,6 +302,18 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .match-status small, .match-status span, .power-summary span { color: var(--muted); font-size: .88rem; }
 .match-time { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0; color: var(--muted); }
 .match-time time { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.turn-clock[data-low="true"] time { color: var(--primary); }
+.setup-form select { width: min(100%, 240px); min-height: 42px; padding: 6px 10px; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 9px; }
+.room-participants h2 { margin: 0 0 10px; font-size: 1.05rem; }
+.room-participants h2 small { color: var(--muted); }
+.friends-panel { max-width: 700px; display: grid; gap: 16px; }
+.people-list { display: grid; gap: 8px; list-style: none; padding: 0; margin: 0; }
+.people-list li { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 12px; }
+.person-link { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.person-link > span:last-child { min-width: 0; display: grid; }
+.person-link strong { overflow-wrap: anywhere; }
+.person-link small { color: var(--muted); }
+.person-link img { flex: none; border-radius: 10px; }
 .power-summary { display: grid; gap: 4px; }
 .match-rule { width: fit-content; padding: 5px 9px; border-radius: 7px; color: var(--primary); background: var(--active); font-size: .86rem; font-weight: 720; }
 .double-three-badge { padding: 7px 10px; border: 1px solid #d5b47d; border-radius: 8px; background: #fff0ca; color: #553072; font-weight: 780; animation: result-in .3s var(--ease) both; }

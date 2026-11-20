@@ -9,6 +9,8 @@ import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { randomPlayerName } from './player-names.ts';
+import { FriendButton } from './friends.tsx';
+import type { Friends } from './friends.tsx';
 
 const recordCount = (profile: PublicProfile) => Object.values(profile.games).reduce((sum, game) => sum + game.sessions, 0);
 
@@ -217,7 +219,7 @@ function GameHistory({ profile }: { profile: PublicProfile }) {
   const { t, i18n } = useTranslation();
   const [query, setQuery] = useState('');
   const visible = gameIds.filter(id => matchesGame(id, query, t(id)))
-    .sort((left, right) => profile.games[right].seconds - profile.games[left].seconds);
+    .sort((left, right) => (profile.games[right]?.seconds ?? 0) - (profile.games[left]?.seconds ?? 0));
   const date = new Intl.DateTimeFormat(i18n.resolvedLanguage);
   const percentage = new Intl.NumberFormat(i18n.resolvedLanguage, { style: 'percent', maximumFractionDigits: 1 });
   return (
@@ -228,7 +230,7 @@ function GameHistory({ profile }: { profile: PublicProfile }) {
           value={query} onChange={event => setQuery(event.target.value)} />
         {visible.length === 0 && <p role="status">{t('noSearchResults')}</p>}
         {visible.map(game => {
-          const stats = profile.games[game];
+          const stats = profile.games[game] ?? { seconds: 0, wins: 0, losses: 0, draws: 0, sessions: 0 };
           const rate = winRate(stats);
           const matches = profile.recent.filter(match => match.game === game);
           return <details key={game} className="game-history">
@@ -252,8 +254,8 @@ function GameHistory({ profile }: { profile: PublicProfile }) {
   );
 }
 
-export function ProfilePage({ own, id, model, navigate, edit }: {
-  own: boolean; id?: string; model: ReturnType<typeof useProfile>; navigate: Navigate; edit: () => void;
+export function ProfilePage({ own, id, model, friends, navigate, edit }: {
+  own: boolean; id?: string; model: ReturnType<typeof useProfile>; friends: Friends; navigate: Navigate; edit: () => void;
 }) {
   const { t } = useTranslation();
   const [visited, setVisited] = useState<PublicProfile | null>();
@@ -305,7 +307,9 @@ export function ProfilePage({ own, id, model, navigate, edit }: {
           {profile && apiAvailable && <button type="button" className="button button-secondary" onClick={() => void share()}>
             {t(copied ? 'copied' : 'shareProfile')}
           </button>}
+          {apiAvailable && <RouteLink className="button button-secondary" href="/friends" navigate={navigate}>{t('friends')}</RouteLink>}
         </div>}
+        {!own && profile && <div className="panel-actions"><FriendButton id={profile.id} model={friends} /></div>}
         {showLink && <input aria-label={t('shareProfile')} readOnly value={shareUrl} onFocus={event => event.currentTarget.select()} />}
       </section>
       {profile && apiAvailable && (

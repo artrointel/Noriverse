@@ -1,16 +1,21 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import { oppositeStone, sideLabel } from '../games/table.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import { apiAvailable } from '../network/api.ts';
+import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { games } from './game-catalog.ts';
+import { avatars } from './avatars.ts';
+import { FriendButton } from './friends.tsx';
+import type { Friends } from './friends.tsx';
 import { gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 
 type Room = ReturnType<typeof useRoomBoard>;
 
-export function RoomPage({ room, invite, navigate, onPlay }: {
-  room: Room; invite: string; navigate: Navigate; onPlay: () => void;
+export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }: {
+  room: Room; friends: Friends; ownProfile?: ProfileSummary; invite: string; navigate: Navigate; onPlay: () => void;
 }) {
   const { t } = useTranslation();
   const [code, setCode] = useState(() => invite.trim().toUpperCase().slice(0, 8));
@@ -18,6 +23,8 @@ export function RoomPage({ room, invite, navigate, onPlay }: {
   const activeGame = room.matchId ? room.game : 'omok';
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
   const connected = room.state === 'connected';
+  const participants = room.participants.length ? room.participants : (['host', 'guest'] as const)
+    .filter(role => room.role === role || connected).map(role => ({ role, profile: undefined }));
 
   async function copyInvite() {
     try {
@@ -45,17 +52,30 @@ export function RoomPage({ room, invite, navigate, onPlay }: {
                 </button>
               </div>
               {copyState === 'manual' && <input aria-label={t('link')} readOnly value={shareUrl.href} onFocus={event => event.currentTarget.select()} />}
-              <div className="seats">
-                {(['host', 'guest'] as const).map((role, index) => {
-                  const occupied = room.role === role || connected || (role === 'host' && room.role === 'guest' && room.state === 'connecting');
+              <section className="room-participants" aria-label={t('participants')}>
+                <h2>{t('participants')} <small>{participants.length}/2</small></h2>
+                <ul className="people-list">{participants.map(({ role, profile }) => {
+                  const color = role === 'host' ? room.hostColor : oppositeStone(room.hostColor);
+                  const own = room.role === role;
+                  const participant = profile ?? (own ? ownProfile : undefined);
+                  const seatInfo = [t(role), t(sideLabel(activeGame, color)), own ? t('me') : undefined,
+                    participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
                   return (
-                    <div className="seat" key={role}>
-                      <span className={'stone stone-' + index} aria-hidden="true" />
-                      <div><strong>{t(role)}</strong><small>{t(room.role === role ? 'me' : occupied ? (index === 0 ? 'black' : 'white') : 'openSeat')}</small></div>
-                    </div>
+                    <li key={role}>
+                      {participant ? <>
+                        <RouteLink className="person-link" href={own ? '/profile' : '/profiles/' + participant.id} navigate={navigate}>
+                          <img src={avatars[participant.avatar]} width="38" height="38" alt="" />
+                          <span><strong>{participant.name}</strong><small>{seatInfo}</small></span>
+                        </RouteLink>
+                        {!own && <FriendButton id={participant.id} model={friends} />}
+                      </> : <div className="person-link">
+                        <span className={'stone stone-' + (sideLabel(activeGame, color) === 'black' ? 0 : 1)} aria-hidden="true" />
+                        <span><strong>{t('anonymousPlayer')}</strong><small>{seatInfo}</small></span>
+                      </div>}
+                    </li>
                   );
-                })}
-              </div>
+                })}</ul>
+              </section>
               {room.state && <p className="connection" role="status">{t(connected && room.role === 'guest' && !room.started ? 'waitingStart' : room.state)}</p>}
               <div className="panel-actions">
                 {connected && (room.started || room.role === 'host') && (
