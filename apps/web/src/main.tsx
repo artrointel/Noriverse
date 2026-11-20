@@ -101,7 +101,9 @@ function App() {
     if (route.page !== 'setup') return;
     const id = route.id;
     if (mode === 'online') {
-      if (!room.code && room.state !== 'joining') void room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1);
+      if ((!room.code || room.state === 'closed' || room.state === 'missing' || room.state === 'full') && room.state !== 'joining') {
+        void room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1);
+      }
       navigate('/room');
     } else {
       if (isBoardGame(id)) setLocalBoards(previous => ({ ...previous, [id]: createLocalBoard(allowDoubleThree, 1, turnLimit) }));
@@ -206,7 +208,9 @@ function App() {
       case 'setup':
         return <GameSetup id={route.id} online={route.online} power={power} onPower={setPower}
           turnLimit={turnLimit} onTurnLimit={setTurnLimit}
-          allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree} activeGame={room.code ? room.game : undefined} onStart={startGame} navigate={navigate} />;
+          allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree}
+          activeGame={room.code && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full' ? room.game : undefined}
+          onStart={startGame} navigate={navigate} />;
       case 'room':
         return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
       case 'play': {
@@ -214,10 +218,11 @@ function App() {
         const board = isBoardGame(id) ? id : undefined;
         const online = route.online;
         const local = board ? localBoards[board] : undefined;
-        if (online && (!room.code || !room.started || room.game !== id)) {
+        if (online && (!room.code || !room.started || room.game !== id || room.state === 'closed' || room.state === 'missing')) {
           return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite="" navigate={navigate} onPlay={enterRoomGame} />;
         }
         return <PlayPage id={id} dark={preferences.dark} antialias={preferences.antialias} power={power} turnLimit={turnLimit} navigate={navigate}
+          resolution={preferences.resolution} onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias}
           showTouches={preferences.showTouches} onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
           room={online ? room : undefined} history={online ? room.history : local?.history ?? []}
           boardRound={online ? undefined : local}

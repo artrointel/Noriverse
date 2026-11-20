@@ -1,6 +1,6 @@
 import type { Participant, Role, RoomMessage, Signal } from '../../../../packages/protocol/rooms.ts';
 
-export type ConnectionState = 'joining' | 'waiting' | 'connecting' | 'connected' | 'disconnected' | 'failed' | 'full' | 'missing';
+export type ConnectionState = 'joining' | 'waiting' | 'connecting' | 'connected' | 'disconnected' | 'failed' | 'full' | 'missing' | 'closed';
 
 interface RoomEvents {
   state: (state: ConnectionState) => void;
@@ -93,6 +93,10 @@ export function connectToRoom(code: string, token: string | undefined, events: R
       case 'error':
         state(message.reason === 'full' ? 'full' : 'missing');
         return;
+      case 'room-closed':
+        resetPeer();
+        state('closed');
+        return;
       case 'welcome':
         role = message.role;
         events.seat(role, message.token);
@@ -145,7 +149,8 @@ export function connectToRoom(code: string, token: string | undefined, events: R
     }).catch(() => { if (!disposed) state('failed'); });
   };
   socket.onclose = () => {
-    if (currentState === 'full' || currentState === 'missing') return;
+    if (currentState === 'full' || currentState === 'missing' || currentState === 'closed') return;
+    if (role === 'host') { resetPeer(); state('closed'); return; }
     // A live data channel can continue while signaling is unavailable.
     if (channel?.readyState !== 'open') state('disconnected');
   };
@@ -155,6 +160,12 @@ export function connectToRoom(code: string, token: string | undefined, events: R
       if (channel?.readyState !== 'open' || channel.bufferedAmount > 65536) return false;
       channel.send(JSON.stringify(message));
       return true;
+    },
+    repair() {
+      if (role !== 'host' || socket.readyState !== WebSocket.OPEN) return;
+      state('connecting');
+      socket.send(JSON.stringify({ type: 'repair' }));
+      timer = window.setTimeout(() => state('failed'), 15000);
     },
     close() {
       disposed = true;

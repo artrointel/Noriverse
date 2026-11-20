@@ -1,6 +1,8 @@
+import { useEffect, useLayoutEffect, useState } from 'react';
 import i18next from 'i18next';
 import { initReactI18next, useTranslation } from 'react-i18next';
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { readResolution } from '../games/render-resolution.ts';
+import type { RenderResolution } from '../games/render-resolution.ts';
 
 const ko = {
   home: '홈', games: '게임', joinRoom: '방 참가', goToRoom: '대기실',
@@ -39,13 +41,13 @@ const ko = {
   physicsHelp: '돌을 누르고 뒤로 당겼다가 놓으세요. 키보드는 A/D로 돌 선택, 방향키로 조준과 세기 조절, Enter로 발사합니다.',
   settling: '돌이 멈추면 차례가 넘어갑니다', remaining: '{{count}}개 남음',
   room: '친구 대기실', newRoom: '방 만들기', code: '방 코드', join: '참가',
-  codeHint: '친구에게 받은 8자리 코드를 입력하세요.',
+  codeHint: '초대받은 방이나 다시 들어갈 방의 8자리 코드를 입력하세요.',
   inviteHelp: '초대 링크나 방 코드를 공유하세요. 두 자리가 차면 호스트가 게임을 시작할 수 있습니다.',
   copy: '초대 링크 복사', copied: '링크 복사됨', link: '초대 링크', leave: '방 나가기', retry: '다시 연결',
   joining: '방에 접속하는 중', waiting: '친구를 기다리는 중', connecting: '친구와 연결하는 중',
   connected: '친구와 연결됨', disconnected: '연결이 끊겼습니다. 같은 방에 다시 연결할 수 있습니다.',
   failed: '연결하지 못했습니다. 방 서비스 또는 네트워크를 확인하세요.',
-  full: '이 방은 이미 가득 찼습니다.', missing: '방을 찾을 수 없거나 만료되었습니다.',
+  full: '이 방은 이미 가득 찼습니다.', missing: '방을 찾을 수 없거나 만료되었습니다.', closed: '호스트 연결이 끊겨 방이 종료되었습니다.',
   host: '호스트', guest: '친구', me: '나', openSeat: '참가 대기', waitingStart: '호스트가 시작하기를 기다리는 중',
   resume: '경기 계속', retryLoad: '다시 불러오기', rematch: '재경기', resultTitle: '경기 결과',
   black: '흑', white: '백', turns: '{{stone}} 차례', winner: '{{stone}} 승리', draw: '무승부',
@@ -84,6 +86,7 @@ const ko = {
   invites: '게임 초대', inviteMessage: '{{player}}로부터 {{game}} 게임에 초대를 받았습니다.', acceptInvite: '클릭해서 방에 입장', dismissInvite: '초대 닫기',
   friendOnline: '온라인', friendOffline: '오프라인', emptyOnline: '접속 중인 친구가 없습니다.', emptyOffline: '오프라인 친구가 없습니다.',
   graphics: '그래픽', antialias: '안티에일리어싱', graphicsHelp: '켜면 보드와 돌의 가장자리가 부드러워집니다. 다음 경기부터 적용됩니다.',
+  resolution: '해상도', resolutionAuto: '자동', resolutionApplied: '적용 해상도 {{size}} × {{size}}',
   friends: '친구 목록', addFriend: '친구 추가', removeFriend: '친구 삭제', friendLink: '친구의 프로필 링크 또는 ID',
   emptyFriends: '아직 추가한 친구가 없습니다.', friendError: '친구 목록을 변경하지 못했습니다. 프로필 링크를 확인하거나 잠시 후 다시 시도하세요.',
   friendsUnavailable: '친구 목록을 불러올 수 없습니다.', friendsNeedProfile: '프로필을 만들면 친구를 추가할 수 있습니다.',
@@ -145,13 +148,13 @@ const en: Record<keyof typeof ko, string> = {
   physicsHelp: 'Press a stone, pull back, and release. On a keyboard, use A/D to select, the arrows to aim and set power, and Enter to flick.',
   settling: 'Waiting for the stones to stop', remaining: '{{count}} left',
   room: 'Friend lobby', newRoom: 'Create room', code: 'Room code', join: 'Join',
-  codeHint: 'Enter the 8-character code your friend shared.',
+  codeHint: 'Enter the 8-character code for your invitation or previous room.',
   inviteHelp: 'Share the link or room code. The host can start once both players arrive.',
   copy: 'Copy invite link', copied: 'Link copied', link: 'Invite link', leave: 'Leave room', retry: 'Reconnect',
   joining: 'Joining the room', waiting: 'Waiting for a friend', connecting: 'Connecting to your friend',
   connected: 'Connected to your friend', disconnected: 'Connection lost. You can reconnect to the same room.',
   failed: 'Could not connect. Check the room service or your network.',
-  full: 'This room is full.', missing: 'The room could not be found or has expired.',
+  full: 'This room is full.', missing: 'The room could not be found or has expired.', closed: 'The host disconnected and the room has closed.',
   host: 'Host', guest: 'Friend', me: 'You', openSeat: 'Open slot', waitingStart: 'Waiting for the host to start',
   resume: 'Resume game', retryLoad: 'Reload game', rematch: 'Rematch', resultTitle: 'Game result',
   black: 'Black', white: 'White', turns: '{{stone}} to play', winner: '{{stone}} wins', draw: 'Draw',
@@ -190,6 +193,7 @@ const en: Record<keyof typeof ko, string> = {
   invites: 'Game invitations', inviteMessage: '{{player}} invited you to play {{game}}.', acceptInvite: 'Click to join the room', dismissInvite: 'Dismiss invitation',
   friendOnline: 'Online', friendOffline: 'Offline', emptyOnline: 'No friends are online.', emptyOffline: 'No friends are offline.',
   graphics: 'Graphics', antialias: 'Antialiasing', graphicsHelp: 'Smooths board and stone edges. Changes apply next match.',
+  resolution: 'Resolution', resolutionAuto: 'Automatic', resolutionApplied: 'Applied resolution {{size}} × {{size}}',
   friends: 'Friends', addFriend: 'Add friend', removeFriend: 'Remove friend', friendLink: 'Friend’s profile link or ID',
   emptyFriends: 'You haven’t added any friends yet.', friendError: 'Could not update your friends. Check the profile link or try again.',
   friendsUnavailable: 'Friends are unavailable.', friendsNeedProfile: 'Create a profile to add friends.',
@@ -262,6 +266,7 @@ export function usePreferences() {
   const [language, setLanguage] = useState(getLanguagePreference);
   const [theme, setTheme] = useState(getTheme);
   const [antialias, setAntialias] = useState(() => readPreference('antialias') !== 'off');
+  const [resolution, setResolution] = useState(() => readResolution(readPreference('resolution')));
   const [muted, setMuted] = useState(() => readPreference('muted') === 'on');
   const [showTouches, setShowTouches] = useState(() => readPreference('touch-effects') !== 'off');
   const [systemIsDark, setSystemIsDark] = useState(systemDark.matches);
@@ -284,7 +289,7 @@ export function usePreferences() {
   useLayoutEffect(() => { document.documentElement.lang = i18n.resolvedLanguage ?? 'en'; }, [i18n.resolvedLanguage]);
 
   return {
-    language, theme, dark, antialias, muted, showTouches,
+    language, theme, dark, antialias, resolution, muted, showTouches,
     changeMuted(value: boolean) {
       setMuted(value);
       savePreference('muted', value ? 'on' : 'off');
@@ -296,6 +301,10 @@ export function usePreferences() {
     changeAntialias(value: boolean) {
       setAntialias(value);
       savePreference('antialias', value ? 'on' : 'off');
+    },
+    changeResolution(value: RenderResolution) {
+      setResolution(value);
+      savePreference('resolution', String(value));
     },
     changeLanguage(value: LanguagePreference) {
       setLanguage(value);

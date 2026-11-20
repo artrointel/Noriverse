@@ -24,6 +24,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const activeGame = room.matchId ? room.game : 'omok';
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
   const connected = room.state === 'connected';
+  const hasRoom = Boolean(room.code) && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full';
   const participants = room.participants.length ? room.participants : (['host', 'guest'] as const)
     .filter(role => room.role === role || connected).map(role => ({ role, profile: undefined }));
 
@@ -41,8 +42,8 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
       <RouteLink href="/games" navigate={navigate} className="back-link">{t('backToGames')}</RouteLink>
       <div className="setup-layout">
         <section className="surface setup-form room-page">
-          <h1 tabIndex={-1}>{t(room.code ? 'room' : 'joinRoom')}</h1>
-          {room.code ? (
+          <h1 tabIndex={-1}>{t(hasRoom ? 'room' : 'joinRoom')}</h1>
+          {hasRoom ? (
             <>
               <p className="muted">{t('inviteHelp')}</p>
               {activeGame === 'omok' && (room.role === 'host' || connected) && <span className="match-rule">{t(room.allowDoubleThree ? 'allow33' : 'ban33')}</span>}
@@ -106,7 +107,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
               <RouteLink href={gamePath('omok', 'setup', 'online')} navigate={navigate} className="button button-secondary">{t('newRoom')}</RouteLink>
             </>
           )}
-          {inviteOpen && room.code && room.role === 'host' && <InviteDialog owner={friends.owner} navigate={navigate} invite={room.invite} close={() => setInviteOpen(false)} />}
+          {inviteOpen && hasRoom && room.role === 'host' && <InviteDialog owner={friends.owner} navigate={navigate} invite={room.invite} close={() => setInviteOpen(false)} />}
         </section>
         <aside className="surface setup-summary">
           <img src={games[activeGame].art} alt="" width="880" height="587" />

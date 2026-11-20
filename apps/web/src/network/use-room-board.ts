@@ -8,6 +8,7 @@ import { initialFlickRound, readFlick, readFlickRound, readLayout, settledStatus
 import type { Flick, FlickPower, FlickRound, StonePosition } from '../games/alkkagi/rules.ts';
 import { connectToRoom } from './room-connection.ts';
 import type { ConnectionState } from './room-connection.ts';
+import { forgetGuestSeat, readGuestSeat, saveGuestSeat } from './guest-seat.ts';
 import { apiFetch } from './api.ts';
 import type { Stone } from '../games/table.ts';
 import { oppositeStone } from '../games/table.ts';
@@ -146,10 +147,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
     setState('joining');
     link.current = connectToRoom(target, token, {
       state(next) {
+        if (next === 'closed' || next === 'missing') forgetGuestSeat(target);
         ready.current = next === 'connected';
         setState(next);
       },
       seat(assignedRole, assignedToken) {
+        if (assignedRole === 'guest') saveGuestSeat(target, assignedToken);
         seat.current = { code: target, role: assignedRole, token: assignedToken };
         setAssignedSeat(seat.current);
         setRole(assignedRole);
@@ -242,6 +245,15 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   async function create(game: ProfileGame, allowRule = true, limit: TurnLimit = 0, power: FlickPower = 1) {
     const attempt = ++operation.current;
+    link.current?.close();
+    link.current = undefined;
+    seat.current = undefined;
+    ready.current = false;
+    setAssignedSeat(undefined);
+    setParticipants([]);
+    setCode(undefined);
+    setRole(undefined);
+    update(blankMatch);
     setState('joining');
     try {
       const response = await apiFetch('/api/rooms', {
@@ -268,7 +280,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     setAssignedSeat(undefined);
     setParticipants([]);
     update(blankMatch);
-    connect(target);
+    connect(target, readGuestSeat(target));
   }
 
   function leave() {
@@ -332,7 +344,11 @@ export function useRoomBoard(profile?: ProfileSummary) {
     },
     canMove: state === 'connected' && started && !finishedAt && !timeoutPending && playerColor !== undefined
       && matchTurn(round) === playerColor,
-    reconnect() { if (code) connect(code, seat.current?.token); },
+    reconnect() {
+      if (!code) return;
+      if (seat.current?.role === 'host') link.current?.repair();
+      else connect(code, seat.current?.token ?? readGuestSeat(code));
+    },
     chooseTimeout(choice: TimeoutChoice) {
       const current = match.current;
       const pending = current.timeoutPending;

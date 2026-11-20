@@ -5,11 +5,11 @@ import type { MatchReport, TouchEffect } from '../../../../packages/protocol/pro
 import { initialAlkkagi, settledStatus } from '../games/alkkagi/rules.ts';
 import type { AlkkagiStatus } from '../games/alkkagi/rules.ts';
 import { boardRules, isBoardGame } from '../games/board-rules.ts';
-import { chessIndex, chessPosition, chessSquare, encodeChessMove, promotions } from '../games/chess/rules.ts';
-import type { Promotion } from '../games/chess/rules.ts';
+import { chessIndex, chessPosition, chessSquare, encodeChessMove } from '../games/chess/rules.ts';
 import { doubleThreeAxes, isForbiddenDoubleThree } from '../games/omok/rules.ts';
 import { othelloState } from '../games/othello/rules.ts';
 import type { GameId } from '../games/scenes.ts';
+import type { RenderResolution } from '../games/render-resolution.ts';
 import type { Stone } from '../games/table.ts';
 import { oppositeStone, sideLabel } from '../games/table.ts';
 import { nextDeadline, resolveTurnTimeout, secondsRemaining } from '../games/turn-clock.ts';
@@ -21,6 +21,7 @@ import type { Navigate } from './navigation.tsx';
 import { playSound } from './audio.ts';
 import { GameResult } from './game-result.tsx';
 import { TimeoutDecision } from './timeout-decision.tsx';
+import { ChessPromotion } from './chess-promotion.tsx';
 import { formatPlayTime } from './profiles.tsx';
 
 const GameStage = lazy(() => import('./game-stage.tsx').then(module => ({ default: module.GameStage })));
@@ -77,9 +78,10 @@ function TurnClock({ deadline, enabled, audible = false, onExpired, compact = fa
   </p>;
 }
 
-export function PlayPage({ id, dark, antialias, room, power, turnLimit, history, boardRound, allowDoubleThree, move, reset, endLocal, decideLocal, record, navigate,
+export function PlayPage({ id, dark, antialias, resolution, onResolution, onAntialias, room, power, turnLimit, history, boardRound, allowDoubleThree, move, reset, endLocal, decideLocal, record, navigate,
   showTouches, onTouchDisplay, touchStyle }: {
   id: GameId; dark: boolean; antialias: boolean; room?: Room; power: Power; turnLimit: TurnLimit; history: number[];
+  resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   boardRound?: ReturnType<typeof createLocalRound> & { firstPlayerColor: Stone };
   allowDoubleThree: boolean; move: (index: number) => void; reset: () => void;
   endLocal: (color: Stone, expiredDeadline?: number) => void;
@@ -89,7 +91,7 @@ export function PlayPage({ id, dark, antialias, room, power, turnLimit, history,
 }) {
   const { t } = useTranslation();
   const [cursor, setCursor] = useState<number | null>(null);
-  const [chessChoice, setChessChoice] = useState<{ history: number[]; from: number; to?: number }>();
+  const [chessChoice, setChessChoice] = useState<{ matchId: string; revision: number; last?: number; from: number; to?: number }>();
   const [alkkagi, setAlkkagi] = useState(initialAlkkagi);
   const [localRound, setLocalRound] = useState(() => createLocalRound(turnLimit));
   const [confirmSurrender, setConfirmSurrender] = useState(false);
@@ -100,9 +102,11 @@ export function PlayPage({ id, dark, antialias, room, power, turnLimit, history,
   const lastTurnCue = useRef('');
   const isOmok = id === 'omok';
   const isBoard = isBoardGame(id);
+  const matchId = room?.matchId ?? boardRound?.id ?? localRound.id;
   const othello = useMemo(() => id === 'othello' ? othelloState(history) : undefined, [id, history]);
   const chess = id === 'chess' ? chessPosition(history) : undefined;
-  const choice = chessChoice?.history === history ? chessChoice : undefined;
+  const choice = chessChoice?.matchId === matchId && chessChoice.revision === history.length && chessChoice.last === history.at(-1)
+    ? chessChoice : undefined;
   const chessMoves = useMemo(() => chess && choice ? chess.moves({ square: chessSquare(choice.from), verbose: true }) : [], [chess, choice]);
   const chessTargets = useMemo(() => chessMoves.map(move => chessIndex(move.to)), [chessMoves]);
   const flickStatus = room?.physics ? settledStatus(room.physics) : alkkagi;
@@ -118,7 +122,6 @@ export function PlayPage({ id, dark, antialias, room, power, turnLimit, history,
   const turn = isBoardGame(id) ? boardRules[id].turn(history) ?? 1 : flickStatus.turn;
   const status = pending ? t('turnTimeout', { stone: t(sideLabel(id, pending.color)) })
     : busy ? t('settling') : t('turns', { stone: t(sideLabel(id, turn)) });
-  const matchId = room?.matchId ?? boardRound?.id ?? localRound.id;
   const startedAt = room?.startedAt ?? boardRound?.startedAt ?? localRound.startedAt;
   const finishedAt = room?.finishedAt ?? boardRound?.finishedAt ?? localRound.finishedAt;
   const deadline = room?.displayDeadline ?? boardRound?.deadline ?? localRound.deadline;
@@ -163,7 +166,7 @@ export function PlayPage({ id, dark, antialias, room, power, turnLimit, history,
         if (target.promotion) setChessChoice({ ...choice, to: index });
         else { move(encodeChessMove(choice.from, index)); setChessChoice(undefined); }
       } else if (chess.get(chessSquare(index))?.color === chess.turn()) {
-        setChessChoice(choice?.from === index ? undefined : { history, from: index });
+        setChessChoice(choice?.from === index ? undefined : { matchId, revision: history.length, last: history.at(-1), from: index });
       } else setChessChoice(undefined);
       return;
     }
@@ -282,6 +285,13 @@ export function PlayPage({ id, dark, antialias, room, power, turnLimit, history,
       }
     }} />;
 
+  const promotion = !outcome && !pending && choice?.to !== undefined && <ChessPromotion canChoose={canMove}
+    cancel={() => setChessChoice({ ...choice, to: undefined })} choose={piece => {
+      if (!canMove || choice.to === undefined) return;
+      move(encodeChessMove(choice.from, choice.to, piece));
+      setChessChoice(undefined);
+    }} />;
+
   return (
     <div className="site-width subpage play-page">
       <RouteLink href={back} navigate={navigate} className="back-link">{t(backLabel)}</RouteLink>
@@ -293,20 +303,13 @@ export function PlayPage({ id, dark, antialias, room, power, turnLimit, history,
         {room?.code && <div className="play-room-code"><span>{t('code')}</span><code>{room.code}</code></div>}
       </div>
       <div className="play-layout">
-        {!outcome && !pending && choice?.to !== undefined && <section className="surface chess-promotion" aria-label={t('chessPromotion')}>
-          <strong>{t('chessPromotion')}</strong>
-          <div className="panel-actions">{promotions.map((promotion: Promotion, index) => <button className="button button-secondary" key={promotion}
-            autoFocus={index === 0} type="button" onClick={() => {
-              if (canMove && choice.to !== undefined) move(encodeChessMove(choice.from, choice.to, promotion));
-              setChessChoice(undefined);
-            }}>{t('chessPiece_' + promotion)}</button>)}</div>
-        </section>}
         <Suspense fallback={<div className="surface stage-loading" role="status">{t('loading')}</div>}>
           <GameStage key={id === 'physics' ? matchId : id} id={id} matchId={matchId} antialias={antialias} setCursor={setCursor} info={info}
+            resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
             infoStatus={status} timer={<TurnClock key={deadline} deadline={deadline} enabled={Boolean(limit)} compact />}
             showTouches={showTouches} onTouchDisplay={onTouchDisplay} localTouch={touchStyle === 'soft'}
             remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch} result={resultPanel} resultVisible={resultVisible}
-            resultPending={resultPending} decision={deadlineDecision}
+            resultPending={resultPending} decision={deadlineDecision || promotion}
             onShowResult={() => setClosedResult('')} view={{
             history, cursor, chessSelected: choice?.from, chessTargets, dark, allowDoubleThree, onAlkkagi: updateAlkkagi,
             force: room?.power ?? (power === 'fast' ? 1.35 : 1),

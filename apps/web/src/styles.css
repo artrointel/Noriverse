@@ -196,7 +196,6 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .card-art-physics { background: #5940a6; }
 .card-art-othello { background: #215a43; }
 .card-art-chess { background: #4f334f; }
-.chess-promotion { display: grid; gap: 8px; padding: 12px; }
 .card-art img, .detail-art img, .setup-summary > img { width: 100%; height: 100%; object-fit: cover; }
 .card-art img { transition: transform .48s var(--ease); }
 .game-card:hover img { transform: scale(1.045); }
@@ -302,9 +301,12 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .stage-settings summary::-webkit-details-marker { display: none; }
 .stage-settings summary .settings-gear { width: 19px; height: 19px; }
 .stage-settings[open] summary { border-color: var(--primary); }
-.stage-settings-panel { position: absolute; z-index: 5; inset-block-start: 58px; inset-inline-end: 12px; padding: 12px 15px; box-shadow: 0 12px 32px #21142b37; }
+.stage-settings-panel { position: absolute; z-index: 5; inset-block-start: 58px; inset-inline-end: 12px; width: min(260px,calc(100% - 24px)); display: grid; gap: 10px; padding: 12px 15px; box-shadow: 0 12px 32px #21142b37; }
 .stage-settings-panel label { display: flex; align-items: center; gap: 8px; }
 .stage-settings-panel input { accent-color: var(--primary); }
+.stage-resolution { justify-content: space-between; }
+.stage-resolution select { max-width: 135px; min-height: 34px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--raised); color: var(--text); }
+.applied-resolution, .stage-settings-panel > small { color: var(--muted); font-size: .79rem; font-variant-numeric: tabular-nums; }
 .stage-field { position: relative; width: min(100%, 620px); margin-inline: auto; }
 .game-viewport { width: 100%; aspect-ratio: 1; margin-inline: auto; position: relative; border-radius: 13px; overflow: hidden; background: var(--raised); touch-action: none; }
 .game-viewport canvas { display: block; }

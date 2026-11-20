@@ -7,7 +7,8 @@ import { profileRequest, profileSession, readBody, ProfileStore } from './profil
 export { ProfileStore };
 
 interface Env { ROOMS: DurableObjectNamespace<Room>; PROFILES: DurableObjectNamespace<ProfileStore>; APP_ORIGIN?: string }
-interface Reservation { host: string; guest?: string; game?: ProfileGame; expires: number; profiles?: Partial<Record<Role, ProfileSummary>> }
+interface Reservation { host: string; hostJoined?: boolean; guest?: string; game?: ProfileGame; expires: number; profiles?: Partial<Record<Role, ProfileSummary>> }
+type AttachedSeat = { role: Role; token?: string };
 const roomLifetime = 30 * 60 * 1000;
 const roomRoute = /^\/api\/rooms\/([^/]+)$/;
 
@@ -105,8 +106,8 @@ export class Room extends DurableObject<Env> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const previous = await this.ctx.storage.get<Reservation>('reservation');
       if (previous && previous.expires > Date.now()) return null;
-      this.closeExpiredSockets();
-      const reservation = { host: crypto.randomUUID(), game, expires: Date.now() + roomLifetime };
+      this.closeRoomSockets();
+      const reservation = { host: crypto.randomUUID(), hostJoined: false, game, expires: Date.now() + roomLifetime };
       await this.ctx.storage.put('reservation', reservation);
       await this.ctx.storage.setAlarm(reservation.expires);
       return reservation.host;
@@ -137,7 +138,9 @@ export class Room extends DurableObject<Env> {
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
     const token = new URL(request.url).searchParams.get('seat');
-    if (!reservation || reservation.expires <= Date.now()) {
+    const host = this.socketFor('host', server);
+    if (!reservation || reservation.expires <= Date.now()
+      || (!host && (token !== reservation.host || reservation.hostJoined))) {
       send(server, { type: 'error', reason: 'missing' });
       server.close(1008);
     } else if (token && token !== reservation.host && token !== reservation.guest) {
@@ -149,12 +152,13 @@ export class Room extends DurableObject<Env> {
     } else {
       const role: Role = token === reservation.host ? 'host' : 'guest';
       const seat = token ?? crypto.randomUUID();
-      if (!token) {
-        reservation.guest = seat;
+      if (!token || (role === 'host' && !reservation.hostJoined)) {
+        if (role === 'host') reservation.hostJoined = true;
+        else reservation.guest = seat;
         await this.ctx.storage.put('reservation', reservation);
       }
       this.socketFor(role, server)?.close(1000, 'Seat replaced');
-      server.serializeAttachment(role);
+      server.serializeAttachment({ role, token: seat });
       send(server, { type: 'welcome', role, token: seat });
       const other = this.socketFor(role === 'host' ? 'guest' : 'host');
       if (other) {
@@ -167,11 +171,17 @@ export class Room extends DurableObject<Env> {
   }
 
   webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
-    const role = socket.deserializeAttachment() as Role | null;
+    const role = this.attachedSeat(socket)?.role;
     if (!role || this.socketFor(role) !== socket || typeof message !== 'string' || message.length > 20000) return;
     try {
-      const signal = readSignal(JSON.parse(message), role);
+      const raw: unknown = JSON.parse(message);
       const other = this.socketFor(role === 'host' ? 'guest' : 'host');
+      if (role === 'host' && raw && typeof raw === 'object' && 'type' in raw && raw.type === 'repair') {
+        if (other) { send(other, { type: 'paired' }); send(socket, { type: 'paired' }); }
+        else send(socket, { type: 'peer-left' });
+        return;
+      }
+      const signal = readSignal(raw, role);
       if (other && signal) send(other, signal);
     } catch {
       socket.close(1007);
@@ -179,10 +189,22 @@ export class Room extends DurableObject<Env> {
   }
 
   async webSocketClose(socket: WebSocket, code: number) {
-    const role = socket.deserializeAttachment() as Role | null;
+    const attachment = this.attachedSeat(socket);
+    const role = attachment?.role;
     socket.close(code === 1006 || code === 1005 ? 1000 : code);
     if (!role || this.socketFor(role, socket)) return;
-    const other = this.socketFor(role === 'host' ? 'guest' : 'host');
+    if (role === 'host') {
+      await this.ctx.blockConcurrencyWhile(async () => {
+        if (this.socketFor('host', socket)) return;
+        const reservation = await this.ctx.storage.get<Reservation>('reservation');
+        if (!reservation || (attachment.token ? attachment.token !== reservation.host : reservation.hostJoined === false)) return;
+        await this.ctx.storage.delete('reservation');
+        await this.ctx.storage.deleteAlarm();
+        this.closeRoomSockets();
+      });
+      return;
+    }
+    const other = this.socketFor('host');
     if (other) {
       send(other, { type: 'peer-left' });
       const reservation = await this.ctx.storage.get<Reservation>('reservation');
@@ -196,12 +218,22 @@ export class Room extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(reservation.expires);
       return;
     }
-    this.closeExpiredSockets();
+    this.closeRoomSockets();
     await this.ctx.storage.delete('reservation');
   }
 
-  private closeExpiredSockets() {
-    for (const socket of this.ctx.getWebSockets()) socket.close(1000, 'Room expired');
+  private closeRoomSockets() {
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      send(socket, { type: 'room-closed' });
+      socket.close(1000, 'Room closed');
+    }
+  }
+
+  private attachedSeat(socket: WebSocket): AttachedSeat | undefined {
+    const value = socket.deserializeAttachment() as AttachedSeat | Role | null;
+    if (value === 'host' || value === 'guest') return { role: value };
+    return value ?? undefined;
   }
 
   private sendRoster(reservation: Reservation, excluded?: WebSocket) {
@@ -218,6 +250,6 @@ export class Room extends DurableObject<Env> {
 
   private socketFor(role: Role, excluded?: WebSocket) {
     return this.ctx.getWebSockets().find(socket => socket !== excluded
-      && socket.readyState === WebSocket.OPEN && socket.deserializeAttachment() === role);
+      && socket.readyState === WebSocket.OPEN && this.attachedSeat(socket)?.role === role);
   }
 }

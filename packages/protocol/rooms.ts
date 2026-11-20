@@ -38,7 +38,7 @@ export type RoomMessage =
   | Signal
   | { type: 'welcome'; role: Role; token: string }
   | { type: 'roster'; participants: Participant[] }
-  | { type: 'paired' | 'peer-left' }
+  | { type: 'paired' | 'peer-left' | 'room-closed' }
   | { type: 'error'; reason: 'missing' | 'full' | 'token' };
 
 export function createRoomCode(): string {

@@ -24,14 +24,22 @@ export interface GameView {
   onlineFlick?: FlickRound & { host: boolean; send: (shot: Flick) => void; settle: (layout: StonePosition[], revision: number) => void };
 }
 
-export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, current: () => GameView, onReady: () => void) {
+export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, initialSize: number, current: () => GameView, onReady: (size: number) => void) {
   const scene = { omok: omokScene, othello: othelloScene, chess: chessScene, physics: alkkagiScene }[id](current);
-  const renderScale = antialias ? 2 : 1;
+  let size = initialSize;
+  let camera: Phaser.Cameras.Scene2D.Camera | undefined;
+
+  function applyResolution(game: Phaser.Game) {
+    if (camera && game.scale.gameSize.width !== size) game.scale.setGameSize(size, size);
+    camera?.setSize(size, size).setOrigin(0, 0).setZoom(size / tableSize);
+    return game.canvas?.width || initialSize;
+  }
+
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent,
-    width: tableSize * renderScale,
-    height: tableSize * renderScale,
+    width: initialSize,
+    height: initialSize,
     render: { antialias, antialiasGL: antialias },
     backgroundColor: current().dark ? '#272132' : '#e8ddd1',
     scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
@@ -40,11 +48,16 @@ export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, c
       key: id,
       ...scene,
       create(this: Phaser.Scene) {
-        this.cameras.main.setOrigin(0, 0).setZoom(renderScale);
+        camera = this.cameras.main;
+        const applied = applyResolution(this.game);
+        if (id === 'physics') this.physics.world.setBounds(0, 0, tableSize, tableSize);
         scene.create.call(this);
-        onReady();
+        onReady(applied);
       },
     },
   });
-  return () => game.destroy(true);
+  return {
+    resize(next: number) { size = next; return applyResolution(game); },
+    destroy() { game.destroy(true); },
+  };
 }

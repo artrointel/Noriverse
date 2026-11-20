@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../apps/web/src/games/turn-clock.ts';
+import { readResolution, renderPixelSize } from '../apps/web/src/games/render-resolution.ts';
 import { readProfilePreferences } from '../packages/protocol/profile.ts';
 import { readInvite, readTouch } from '../packages/protocol/rooms.ts';
 
@@ -9,6 +10,17 @@ test('custom turn limits accept whole seconds and keep zero unlimited', () => {
   for (const value of [-1, 3601, 1.5, '37', Infinity]) assert.equal(isTurnLimit(value), false);
   assert.equal(nextDeadline(0, 100), 0);
   assert.equal(nextDeadline(37, 100), 37100);
+});
+
+test('automatic graphics resolution follows the smaller display axis and pixel ratio', () => {
+  assert.equal(readResolution(null), 'auto');
+  assert.equal(readResolution('960'), 960);
+  assert.equal(readResolution('8000'), 'auto');
+  assert.equal(renderPixelSize('auto', 800, 600, 1.5), 900);
+  assert.equal(renderPixelSize('auto', 600, 800, 1.5), 900);
+  assert.equal(renderPixelSize('auto', 2000, 1000, 3), 1920);
+  assert.equal(renderPixelSize('auto', 0, 100, 1), 0);
+  assert.equal(renderPixelSize(720, 425, 250, 2), 720);
 });
 
 test('turn timeouts wait for a decision and extensions resume the same turn clock', () => {

@@ -3,16 +3,19 @@ import type { KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { touchResolution } from '../../../../packages/protocol/rooms.ts';
 import type { TouchPoint } from '../../../../packages/protocol/rooms.ts';
-import type { GameId, GameView } from '../games/scenes.ts';
+import type { GameId, GameView, mountGame } from '../games/scenes.ts';
+import { fixedResolutions, readResolution, renderPixelSize } from '../games/render-resolution.ts';
+import type { RenderResolution } from '../games/render-resolution.ts';
 import { boardSize as omokSize } from '../games/omok/rules.ts';
 import { othelloSize, othelloState } from '../games/othello/rules.ts';
 import { chessSize } from '../games/chess/rules.ts';
 import { TouchBurst } from './touch-burst.tsx';
 import { GearIcon } from './gear-icon.tsx';
 
-export function GameStage({ id, matchId, antialias, view, setCursor, info, infoStatus, timer, result, resultVisible, resultPending, decision, onShowResult,
+export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, timer, result, resultVisible, resultPending, decision, onShowResult,
   showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
+  resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
   resultVisible: boolean; resultPending: boolean; onShowResult: () => void;
   showTouches: boolean; onTouchDisplay: (active: boolean) => void; localTouch: boolean;
@@ -21,6 +24,9 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
   const { t } = useTranslation();
   const shell = useRef<HTMLDivElement>(null);
   const mount = useRef<HTMLDivElement>(null);
+  const engine = useRef<ReturnType<typeof mountGame>>(null);
+  const requestedSize = useRef(480);
+  const [actualSize, setActualSize] = useState(480);
   const resultButton = useRef<HTMLButtonElement>(null);
   const gameSettings = useRef<HTMLDetailsElement>(null);
   const gameInfo = useRef<HTMLDetailsElement>(null);
@@ -38,6 +44,34 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
   const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : 'board';
 
   useLayoutEffect(() => { current.current = view; }, [view]);
+
+  useLayoutEffect(() => {
+    const element = mount.current;
+    if (!element) return;
+    function measure() {
+      if (!element) return;
+      const size = renderPixelSize(resolution, element.clientWidth, element.clientHeight, window.devicePixelRatio || 1);
+      if (!size || size === requestedSize.current) return;
+      requestedSize.current = size;
+      if (engine.current) setActualSize(engine.current.resize(size));
+    }
+    measure();
+    if (resolution !== 'auto') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    let pixelRatio: MediaQueryList | undefined;
+    function watchPixelRatio() {
+      pixelRatio?.removeEventListener('change', watchPixelRatio);
+      measure();
+      pixelRatio = matchMedia('(resolution: ' + (window.devicePixelRatio || 1) + 'dppx)');
+      pixelRatio.addEventListener('change', watchPixelRatio);
+    }
+    watchPixelRatio();
+    return () => {
+      observer.disconnect();
+      pixelRatio?.removeEventListener('change', watchPixelRatio);
+    };
+  }, [resolution]);
 
   const deciding = Boolean(decision);
   const hasResult = Boolean(result);
@@ -80,15 +114,19 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
     const element = mount.current;
     if (!element) return;
     let canceled = false;
-    let unmount: (() => void) | undefined;
+    let instance: ReturnType<typeof mountGame> | undefined;
     setStatus('loading');
     void import('../games/scenes.ts').then(({ mountGame }) => {
       if (canceled) return;
-      unmount = mountGame(element, id, roundAntialias, () => current.current, () => { if (!canceled) setStatus('ready'); });
+      instance = mountGame(element, id, roundAntialias, requestedSize.current, () => current.current, size => {
+        if (!canceled) { setActualSize(size); setStatus('ready'); }
+      });
+      engine.current = instance;
     }).catch(() => { if (!canceled) setStatus('error'); });
     return () => {
       canceled = true;
-      unmount?.();
+      if (engine.current === instance) engine.current = null;
+      instance?.destroy();
     };
   }, [id, loadAttempt, roundAntialias]);
 
@@ -192,6 +230,16 @@ export function GameStage({ id, matchId, antialias, view, setCursor, info, infoS
             }}><GearIcon /></summary>
             <div className="surface stage-settings-panel">
               <label><input type="checkbox" role="switch" checked={showTouches} onChange={event => onTouchDisplay(event.target.checked)} />{t('touchEffects')}</label>
+              <label><input type="checkbox" checked={antialias} onChange={event => onAntialias(event.target.checked)} />{t('antialias')}</label>
+              {antialias !== roundAntialias && <small>{t('graphicsHelp')}</small>}
+              <label className="stage-resolution">
+                <span>{t('resolution')}</span>
+                <select value={resolution} onChange={event => onResolution(readResolution(event.target.value))}>
+                  <option value="auto">{t('resolutionAuto')}</option>
+                  {fixedResolutions.map(size => <option key={size} value={size}>{size} × {size}</option>)}
+                </select>
+              </label>
+              {status === 'ready' && <output className="applied-resolution">{t('resolutionApplied', { size: actualSize })}</output>}
             </div>
           </details>
         </div>
