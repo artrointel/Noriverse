@@ -38,6 +38,16 @@ test('all default emojis play uniquely composed short reaction sounds', () => {
   assert.equal(new Set(signatures).size, defaultEmojiIds.length);
 });
 
+test('the new expressions are built in and round-trip as room reactions', () => {
+  for (const emoji of ['angry', 'slap', 'thumbsDown', 'tease', 'astonished'] as const) {
+    assert(defaultEmojiIds.includes(emoji));
+    assert.deepEqual(readRoomReaction({ ...reaction, emoji }), { ...reaction, emoji });
+  }
+  assert(searchEmojis('찰싹').includes('slap'));
+  assert(searchEmojis('boo').includes('thumbsDown'));
+  assert(searchEmojis('메롱').includes('tease'));
+});
+
 test('recent emojis are unique validated picks ordered by the latest selection', () => {
   assert.deepEqual(recentEmojis(['fire', 'smile', 'fire', 'constructor', 'clap', 'surprise', 'sad', 'laugh']),
     ['fire', 'smile', 'clap', 'surprise', 'sad']);

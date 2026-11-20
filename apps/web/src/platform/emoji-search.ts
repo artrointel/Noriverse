@@ -4,6 +4,9 @@ import type { Emoji } from '../../../../packages/protocol/reactions.ts';
 const terms = {
   smile: ['웃음 행복 미소', 'Smile happy grin'], laugh: ['폭소 웃음 눈물', 'Laugh tears joy lol'],
   surprise: ['놀람 깜짝', 'Surprise wow shock'], thinking: ['고민 생각 의문', 'Thinking curious hmm'],
+  astonished: ['깜짝 놀람|헉 놀라다', 'Astonished|gasp surprised shock'],
+  slap: ['찰싹 손바닥 손찌검 때리기 장난', 'Playful slap|smack palm hand bonk'],
+  tease: ['메롱 혀 약올리기 놀리기 장난', 'Tease tongue taunt playful'],
   sad: ['슬픔 눈물 울음', 'Sad tear crying'], anger: ['분함 화 짜증', 'Frustration anger huff'],
   hearts: ['하트 눈|사랑 좋아', 'Heart eyes|love adore'], clap: ['박수 잘했어', 'Clap applause bravo'],
   thumbsUp: ['엄지 척|좋아 최고', 'Thumbs up|like good'], handshake: ['악수 협력 인사', 'Handshake deal team'],
@@ -32,7 +35,7 @@ const terms = {
   puzzle: ['퍼즐 조각 사천성', 'Puzzle piece game'], flex: ['근육 힘 파이팅', 'Flex muscle strength strong'],
   raisedHands: ['만세 환호 축하 손', 'Raised hands|hooray celebrate'], fistBump: ['주먹 인사 파이팅', 'Fist bump|punch'],
   pray: ['기도 감사 부탁 손', 'Folded hands|pray please thanks'], ok: ['오케이 좋아 손', 'OK hand|good okay'],
-  thumbsDown: ['엄지 아래|싫어요', 'Thumbs down|dislike bad'], coffee: ['커피 음료 휴식', 'Coffee drink break'],
+  thumbsDown: ['엄지 아래|싫어요 야유 우우', 'Thumbs down|dislike bad boo'], coffee: ['커피 음료 휴식', 'Coffee drink break'],
   pizza: ['피자 음식', 'Pizza food slice'], popcorn: ['팝콘 음식 구경 영화', 'Popcorn food movie watch'],
   musicalNote: ['음표 음악 노래', 'Musical note|music song'], gift: ['선물 생일 축하', 'Gift present birthday'],
   hourglass: ['모래시계 시간 기다림', 'Hourglass timer wait time'],

@@ -29,6 +29,10 @@ function saveEmojiCookie(prefix: string, emojis: Emoji[]) {
 
 export type RoomReactions = { events: TimedReaction[]; send: (emoji: Emoji) => void; enabled: boolean };
 
+function EmojiGlyph({ emoji }: { emoji: Emoji }) {
+  return <span className="reaction-glyph" data-emoji={emoji} aria-hidden="true">{emojiChoices[emoji]}</span>;
+}
+
 function ReactionBubble({ event }: { event: TimedReaction }) {
   const { t, i18n } = useTranslation();
   const { emoji, corner, sender, role, expiresAt } = event;
@@ -42,7 +46,7 @@ function ReactionBubble({ event }: { event: TimedReaction }) {
   const name = sender?.name ?? t(role ? role === 'host' ? 'host' : 'anonymousPlayer' : 'me');
   return <div className="stage-reaction" data-corner={corner} style={{ '--reaction-duration': reactionDuration + 'ms',
     animationDelay: delay + 'ms' } as CSSProperties}>
-    <span className="stage-reaction-emoji" role="img" aria-label={emojiName(emoji, i18n.resolvedLanguage)}>{emojiChoices[emoji]}</span>
+    <span className="stage-reaction-emoji" role="img" aria-label={emojiName(emoji, i18n.resolvedLanguage)}><EmojiGlyph emoji={emoji} /></span>
     <span className="stage-reaction-sender"><img src={avatars[sender?.avatar ?? defaultAvatar]} alt="" />{name}</span>
   </div>;
 }
@@ -129,7 +133,7 @@ export function ReactionPicker({ scope, enabled, send, lobby = false }: {
   function emojiButton(emoji: Emoji, select: (emoji: Emoji) => void) {
     const name = emojiName(emoji, i18n.resolvedLanguage);
     return <button type="button" key={emoji} className="reaction-option" aria-label={name} title={name}
-      onClick={() => select(emoji)}>{emojiChoices[emoji]}</button>;
+      onClick={() => select(emoji)}><EmojiGlyph emoji={emoji} /></button>;
   }
 
   return <div className={lobby ? 'stage-reaction-bar lobby-reaction-picker' : 'stage-reaction-bar'} ref={control} onKeyDown={event => {

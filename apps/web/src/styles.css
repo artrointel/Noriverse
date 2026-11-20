@@ -359,6 +359,8 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .reaction-options > p { margin: 0; padding-inline: 6px; color: var(--muted); font-size: .79rem; }
 .reaction-option { display: grid; place-items: center; flex: 0 0 37px; height: 37px; padding: 0; border: 1px solid transparent; border-radius: 9px; background: transparent; font: inherit; font-size: 1.38rem; line-height: 1; cursor: pointer; }
 .reaction-option:is(:hover, :focus-visible) { border-color: var(--line); background: var(--active); }
+.reaction-glyph { position: relative; display: inline-block; }
+.reaction-glyph[data-emoji="slap"]::after { content: '💥'; position: absolute; right: -.23em; top: -.12em; font-size: .53em; }
 .reaction-add { border-color: var(--line); background: var(--active); color: var(--primary); }
 .reaction-search { display: grid; gap: 5px; margin-top: 6px; padding-top: 7px; border-top: 1px solid var(--line); }
 .reaction-search > input { width: 100%; min-height: 37px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--raised); color: var(--text); font: inherit; font-size: max(.88rem, 16px); }

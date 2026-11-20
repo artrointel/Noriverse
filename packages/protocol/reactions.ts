@@ -4,18 +4,18 @@ import { isRoomRole } from './rooms.ts';
 import type { Role } from './rooms.ts';
 
 export const defaultEmojiChoices = {
-  smile: '😄', laugh: '😂', surprise: '😮', thinking: '🤔', sad: '😢', anger: '😤',
-  hearts: '😍', clap: '👏', thumbsUp: '👍', handshake: '🤝', fire: '🔥', celebrate: '🎉',
+  smile: '😄', laugh: '😂', tease: '😛', surprise: '😮', astonished: '😲', thinking: '🤔', sad: '😢', angry: '😡', anger: '😤', slap: '🫲',
+  hearts: '😍', clap: '👏', thumbsUp: '👍', thumbsDown: '👎', handshake: '🤝', fire: '🔥', celebrate: '🎉',
 } as const;
 export const emojiChoices = {
   ...defaultEmojiChoices,
   grin: '😁', wink: '😉', sweatSmile: '😅', victory: '✌️', salute: '🫡', hug: '🤗', hot: '🥵', cold: '🥶',
   sunglasses: '😎', mindBlown: '🤯', scream: '😱', cry: '😭', worried: '😟', dizzy: '😵‍💫', sleeping: '😴',
-  angry: '😡', upsideDown: '🙃', shush: '🤫', eyes: '👀', facepalm: '🤦', skull: '💀', ghost: '👻',
+  upsideDown: '🙃', shush: '🤫', eyes: '👀', facepalm: '🤦', skull: '💀', ghost: '👻',
   robot: '🤖', alien: '👽', cat: '😺', dog: '🐶', fox: '🦊', frog: '🐸', panda: '🐼', penguin: '🐧',
   heart: '❤️', brokenHeart: '💔', sparkle: '✨', star: '⭐', trophy: '🏆', medal: '🥇', crown: '👑',
   lightning: '⚡', rocket: '🚀', rainbow: '🌈', snowflake: '❄️', dice: '🎲', puzzle: '🧩',
-  flex: '💪', raisedHands: '🙌', fistBump: '👊', pray: '🙏', ok: '👌', thumbsDown: '👎',
+  flex: '💪', raisedHands: '🙌', fistBump: '👊', pray: '🙏', ok: '👌',
   coffee: '☕', pizza: '🍕', popcorn: '🍿', musicalNote: '🎵', gift: '🎁', hourglass: '⌛',
 } as const;
 export type Emoji = keyof typeof emojiChoices;
