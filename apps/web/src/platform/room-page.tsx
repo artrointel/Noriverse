@@ -36,12 +36,14 @@ function RoomSettingsDialog({ room, close }: { room: Room; close: () => void }) 
   return <dialog ref={dialog} className="surface profile-dialog room-rules-dialog" aria-labelledby="room-rules-title"
     onCancel={event => { event.preventDefault(); close(); }}>
     <header className="room-panel-heading">
-      <h2 id="room-rules-title">{t('settings')}</h2>
+      <h2 id="room-rules-title">{t('setupTitle', { game: t(room.game) })}</h2>
       <button className="settings-close" type="button" aria-label={t('close')} onClick={close}><span aria-hidden="true" /></button>
     </header>
     <form onSubmit={event => { event.preventDefault(); if (changed && valid && room.configureMatch(draft)) close(); }}>
-      <GameRulesEditor game={room.game} settings={draft} change={setDraft} online onValidity={setValid} />
-      <footer className="panel-actions">
+      <div className="setup-dialog-body">
+        <GameRulesEditor game={room.game} settings={draft} change={setDraft} online onValidity={setValid} />
+      </div>
+      <footer className="setup-actions">
         <button type="button" className="button button-secondary" onClick={close}>{t('cancel')}</button>
         <button type="submit" className="button button-primary" disabled={!valid || !changed}>{t('saveSettings')}</button>
       </footer>

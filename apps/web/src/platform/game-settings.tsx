@@ -10,6 +10,7 @@ import { FlickSettingsFields } from './flick-settings.tsx';
 import { SichuanModePicker, SichuanSettingsFields } from './sichuan-settings.tsx';
 import { games } from './game-catalog.ts';
 import { formatPlayTime } from './profiles.tsx';
+import { SettingsSection, SettingsSelect } from './settings-fields.tsx';
 
 export function GameFeature({ game, heading, children }: { game: GameId; heading: string; children?: ReactNode }) {
   const { t } = useTranslation();
@@ -27,85 +28,80 @@ export function GameFeature({ game, heading, children }: { game: GameId; heading
   </section>;
 }
 
+function TurnLimitSettings({ limit, change, onValidity }: {
+  limit: number; change: (limit: number) => void; onValidity: (valid: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const id = useId();
+  const [custom, setCustom] = useState(!turnLimits.some(value => value === limit));
+  const [seconds, setSeconds] = useState(custom ? String(limit) : '');
+  const validSeconds = Number(seconds) > 0 && isTurnLimit(Number(seconds));
+  return <SettingsSection title={t('setupClock')}>
+    <SettingsSelect label={t('turnLimit')} description={limit > 0 || custom ? t('turnLimitHelp') : undefined}
+      value={custom ? 'custom' : limit} change={value => {
+        setCustom(value === 'custom');
+        onValidity(value !== 'custom' || validSeconds);
+        if (value !== 'custom') change(Number(value));
+        else if (validSeconds) change(Number(seconds));
+      }}>
+      {turnLimits.map(value => <option key={value} value={value}>{t(value ? 'turnSeconds' : 'unlimitedTurns', { count: value })}</option>)}
+      <option value="custom">{t('customTurnLimit')}</option>
+    </SettingsSelect>
+    {custom && <div className="setup-row">
+      <div className="setup-field-label"><label htmlFor={id}>{t('customTurnSeconds')}</label>
+        {!validSeconds && <small className="setup-error" id={id + '-help'}>{t('setupTimeInvalid')}</small>}</div>
+      <input id={id} type="number" min={1} max={maxTurnLimit} step={1} inputMode="numeric" value={seconds}
+        aria-invalid={!validSeconds} aria-describedby={!validSeconds ? id + '-help' : undefined}
+        onChange={event => {
+          const value = event.target.valueAsNumber;
+          const valid = value > 0 && isTurnLimit(value);
+          setSeconds(event.target.value);
+          onValidity(valid);
+          if (valid) change(value);
+        }} />
+    </div>}
+  </SettingsSection>;
+}
+
 export function GameRulesEditor({ game, settings, change, online, onValidity }: {
   game: GameId; settings: MatchSettings; change: (settings: MatchSettings) => void;
   online: boolean; onValidity: (valid: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const group = useId();
-  const [custom, setCustom] = useState(!turnLimits.some(limit => limit === settings.turnLimit));
-  const [seconds, setSeconds] = useState(custom ? String(settings.turnLimit) : '');
-  const validSeconds = Number(seconds) > 0 && isTurnLimit(Number(seconds));
-  if (game === 'sichuan') return <div className="rules-editor">
+  if (game === 'sichuan') return <>
     {online && <SichuanModePicker value={settings.puzzle.mode} change={mode => change({ ...settings, puzzle: { ...settings.puzzle, mode } })} />}
-    <SichuanSettingsFields value={settings.puzzle.settings} change={value => change({ ...settings, puzzle: { ...settings.puzzle, settings: value } })} />
-  </div>;
+    <SichuanSettingsFields value={settings.puzzle.settings} onValidity={onValidity}
+      change={value => change({ ...settings, puzzle: { ...settings.puzzle, settings: value } })} />
+  </>;
 
-  return <div className="rules-editor">
-    <fieldset>
-      <legend>{t('turnLimit')}</legend>
-      <select aria-label={t('turnLimit')} value={custom ? 'custom' : settings.turnLimit} onChange={event => {
-        const value = event.target.value;
-        setCustom(value === 'custom');
-        onValidity(value !== 'custom' || validSeconds);
-        if (value !== 'custom') change({ ...settings, turnLimit: Number(value) });
-        else if (validSeconds) change({ ...settings, turnLimit: Number(seconds) });
-      }}>
-        {turnLimits.map(limit => <option key={limit} value={limit}>{t(limit ? 'turnSeconds' : 'unlimitedTurns', { count: limit })}</option>)}
-        <option value="custom">{t('customTurnLimit')}</option>
-      </select>
-      {custom && <label className="custom-turn-limit">
-        <span>{t('customTurnSeconds')}</span><input type="number" min={1} max={maxTurnLimit} step={1} value={seconds} aria-invalid={!validSeconds}
-          onChange={event => {
-            const value = event.target.valueAsNumber;
-            const valid = value > 0 && isTurnLimit(value);
-            setSeconds(event.target.value);
-            onValidity(valid);
-            if (valid) change({ ...settings, turnLimit: value });
-          }} />
-      </label>}
-      <p className="muted">{t('turnLimitHelp')}</p>
-    </fieldset>
-    {game === 'omok' && <>
-      <fieldset>
-        <legend>{t('rule33')}</legend>
-        <div className="rules-options">{[true, false].map(allow => <label className="choice" key={String(allow)}>
-          <input type="radio" name={group + '-double'} checked={settings.allowDoubleThree === allow}
-            onChange={() => change({ ...settings, allowDoubleThree: allow })} />
-          <span>{t(allow ? 'allow33' : 'ban33')}</span>
-        </label>)}</div>
-        <p className="muted">{t('rule33Help')}</p>
-      </fieldset>
-      <fieldset>
-        <legend>{t('overlineRule')}</legend>
-        <div className="rules-options">{omokOverlineRules.map(rule => <label className="choice" key={rule}>
-          <input type="radio" name={group + '-overline'} checked={settings.overline === rule} onChange={() => change({ ...settings, overline: rule })} />
-          <span>{t(rule)}</span>
-        </label>)}</div>
-        <p className="muted">{t('overlineHelp')}</p>
-      </fieldset>
-    </>}
-    {game === 'physics' && <>
-      <FlickSettingsFields value={settings.flick} change={flick => change({ ...settings, flick })} />
-      <fieldset><legend>{t('force')}</legend><div className="rules-options">
-        {([1, 1.35] as const).map(power => <label className="choice" key={power}>
-          <input type="radio" name={group + '-power'} checked={settings.power === power} onChange={() => change({ ...settings, power })} />
-          <span>{t(power === 1 ? 'standard' : 'fast')}</span>
-        </label>)}
-      </div></fieldset>
-    </>}
-  </div>;
+  return <>
+    <TurnLimitSettings limit={settings.turnLimit} onValidity={onValidity} change={turnLimit => change({ ...settings, turnLimit })} />
+    {game === 'omok' && <SettingsSection title={t('setupBoardRules')}>
+      <SettingsSelect label={t('rule33')} description={t('rule33Help')} value={settings.allowDoubleThree ? 'allow' : 'ban'}
+        change={value => change({ ...settings, allowDoubleThree: value === 'allow' })}>
+        <option value="allow">{t('allow33')}</option><option value="ban">{t('ban33')}</option>
+      </SettingsSelect>
+      <SettingsSelect label={t('overlineRule')} value={settings.overline}
+        change={value => change({ ...settings, overline: omokOverlineRules.find(rule => rule === value) ?? settings.overline })}>
+        {omokOverlineRules.map(rule => <option value={rule} key={rule}>{t(rule)}</option>)}
+      </SettingsSelect>
+    </SettingsSection>}
+    {game === 'physics' && <FlickSettingsFields value={settings.flick} change={flick => change({ ...settings, flick })}
+      power={settings.power} changePower={power => change({ ...settings, power })} />}
+  </>;
 }
 
-export function GameRulesSummary({ game, settings, online = true }: { game: GameId; settings: MatchSettings; online?: boolean }) {
+export function GameRulesSummary({ game, settings }: { game: GameId; settings: MatchSettings }) {
   const { t } = useTranslation();
   const entries: [string, string][] = [];
   if (game === 'sichuan') {
     const { mode, settings: puzzle } = settings.puzzle;
     const obstacleDensity = Math.min(puzzle.obstacleDensity ?? defaultObstacleDensity, maxSichuanObstacleDensity(puzzle.size, puzzle.density));
-    entries.push([t('gameMode'), t(online ? 'sichuanMode_' + mode : 'local')], [t('sichuanArt'), t(puzzle.theme === 'random' ? 'sichuanRandom' : 'sichuanTheme_' + puzzle.theme)],
+    entries.push([t('gameMode'), t('sichuanMode_' + mode)], [t('sichuanArt'), t(puzzle.theme === 'random' ? 'sichuanRandom' : 'sichuanTheme_' + puzzle.theme)],
       [t('sichuanGrid'), `${puzzle.size} × ${puzzle.size}`], [t('sichuanDensity'), puzzle.density === 'random' ? t('sichuanRandom') : puzzle.density + '%'],
-      [t('sichuanObstacles'), puzzle.obstacles ? `${obstacleDensity}%` : t('disabled')], [t('matchTimeLimit'), formatPlayTime(puzzle.timeLimit ?? sichuanTimeLimits[puzzle.size])],
+      [t('sichuanObstacleDensity'), !puzzle.obstacles || obstacleDensity === 0 ? t('none')
+        : puzzle.density === 'random' ? t('sichuanObstacleUpTo', { percent: obstacleDensity }) : `${obstacleDensity}%`],
+      [t('matchTimeLimit'), formatPlayTime(puzzle.timeLimit ?? sichuanTimeLimits[puzzle.size])],
       [t('sichuanHintLimit'), String(puzzle.hints ?? defaultHints)], [t('sichuanShuffleLimit'), String(puzzle.shuffles)]);
   } else {
     entries.push([t('turnLimit'), t(settings.turnLimit ? 'turnSeconds' : 'unlimitedTurns', { count: settings.turnLimit })]);

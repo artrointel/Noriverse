@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { availableTileMatches, connectTiles, createSichuanBoard, isMatchTile, nextSichuanCombo, obstacle, shuffleTiles } from '../apps/web/src/games/sichuan/rules.ts';
 import type { Tile } from '../apps/web/src/games/sichuan/rules.ts';
-import { defaultSichuanSettings, maxSichuanObstacleDensity, motifCount, resolveSichuanSettings, sichuanSizes, sichuanThemes, sichuanTileCount, sichuanTimeLimits } from '../apps/web/src/games/sichuan/options.ts';
+import { defaultSichuanSettings, maxSichuanObstacleDensity, motifCount, readSichuanRoomSettings, resolveSichuanSettings, sichuanSizes, sichuanThemes, sichuanTileCount, sichuanTimeLimits } from '../apps/web/src/games/sichuan/options.ts';
 import type { SichuanMode } from '../apps/web/src/games/sichuan/options.ts';
 import { applyPuzzleAction, makePuzzleRound, puzzleBoardFor, puzzleEnd, puzzleOutcome, readPuzzleRound, readyPuzzle } from '../apps/web/src/games/sichuan/multiplayer.ts';
 
@@ -42,7 +42,7 @@ test('shuffle changes occupied cells, preserves the motifs and ensures a legal m
 });
 
 test('a new board contains pairs of each atlas motif and can be cleared', () => {
-  const board = createSichuanBoard(resolveSichuanSettings({ ...defaultSichuanSettings, size: 10, theme: 'numbers', obstacles: false }), () => .37);
+  const board = createSichuanBoard(resolveSichuanSettings({ ...defaultSichuanSettings, size: 10, density: 80, theme: 'numbers', obstacles: false }), () => .37);
   for (let motif = 0; motif < motifCount('numbers'); motif++) assert.equal(board.filter(tile => tile === motif).length, 8);
   const pairCount = board.filter(isMatchTile).length / 2;
   let tiles = board;
@@ -67,11 +67,11 @@ test('obstacles cannot match and the legal move count is in pairs', () => {
 test('grid presets, random extremes, themed motif counts and fixed obstacles survive generation and shuffle', () => {
   let seed = 4;
   const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
-  assert.equal(resolveSichuanSettings({ ...defaultSichuanSettings, density: 'random' }, () => 0).density, 50);
+  assert.equal(resolveSichuanSettings({ ...defaultSichuanSettings, density: 'random' }, () => 0).density, 30);
   assert.equal(resolveSichuanSettings({ ...defaultSichuanSettings, density: 'random' }, () => .999).density, 100);
   assert.equal(resolveSichuanSettings(defaultSichuanSettings, () => .999).theme, sichuanThemes.at(-1));
   for (const size of sichuanSizes) {
-    for (const density of [50, 80, 100]) {
+    for (const density of [30, 60, 80, 100]) {
       const options = resolveSichuanSettings({ ...defaultSichuanSettings, size, density, theme: 'numbers' });
       assert.equal(options.timeLimit, sichuanTimeLimits[size]);
       const board = createSichuanBoard(options, random);
@@ -97,20 +97,32 @@ test('combo includes the one-second boundary and resets after it', () => {
 });
 
 test('obstacle density counts all grid cells, accepts odd counts, and respects room for paired tiles', () => {
+  assert.equal(maxSichuanObstacleDensity(10, 30), 70);
   assert.equal(maxSichuanObstacleDensity(10, 80), 20);
   assert.equal(maxSichuanObstacleDensity(10, 100), 0);
-  for (const [size, density, requested, expected] of [[10, 80, 20, 20], [10, 90, 20, 10], [10, 80, 17, 17], [6, 80, 20, 7], [10, 100, 6, 0]] as const) {
+  for (const [size, density, requested, expected] of [[10, 30, 70, 70], [6, 30, 72, 26], [10, 80, 20, 20], [10, 90, 20, 10], [10, 80, 17, 17], [6, 80, 20, 7], [10, 100, 6, 0]] as const) {
     const options = resolveSichuanSettings({ ...defaultSichuanSettings, size, density, obstacleDensity: requested });
     const board = createSichuanBoard(options, () => .37);
     assert.equal(board.filter(tile => tile === obstacle).length, expected);
     assert.equal(board.filter(isMatchTile).length, sichuanTileCount(size, density));
     assert.ok(availableTileMatches(board).pair);
   }
-  const random = resolveSichuanSettings({ ...defaultSichuanSettings, size: 10, density: 'random', obstacleDensity: 40 }, () => .97);
+  const random = resolveSichuanSettings({ ...defaultSichuanSettings, size: 10, density: 'random', obstacleDensity: 40 }, () => .98);
   assert.equal(random.density, 99);
   assert.equal(random.obstacleDensity, 0);
   const disabled = resolveSichuanSettings({ ...defaultSichuanSettings, obstacles: false, obstacleDensity: 20 });
   assert.equal(disabled.obstacleDensity, 0);
+});
+
+test('new Sichuan settings default to 60% tiles and 20% obstacles and accept the 30% boundary online', () => {
+  assert.equal(defaultSichuanSettings.density, 60);
+  assert.equal(defaultSichuanSettings.obstacleDensity, 20);
+  const config = { mode: 'race', settings: { ...defaultSichuanSettings, size: 6, density: 30, obstacleDensity: 72 } } as const;
+  assert.deepEqual(readSichuanRoomSettings(config)?.settings.density, 30);
+  assert.equal(readSichuanRoomSettings({ ...config, settings: { ...config.settings, density: 29 } }), undefined);
+  assert.equal(readSichuanRoomSettings({ ...config, settings: { ...config.settings, obstacleDensity: 73 } }), undefined);
+  const round = makePuzzleRound(config, () => .37);
+  assert.equal(readPuzzleRound(round, config)?.options.obstacleDensity, 72);
 });
 
 function onlinePuzzle(mode: SichuanMode) {
@@ -123,40 +135,43 @@ function onlinePuzzle(mode: SichuanMode) {
 
 test('race starts with identical boards, applies the deadline, and awards the first finisher', () => {
   const { config, round } = onlinePuzzle('race');
+  const pairs = sichuanTileCount(round.options.size, round.options.density) / 2;
   assert.deepEqual(round.boards.host, round.boards.guest);
   const [first, second] = availableTileMatches(round.boards.host.tiles).pair!;
   const action = { kind: 'pair', first, second, generation: round.options.shuffles };
   assert.equal(applyPuzzleAction(round, 'race', 'host', action, round.beginsAt - 1), undefined);
   assert.equal(applyPuzzleAction(round, 'race', 'host', action, puzzleEnd(round)), undefined);
   let current = round;
-  for (let pair = 0; pair < 14; pair++) {
+  for (let pair = 0; pair < pairs; pair++) {
     const [first, second] = availableTileMatches(current.boards.host.tiles).pair!;
     current = applyPuzzleAction(current, 'race', 'host', { ...action, first, second }, round.beginsAt + pair * 200)!;
   }
   assert.deepEqual(current.boards.guest, round.boards.guest);
   assert.equal(current.result, 'host');
-  assert.equal(current.stats.host.removed, 28);
-  assert.equal(current.stats.host.maxCombo, 14);
+  assert.equal(current.stats.host.removed, pairs * 2);
+  assert.equal(current.stats.host.maxCombo, pairs);
   assert.equal(puzzleOutcome(current.result, 'guest'), 'loss');
   assert.deepEqual(readPuzzleRound(current, config), current);
 });
 
 test('co-op shares removals and scores a tile pair only once across both players', () => {
   const { round } = onlinePuzzle('coop');
+  const pairs = sichuanTileCount(round.options.size, round.options.density) / 2;
   const [first, second] = availableTileMatches(round.boards.host.tiles).pair!;
   const action = { kind: 'pair', first, second, generation: round.options.shuffles };
   let current = applyPuzzleAction(round, 'coop', 'guest', action, round.beginsAt)!;
   assert.equal(puzzleBoardFor(current, 'coop', 'host'), puzzleBoardFor(current, 'coop', 'guest'));
   assert.equal(applyPuzzleAction(current, 'coop', 'host', action, round.beginsAt), undefined);
-  for (let pair = 1; pair < 14; pair++) {
+  for (let pair = 1; pair < pairs; pair++) {
     const [first, second] = availableTileMatches(puzzleBoardFor(current, 'coop', 'guest').tiles).pair!;
     current = applyPuzzleAction(current, 'coop', pair % 2 ? 'host' : 'guest', { ...action, first, second }, round.beginsAt + pair * 200)!;
   }
   assert.equal(current.result, 'team');
   for (const role of ['host', 'guest'] as const) {
     assert.equal(puzzleOutcome(current.result, role), 'win');
-    assert.equal(current.stats[role].removed, 14);
-    assert.equal(current.stats[role].maxCombo, 7);
+    const removedPairs = role === 'host' ? Math.floor(pairs / 2) : Math.ceil(pairs / 2);
+    assert.equal(current.stats[role].removed, removedPairs * 2);
+    assert.equal(current.stats[role].maxCombo, removedPairs);
   }
 });
 

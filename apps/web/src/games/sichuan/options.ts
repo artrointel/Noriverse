@@ -17,16 +17,21 @@ export type SichuanSettings = {
   timeLimit?: number;
 };
 
-export const defaultObstacleDensity = 6;
+export const minSichuanTileDensity = 30;
+export const maxSichuanTileDensity = 100;
+export const defaultSichuanTileDensity = 60;
+export const defaultObstacleDensity = 20;
 export const defaultHints = 3;
-export const defaultSichuanSettings: SichuanSettings = { theme: 'random', size: 8, density: 80, obstacles: true, obstacleDensity: defaultObstacleDensity, shuffles: 3, hints: defaultHints };
+export const defaultSichuanSettings: SichuanSettings = { theme: 'random', size: 8, density: defaultSichuanTileDensity, obstacles: true, obstacleDensity: defaultObstacleDensity, shuffles: 3, hints: defaultHints };
 export type SichuanMode = 'race' | 'coop';
 export type SichuanRoomSettings = { mode: SichuanMode; settings: SichuanSettings };
 export const defaultSichuanRoomSettings: SichuanRoomSettings = { mode: 'race', settings: defaultSichuanSettings };
 
 export const sichuanTileCount = (size: SichuanSize, density: number) => Math.round(size ** 2 * density / 200) * 2;
 export const maxSichuanObstacleDensity = (size: SichuanSize, density: number | 'random') =>
-  Math.floor((size ** 2 - sichuanTileCount(size, density === 'random' ? 50 : density)) * 100 / size ** 2);
+  Math.floor((size ** 2 - sichuanTileCount(size, density === 'random' ? minSichuanTileDensity : density)) * 100 / size ** 2);
+
+const highestSichuanObstacleDensity = Math.max(...sichuanSizes.map(size => maxSichuanObstacleDensity(size, 'random')));
 
 export function sichuanObstacleCount(size: SichuanSize, density: number, obstacleDensity: number) {
   return Math.round(size ** 2 * Math.min(obstacleDensity, maxSichuanObstacleDensity(size, density)) / 100);
@@ -38,10 +43,10 @@ export function readSichuanRoomSettings(value: unknown): SichuanRoomSettings | u
   if ((mode !== 'race' && mode !== 'coop') || !settings || typeof settings !== 'object') return;
   const { size, theme, density, obstacles, obstacleDensity, shuffles, hints, timeLimit } = settings;
   if (!sichuanSizes.includes(size) || (theme !== 'random' && !sichuanThemes.includes(theme))
-    || (density !== 'random' && (!Number.isInteger(density) || density < 50 || density > 100))
+    || (density !== 'random' && (!Number.isInteger(density) || density < minSichuanTileDensity || density > maxSichuanTileDensity))
     || typeof obstacles !== 'boolean' || !Number.isInteger(shuffles) || shuffles < 0 || shuffles > 5
     || (hints !== undefined && (!Number.isInteger(hints) || hints < 0 || hints > 5))
-    || (obstacleDensity !== undefined && (!Number.isInteger(obstacleDensity) || obstacleDensity < 0 || obstacleDensity > 50))
+    || (obstacleDensity !== undefined && (!Number.isInteger(obstacleDensity) || obstacleDensity < 0 || obstacleDensity > highestSichuanObstacleDensity))
     || (timeLimit !== undefined && (!Number.isInteger(timeLimit) || timeLimit < 1 || timeLimit > 3600))) return;
   return { mode, settings: { size, theme, density, obstacles, obstacleDensity, shuffles, hints, timeLimit } };
 }
@@ -49,7 +54,8 @@ export function readSichuanRoomSettings(value: unknown): SichuanRoomSettings | u
 export function resolveSichuanSettings(settings: SichuanSettings, random = Math.random) {
   const { theme, density, size, timeLimit } = settings;
   const resolvedTheme = theme === 'random' ? sichuanThemes[Math.floor(random() * sichuanThemes.length)] : theme;
-  const resolvedDensity = density === 'random' ? 50 + Math.floor(random() * 51) : density;
+  const resolvedDensity = density === 'random'
+    ? minSichuanTileDensity + Math.floor(random() * (maxSichuanTileDensity - minSichuanTileDensity + 1)) : density;
   return {
     ...settings,
     theme: resolvedTheme,
