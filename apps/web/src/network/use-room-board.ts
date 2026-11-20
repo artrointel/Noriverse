@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { isRoomGame, readTouch, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
 import type { Participant, Role, RoomGame, TouchPoint } from '../../../../packages/protocol/rooms.ts';
+import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { boardRules, isBoardGame, rematchFirstColor } from '../games/board-rules.ts';
 import { defaultOmokOverline, isOmokOverline } from '../games/omok/rules.ts';
@@ -346,15 +347,17 @@ export function useRoomBoard(profile?: ProfileSummary) {
       });
       if (!response.ok) throw new Error();
       const room = await response.json() as { code: string; token: string };
-      if (attempt !== operation.current) return;
+      if (attempt !== operation.current) return false;
+      if (!roomCodePattern.test(room.code) || !profileIdPattern.test(room.token)) throw new Error();
       seat.current = { ...room, role: 'host' };
-      setRole('host');
       update({ ...blankMatch, id: crypto.randomUUID(), game, allowDoubleThree: allowRule, overline, turnLimit: game === 'sichuan' ? 0 : limit,
         puzzleConfig: game === 'sichuan' ? puzzleConfig : undefined,
         physics: game === 'physics' ? initialFlickRound : undefined, power });
       connect(room.code, room.token);
+      return true;
     } catch {
       if (attempt === operation.current) setState('failed');
+      return false;
     }
   }
 

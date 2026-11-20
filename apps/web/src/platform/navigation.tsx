@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentPropsWithoutRef } from 'react';
 import { flushSync } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { isProfileGame, profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
 import type { GameId } from '../games/scenes.ts';
@@ -16,6 +17,14 @@ function readLocation(url = new URL(location.href)) {
   if (!pages) return url;
   return new URL(url.hash.startsWith('#/') ? url.hash.slice(1) : '/' + url.search, url.origin);
 }
+
+const routePath = (url: URL) => url.pathname + url.search;
+function readPrevious(): string | undefined {
+  const previous = history.state?.noriversePrevious;
+  return typeof previous === 'string' && previous.startsWith('/') && !previous.startsWith('//') ? previous : undefined;
+}
+
+export const BackNavigation = createContext<{ previous?: string; back: () => void }>({ back: () => {} });
 
 export function readRoute(url: URL) {
   const invite = url.searchParams.get('room') ?? '';
@@ -40,7 +49,7 @@ export const gamePath = (id: GameId, step?: 'setup' | 'play', mode: GameMode = '
   '/games/' + id + (step ? '/' + step : '') + (mode === 'local' ? '' : '?mode=' + mode);
 
 export function useNavigation() {
-  const [url, setUrl] = useState(() => readLocation());
+  const [entry, setEntry] = useState(() => ({ url: readLocation(), previous: readPrevious() }));
   const version = useRef(0);
 
   const navigate = useCallback<Navigate>((destination, replace = false) => {
@@ -49,10 +58,13 @@ export function useNavigation() {
     const request = ++version.current;
     const commit = (synchronous: boolean) => {
       if (request !== version.current) return;
-      if (replace) history.replaceState(null, '', next);
-      else history.pushState(null, '', next);
-      if (synchronous) flushSync(() => setUrl(readLocation(next)));
-      else setUrl(readLocation(next));
+      const previous = replace ? readPrevious() : routePath(readLocation());
+      const state = { noriversePrevious: previous };
+      if (replace) history.replaceState(state, '', next);
+      else history.pushState(state, '', next);
+      const update = () => setEntry({ url: readLocation(next), previous });
+      if (synchronous) flushSync(update);
+      else update();
       window.scrollTo(0, 0);
     };
     if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -66,7 +78,7 @@ export function useNavigation() {
   useEffect(() => {
     function restore() {
       version.current++;
-      setUrl(readLocation());
+      setEntry({ url: readLocation(), previous: readPrevious() });
     }
     window.addEventListener('popstate', restore);
     if (pages) window.addEventListener('hashchange', restore);
@@ -76,7 +88,25 @@ export function useNavigation() {
     };
   }, []);
 
-  return { route: useMemo(() => readRoute(url), [url]), path: url.pathname + url.search, navigate };
+  const path = routePath(entry.url);
+  const back = useCallback(() => { version.current++; history.back(); }, []);
+  return { route: useMemo(() => readRoute(entry.url), [entry.url]), path, navigate,
+    backNavigation: { previous: entry.previous !== path ? entry.previous : undefined, back } };
+}
+
+export function BackLink({ navigate, fallback, fallbackLabel }: { navigate: Navigate; fallback: string; fallbackLabel: string }) {
+  const { t } = useTranslation();
+  const { previous, back } = useContext(BackNavigation);
+  const route = previous && readRoute(new URL(previous, location.origin));
+  const label = route && (route.page === 'room' ? 'room' : route.page === 'profile' ? 'myProfile'
+    : route.page === 'publicProfile' ? 'publicProfile' : route.page === 'friends' ? 'friends'
+    : route.page === 'games' ? 'backToGames' : route.page === 'home' ? 'home'
+    : route.page === 'setup' ? 'settings' : 'id' in route ? route.id : undefined);
+  return <RouteLink className="back-link" href={label && previous ? previous : fallback} navigate={navigate} onClick={event => {
+    if (!label || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    back();
+  }}>{t(label || fallbackLabel)}</RouteLink>;
 }
 
 export function RouteLink({ navigate, href, onClick, ...props }: ComponentPropsWithoutRef<'a'> & {

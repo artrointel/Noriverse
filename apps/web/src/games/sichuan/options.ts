@@ -1,3 +1,4 @@
+export const sichuanSceneHeight = 640;
 export const sichuanThemes = ['classic', 'pixel', 'food', 'animals', 'electronics', 'flags', 'school', 'numbers'] as const;
 export type SichuanTheme = typeof sichuanThemes[number];
 export const sichuanSizes = [6, 8, 10, 12] as const;
@@ -10,33 +11,47 @@ export type SichuanSettings = {
   size: SichuanSize;
   density: number | 'random';
   obstacles: boolean;
+  obstacleDensity?: number;
   shuffles: number;
   timeLimit?: number;
 };
 
-export const defaultSichuanSettings: SichuanSettings = { theme: 'random', size: 8, density: 80, obstacles: true, shuffles: 3 };
+export const defaultObstacleDensity = 6;
+export const defaultSichuanSettings: SichuanSettings = { theme: 'random', size: 8, density: 80, obstacles: true, obstacleDensity: defaultObstacleDensity, shuffles: 3 };
 export type SichuanMode = 'race' | 'coop';
 export type SichuanRoomSettings = { mode: SichuanMode; settings: SichuanSettings };
 export const defaultSichuanRoomSettings: SichuanRoomSettings = { mode: 'race', settings: defaultSichuanSettings };
+
+export const sichuanTileCount = (size: SichuanSize, density: number) => Math.round(size ** 2 * density / 200) * 2;
+export const maxSichuanObstacleDensity = (size: SichuanSize, density: number | 'random') =>
+  Math.floor((size ** 2 - sichuanTileCount(size, density === 'random' ? 50 : density)) * 100 / size ** 2);
+
+export function sichuanObstacleCount(size: SichuanSize, density: number, obstacleDensity: number) {
+  return Math.round(size ** 2 * Math.min(obstacleDensity, maxSichuanObstacleDensity(size, density)) / 100);
+}
 
 export function readSichuanRoomSettings(value: unknown): SichuanRoomSettings | undefined {
   if (!value || typeof value !== 'object') return;
   const { mode, settings } = value as Partial<SichuanRoomSettings>;
   if ((mode !== 'race' && mode !== 'coop') || !settings || typeof settings !== 'object') return;
-  const { size, theme, density, obstacles, shuffles, timeLimit } = settings;
+  const { size, theme, density, obstacles, obstacleDensity, shuffles, timeLimit } = settings;
   if (!sichuanSizes.includes(size) || (theme !== 'random' && !sichuanThemes.includes(theme))
     || (density !== 'random' && (!Number.isInteger(density) || density < 50 || density > 100))
     || typeof obstacles !== 'boolean' || !Number.isInteger(shuffles) || shuffles < 0 || shuffles > 5
+    || (obstacleDensity !== undefined && (!Number.isInteger(obstacleDensity) || obstacleDensity < 0 || obstacleDensity > 50))
     || (timeLimit !== undefined && (!Number.isInteger(timeLimit) || timeLimit < 1 || timeLimit > 3600))) return;
-  return { mode, settings: { size, theme, density, obstacles, shuffles, timeLimit } };
+  return { mode, settings: { size, theme, density, obstacles, obstacleDensity, shuffles, timeLimit } };
 }
 
 export function resolveSichuanSettings(settings: SichuanSettings, random = Math.random) {
   const { theme, density, size, timeLimit } = settings;
+  const resolvedTheme = theme === 'random' ? sichuanThemes[Math.floor(random() * sichuanThemes.length)] : theme;
+  const resolvedDensity = density === 'random' ? 50 + Math.floor(random() * 51) : density;
   return {
     ...settings,
-    theme: theme === 'random' ? sichuanThemes[Math.floor(random() * sichuanThemes.length)] : theme,
-    density: density === 'random' ? 50 + Math.floor(random() * 51) : density,
+    theme: resolvedTheme,
+    density: resolvedDensity,
+    obstacleDensity: settings.obstacles ? Math.min(settings.obstacleDensity ?? defaultObstacleDensity, maxSichuanObstacleDensity(size, resolvedDensity)) : 0,
     timeLimit: timeLimit ?? sichuanTimeLimits[size],
   };
 }

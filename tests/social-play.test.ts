@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../apps/web/src/games/turn-clock.ts';
-import { readResolution, renderPixelSize } from '../apps/web/src/games/render-resolution.ts';
+import { readResolution, renderFrameSize } from '../apps/web/src/games/render-resolution.ts';
 import { readProfilePreferences } from '../packages/protocol/profile.ts';
 import { readInvite, readTouch } from '../packages/protocol/rooms.ts';
 
@@ -12,15 +12,17 @@ test('custom turn limits accept whole seconds and keep zero unlimited', () => {
   assert.equal(nextDeadline(37, 100), 37100);
 });
 
-test('automatic graphics resolution follows the smaller display axis and pixel ratio', () => {
+test('graphics resolution matches the available display area and preserves the scene aspect ratio', () => {
   assert.equal(readResolution(null), 'auto');
   assert.equal(readResolution('960'), 960);
   assert.equal(readResolution('8000'), 'auto');
-  assert.equal(renderPixelSize('auto', 800, 600, 1.5), 900);
-  assert.equal(renderPixelSize('auto', 600, 800, 1.5), 900);
-  assert.equal(renderPixelSize('auto', 2000, 1000, 3), 1920);
-  assert.equal(renderPixelSize('auto', 0, 100, 1), 0);
-  assert.equal(renderPixelSize(720, 425, 250, 2), 720);
+  assert.deepEqual(renderFrameSize('auto', 800, 600, 480), { width: 600, height: 600 });
+  assert.deepEqual(renderFrameSize('auto', 2500, 2500, 480), { width: 1920, height: 1920 });
+  assert.deepEqual(renderFrameSize('auto', 0, 100, 480), { width: 0, height: 0 });
+  assert.deepEqual(renderFrameSize(720, 900, 850, 480), { width: 720, height: 720 });
+  assert.deepEqual(renderFrameSize(720, 425, Infinity, 480), { width: 425, height: 425 });
+  assert.deepEqual(renderFrameSize(720, 900, 640, 640), { width: 480, height: 640 });
+  assert.deepEqual(renderFrameSize(720, 900, Infinity, 640), { width: 720, height: 960 });
 });
 
 test('turn timeouts wait for a decision and extensions resume the same turn clock', () => {

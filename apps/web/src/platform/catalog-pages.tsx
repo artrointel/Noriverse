@@ -4,7 +4,7 @@ import heroArt from '../assets/hero-orbit.jpg';
 import { apiAvailable } from '../network/api.ts';
 import type { GuestRoom } from '../network/guest-seat.ts';
 import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { omokOverlineRules } from '../games/omok/rules.ts';
 import type { OmokOverline } from '../games/omok/rules.ts';
 import type { GameId } from '../games/scenes.ts';
@@ -12,7 +12,7 @@ import { isTurnLimit, maxTurnLimit, turnLimits } from '../games/turn-clock.ts';
 import type { TurnLimit } from '../games/turn-clock.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { cardsPerPage, pageNumbers } from './library-pagination.ts';
-import { gamePath, RouteLink } from './navigation.tsx';
+import { BackLink, gamePath, RouteLink } from './navigation.tsx';
 import type { GameMode, Navigate } from './navigation.tsx';
 
 type Filter = 'all' | 'favorites' | 'strategy' | 'action';
@@ -23,31 +23,43 @@ function Tags({ id }: { id: GameId }) {
   return <div className="game-tags"><span>{t(games[id].category)}</span><span>{t(games[id].players)}</span></div>;
 }
 
-function GameCard({ id, selected, onSelect, favorite, disableFavorite, onFavorite }: {
-  id: GameId; selected: boolean; onSelect: (id: GameId, button: HTMLButtonElement) => void;
-  favorite: boolean; disableFavorite: boolean; onFavorite: (id: GameId) => void;
+function GameCard({ id, selected, preview, disabled, onSelect, favorite }: {
+  id: GameId; selected: boolean; preview: boolean; disabled?: boolean; onSelect: (id: GameId, button: HTMLButtonElement) => void;
+  favorite?: { selected: boolean; disabled: boolean; toggle: (id: GameId) => void };
 }) {
   const { t } = useTranslation();
   const game = games[id];
   return (
     <article className="game-card" data-selected={selected}>
-      <button type="button" className="card-link" aria-label={t(id)} aria-pressed={selected}
-        aria-controls={selected ? 'catalog-preview' : undefined} onClick={event => onSelect(id, event.currentTarget)}>
+      <button type="button" className="card-link" aria-label={t(id)} aria-pressed={preview ? selected : undefined} disabled={disabled}
+        aria-controls={preview && selected ? 'catalog-preview' : undefined} onClick={event => onSelect(id, event.currentTarget)}>
         <span className={'card-art card-art-' + id}><img src={game.art} alt="" width="880" height="587" decoding="async" /></span>
         <span className="card-copy">
           <strong>{t(id)}</strong>
           <small>{t(game.category)} · {t(game.players)}</small>
         </span>
       </button>
-      <button type="button" className="favorite-button" aria-pressed={favorite} disabled={disableFavorite}
-        aria-label={t(favorite ? 'removeFavorite' : 'addFavorite', { game: t(id) })} onClick={() => onFavorite(id)}>
-        <svg viewBox="0 0 24 24" aria-hidden="true" fill={favorite ? 'currentColor' : 'none'} stroke="currentColor"
+      {favorite && <button type="button" className="favorite-button" aria-pressed={favorite.selected} disabled={favorite.disabled}
+        aria-label={t(favorite.selected ? 'removeFavorite' : 'addFavorite', { game: t(id) })} onClick={() => favorite.toggle(id)}>
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill={favorite.selected ? 'currentColor' : 'none'} stroke="currentColor"
           strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
           <path d="M20.8 8.7c0 4.2-8.8 9.5-8.8 9.5S3.2 12.9 3.2 8.7a4.4 4.4 0 0 1 8.8-.5 4.4 4.4 0 0 1 8.8.5Z" />
         </svg>
-      </button>
+      </button>}
     </article>
   );
+}
+
+export function GameSelectionGrid({ ids, selected, onSelect, gridRef, busy, favorites, children }: {
+  ids: GameId[]; selected?: GameId; onSelect: (id: GameId, button: HTMLButtonElement) => void;
+  gridRef?: Ref<HTMLDivElement>; busy?: boolean; children?: ReactNode;
+  favorites?: { games: GameId[]; disabled: boolean; toggle: (id: GameId) => void };
+}) {
+  return <div ref={gridRef} className="game-grid" aria-busy={busy}>
+    {ids.map(id => <GameCard key={id} id={id} selected={selected === id} preview={Boolean(favorites)} disabled={!favorites && busy}
+      onSelect={onSelect} favorite={favorites && { selected: favorites.games.includes(id), disabled: favorites.disabled, toggle: favorites.toggle }} />)}
+    {children}
+  </div>;
 }
 
 function GamePreview({ id, active, navigate, onClose }: { id: GameId; active: boolean; navigate: Navigate; onClose: () => void }) {
@@ -210,15 +222,14 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
             </div>
           </div>
           <div className="catalog-list">
-            <div ref={grid} className="game-grid" aria-busy={visibleFilter !== filter || visibleQuery !== query}>
-              {pageGames.map(id => <GameCard key={id} id={id} selected={selected === id} onSelect={select}
-                favorite={favorites.includes(id)} disableFavorite={disableFavorite} onFavorite={onFavorite} />)}
+            <GameSelectionGrid gridRef={grid} ids={pageGames} selected={selected} onSelect={select}
+              busy={visibleFilter !== filter || visibleQuery !== query} favorites={{ games: favorites, disabled: disableFavorite, toggle: onFavorite }}>
               {visibleGames.length === 0 && <p className="surface library-empty" role="status">
                 {t(visibleFilter === 'favorites' && favorites.length === 0
                   ? apiAvailable ? 'emptyFavorites' : 'favoritesUnavailable'
                   : 'noSearchResults')}
               </p>}
-            </div>
+            </GameSelectionGrid>
             {pageCount > 1 && <nav className="catalog-pagination" aria-label={t('gamePages')}>
               <button type="button" disabled={page === 1} onClick={() => selectPage(page - 1)}>{t('previousPage')}</button>
               {pageNumbers(page, pageCount).map((number, index) => number === 'gap'
@@ -243,7 +254,7 @@ export function GameDetail({ id, navigate }: { id: GameId; navigate: Navigate })
   const game = games[id];
   return (
     <div className="site-width subpage">
-      <RouteLink href="/games" navigate={navigate} className="back-link">{t('backToGames')}</RouteLink>
+      <BackLink fallback="/games" fallbackLabel="backToGames" navigate={navigate} />
       <section className="detail-layout">
         <div className={'detail-art card-art-' + id}><img src={game.art} alt="" width="880" height="587" /></div>
         <div className="detail-info">
@@ -267,11 +278,13 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
   turnLimit: TurnLimit; onTurnLimit: (limit: TurnLimit) => void;
   allowDoubleThree: boolean; onRule: (allow: boolean) => void;
   overline: OmokOverline; onOverline: (value: OmokOverline) => void;
-  onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: GameId; extraSettings?: ReactNode; onlineSettings?: ReactNode;
+  onStart: (mode: GameMode) => Promise<boolean>; navigate: Navigate; activeGame?: GameId; extraSettings?: ReactNode; onlineSettings?: ReactNode;
 }) {
   const { t } = useTranslation();
   const roomUnavailable = !apiAvailable ? 'roomUnavailable' : undefined;
   const [mode, setMode] = useState<GameMode>(online && !roomUnavailable ? 'online' : 'local');
+  const [starting, setStarting] = useState(false);
+  const [startFailed, setStartFailed] = useState(false);
   const preset = turnLimits.some(limit => limit === turnLimit);
   const [customLimit, setCustomLimit] = useState(!preset);
   const [customSeconds, setCustomSeconds] = useState(preset ? '' : String(turnLimit));
@@ -280,7 +293,7 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
   const showLimit = id !== 'sichuan' && (mode === 'local' || !activeGame);
   return (
     <div className="site-width subpage">
-      <RouteLink href={gamePath(id)} navigate={navigate} className="back-link">{t(id)}</RouteLink>
+      <BackLink fallback={gamePath(id)} fallbackLabel={id} navigate={navigate} />
       <div className="setup-layout">
         <section className="surface setup-form">
           <h1 tabIndex={-1}>{t('settings')}</h1>
@@ -292,7 +305,7 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
             </label>
             <label className="choice">
               <input type="radio" name="mode" value="local" checked={mode === 'local'} onChange={() => setMode('local')} />
-              <span><strong>{t('local')}</strong><small>{t(id === 'sichuan' ? 'sichuanCopy' : 'localCopy')}</small></span>
+              <span><strong>{t('local')}</strong><small>{t(id === 'sichuan' ? 'sichuanSolo' : 'localCopy')}</small></span>
             </label>
           </fieldset>
           {mode === 'online' && onlineSettings}
@@ -355,8 +368,15 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
               ))}
             </fieldset>
           )}
-          <button type="button" className="button button-primary" disabled={showLimit && customLimit && !validCustom} onClick={() => onStart(mode)}>
-            {t(mode === 'online' ? (activeGame ? 'goToRoom' : 'newRoom') : 'start')}
+          {mode === 'online' && startFailed && <p role="alert">{t('createRoomError')}</p>}
+          <button type="button" className="button button-primary" disabled={starting || (showLimit && customLimit && !validCustom)} onClick={async () => {
+            setStarting(true);
+            setStartFailed(false);
+            try { setStartFailed(!await onStart(mode)); }
+            catch { setStartFailed(true); }
+            finally { setStarting(false); }
+          }}>
+            {t(starting ? 'loading' : mode === 'online' ? (activeGame ? 'goToRoom' : 'newRoom') : 'start')}
           </button>
         </section>
         <aside className="surface setup-summary">

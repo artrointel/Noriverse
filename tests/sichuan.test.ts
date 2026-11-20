@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { availableTileMatches, connectTiles, createSichuanBoard, isMatchTile, nextSichuanCombo, obstacle, shuffleTiles } from '../apps/web/src/games/sichuan/rules.ts';
 import type { Tile } from '../apps/web/src/games/sichuan/rules.ts';
-import { defaultSichuanSettings, motifCount, resolveSichuanSettings, sichuanSizes, sichuanThemes, sichuanTimeLimits } from '../apps/web/src/games/sichuan/options.ts';
+import { defaultSichuanSettings, maxSichuanObstacleDensity, motifCount, resolveSichuanSettings, sichuanSizes, sichuanThemes, sichuanTileCount, sichuanTimeLimits } from '../apps/web/src/games/sichuan/options.ts';
 import type { SichuanMode } from '../apps/web/src/games/sichuan/options.ts';
 import { applyPuzzleAction, makePuzzleRound, puzzleBoardFor, puzzleEnd, puzzleOutcome, readPuzzleRound, readyPuzzle } from '../apps/web/src/games/sichuan/multiplayer.ts';
 
@@ -93,6 +93,23 @@ test('combo includes the one-second boundary and resets after it', () => {
   const second = nextSichuanCombo(first, 1200);
   assert.equal(second.count, 2);
   assert.equal(nextSichuanCombo(second, 2201).count, 1);
+});
+
+test('obstacle density counts all grid cells, accepts odd counts, and respects room for paired tiles', () => {
+  assert.equal(maxSichuanObstacleDensity(10, 80), 20);
+  assert.equal(maxSichuanObstacleDensity(10, 100), 0);
+  for (const [size, density, requested, expected] of [[10, 80, 20, 20], [10, 90, 20, 10], [10, 80, 17, 17], [6, 80, 20, 7], [10, 100, 6, 0]] as const) {
+    const options = resolveSichuanSettings({ ...defaultSichuanSettings, size, density, obstacleDensity: requested });
+    const board = createSichuanBoard(options, () => .37);
+    assert.equal(board.filter(tile => tile === obstacle).length, expected);
+    assert.equal(board.filter(isMatchTile).length, sichuanTileCount(size, density));
+    assert.ok(availableTileMatches(board).pair);
+  }
+  const random = resolveSichuanSettings({ ...defaultSichuanSettings, size: 10, density: 'random', obstacleDensity: 40 }, () => .97);
+  assert.equal(random.density, 99);
+  assert.equal(random.obstacleDensity, 0);
+  const disabled = resolveSichuanSettings({ ...defaultSichuanSettings, obstacles: false, obstacleDensity: 20 });
+  assert.equal(disabled.obstacleDensity, 0);
 });
 
 function onlinePuzzle(mode: SichuanMode) {

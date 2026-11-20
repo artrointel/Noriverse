@@ -21,7 +21,7 @@ import type { AudioLevels } from './platform/audio.ts';
 import { CatalogPage, GameDetail, GameSetup } from './platform/catalog-pages.tsx';
 import { games } from './platform/game-catalog.ts';
 import type { Power } from './platform/catalog-pages.tsx';
-import { gamePath, RouteLink, useNavigation } from './platform/navigation.tsx';
+import { BackNavigation, gamePath, RouteLink, useNavigation } from './platform/navigation.tsx';
 import type { GameMode } from './platform/navigation.tsx';
 import { createLocalRound, PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
@@ -44,8 +44,8 @@ function createLocalBoard(allowDoubleThree = true, firstPlayerColor: Stone = 1, 
 function App() {
   const { t, i18n } = useTranslation();
   const preferences = usePreferences();
-  const { route, path, navigate } = useNavigation();
-  const profile = useProfile();
+  const { route, path, navigate, backNavigation } = useNavigation();
+  const profile = useProfile(route.page === 'profile');
   const room = useRoomBoard(profile.profile);
   const friends = useFriends(profile.profile?.id, route.page === 'friends');
   const presence = profile.profile?.presence ?? 'online';
@@ -123,20 +123,22 @@ function App() {
     }
   }, [room.game, room.started, room.role, room.matchId, route, navigate]);
 
-  function startGame(mode: GameMode) {
-    if (route.page !== 'setup') return;
+  async function startGame(mode: GameMode) {
+    if (route.page !== 'setup') return false;
     const id = route.id;
     if (mode === 'online' && isRoomGame(id)) {
+      const setupUrl = location.href;
       if ((!room.code || room.state === 'closed' || room.state === 'missing' || room.state === 'full') && room.state !== 'joining') {
-        void room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1, overline, { mode: sichuanMode, settings: sichuanSettings });
+        if (!await room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1, overline, { mode: sichuanMode, settings: sichuanSettings })) return false;
       } else if (id === 'sichuan' && room.game === 'sichuan' && room.role === 'host' && !room.started) {
         room.configurePuzzle({ mode: sichuanMode, settings: sichuanSettings });
       }
-      navigate('/room');
+      if (location.href === setupUrl) navigate('/room');
     } else {
       if (isBoardGame(id)) setLocalBoards(previous => ({ ...previous, [id]: createLocalBoard(allowDoubleThree, 1, turnLimit, overline) }));
       navigate(gamePath(id, 'play'));
     }
+    return true;
   }
 
   function rematchBoard(id: BoardGame) {
@@ -329,10 +331,10 @@ function App() {
           </div>
         </div>
       </header>
-      <main id="main" tabIndex={-1} className="route-frame"><div className="route-content" key={path} data-play-game={playGame}>
+      <main id="main" tabIndex={-1} className="route-frame"><BackNavigation.Provider value={backNavigation}><div className="route-content" key={path} data-play-game={playGame}>
         {playGame && <div className="game-backdrop" aria-hidden="true"><img src={games[playGame].art} alt="" decoding="async" /></div>}
         {page}
-      </div></main>
+      </div></BackNavigation.Provider></main>
       <footer className="site-footer">
         <div className="site-width footer-row">
           <div className="footer-identity">

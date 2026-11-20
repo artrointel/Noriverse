@@ -1,13 +1,16 @@
 import type Phaser from 'phaser';
 import type { GameView } from '../scenes.ts';
+import { tableSize } from '../table.ts';
 import { paintTileMark } from '../board-marks.ts';
 import { createSichuanEffects } from './effects.ts';
+import { createComboBanner, loadComboBanner } from './combo-banner.ts';
+import { createSichuanHud, loadSichuanHud } from './hud.ts';
+import { cardFaceKey, loadCardFaces, motifKey, motifSourceKey, prepareTileMotifs } from './tile-art.ts';
+import { sichuanSceneHeight } from './options.ts';
 import { isMatchTile, obstacle, tilePoint } from './rules.ts';
 import type { Tile, TilePoint } from './rules.ts';
 
-const atlasKey = 'sichuan-motifs';
 const boardKey = 'sichuan-board';
-const frameSize = 192;
 const textures = import.meta.glob<string>('../../assets/sichuan-themes/*.jpg', { eager: true, query: '?url', import: 'default' });
 
 type RenderedTile = {
@@ -25,9 +28,6 @@ export function sichuanScene(view: () => GameView) {
   const blockFrame = theme === 'classic' ? 16 : 14;
   const backFrame = blockFrame + 1;
   const frameName = (tile: number) => 'motif-' + (tile === obstacle ? blockFrame : tile);
-  const atlas = { frames: Object.fromEntries(Array.from({ length: backFrame + 1 }, (_, tile) => [frameName(tile), {
-    frame: { x: (tile % 4) * frameSize, y: Math.floor(tile / 4) * frameSize, w: frameSize, h: frameSize },
-  }])) };
   const pitch = 450 / (size + 1);
   const offset = 15 + pitch;
   const center = ([x, y]: TilePoint) => [offset + x * pitch, offset + y * pitch] as const;
@@ -35,12 +35,14 @@ export function sichuanScene(view: () => GameView) {
   let base: Phaser.GameObjects.Graphics;
   let hints: Phaser.GameObjects.Graphics;
   let effects: ReturnType<typeof createSichuanEffects>;
+  let comboBanner: ReturnType<typeof createComboBanner>;
+  let hud: ReturnType<typeof createSichuanHud>;
   let previous: GameView | undefined;
   const pieces = new Map<number, RenderedTile>();
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
 
   function paintTable(dark: boolean) {
-    base.clear().fillStyle(dark ? 0x241f32 : 0xeaddca).fillRect(0, 0, 480, 480);
+    base.clear().fillStyle(dark ? 0x241f32 : 0xeaddca).fillRect(0, 0, tableSize, sichuanSceneHeight);
     base.fillStyle(0x181724, .35).fillRoundedRect(20, 27, 440, 435, 24);
   }
 
@@ -59,14 +61,12 @@ export function sichuanScene(view: () => GameView) {
       }
       if (tile === null) continue;
       const [x, y] = tileCenter(index);
-      const plate = scene.add.graphics();
       const block = tile === obstacle;
-      plate.fillStyle(0x142921, .5).fillRoundedRect(-23, -19, 46, 46, 7);
-      plate.fillStyle(block ? 0x40384b : 0xb5905f).fillRoundedRect(-23, -20, 46, 45, 7);
-      plate.fillStyle(block ? 0x827b91 : 0xfaf0dc).fillRoundedRect(-23, -23, 46, 46, 7);
-      plate.lineStyle(1, block ? 0xb9afca : 0xfffbef).strokeRoundedRect(-22.5, -22.5, 45, 45, 6);
-      const art = scene.add.image(0, 0, atlasKey, frameName(tile)).setDisplaySize(40, 40);
-      const container = scene.add.container(x, y, [plate, art]).setDepth(1).setScale(pitch / 50);
+      const shadow = scene.add.image(0, 3, cardFaceKey, theme).setDisplaySize(46, 46).setTint(0x251627).setAlpha(.56);
+      const plate = scene.add.image(0, 0, cardFaceKey, theme).setDisplaySize(46, 46);
+      if (block) plate.setTint(0x988a9e);
+      const art = scene.add.image(0, 0, motifKey, frameName(tile)).setDisplaySize(36, 36);
+      const container = scene.add.container(x, y, [shadow, plate, art]).setDepth(1).setScale(pitch / 50);
       pieces.set(index, { art, tile, container });
     }
   }
@@ -133,18 +133,33 @@ export function sichuanScene(view: () => GameView) {
 
   return {
     preload(this: Phaser.Scene) {
-      this.load.atlas(atlasKey, textures['../../assets/sichuan-themes/' + theme + '-atlas.jpg'], atlas);
+      this.load.image(motifSourceKey, textures['../../assets/sichuan-themes/' + theme + '-atlas.jpg']);
       this.load.image(boardKey, textures['../../assets/sichuan-themes/' + theme + '-board.jpg']);
+      loadCardFaces(this);
+      loadSichuanHud(this);
+      loadComboBanner(this);
     },
     create(this: Phaser.Scene) {
+      prepareTileMotifs(this, theme, backFrame + 1);
       base = this.add.graphics();
       this.add.image(240, 240, boardKey).setDisplaySize(438, 438);
       hints = this.add.graphics().setDepth(2);
       effects = createSichuanEffects(this, theme, pitch);
+      comboBanner = createComboBanner(this);
+      hud = createSichuanHud(this);
+      this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+        const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        hud.setHover(hud.hitTest(point.x, point.y));
+      });
+      this.input.on('gameout', () => hud.setHover(undefined));
       this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
         const current = view();
         if (!current.canMove) return;
         const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const down = this.cameras.main.getWorldPoint(pointer.downX, pointer.downY);
+        const action = hud.hitTest(point.x, point.y);
+        if (action && action === hud.hitTest(down.x, down.y)) current.sichuan?.hud[action]?.();
+        if (point.y >= tableSize || down.y >= tableSize) return;
         const x = Math.round((point.x - offset) / pitch), y = Math.round((point.y - offset) / pitch);
         if (x >= 0 && x < size && y >= 0 && y < size) current.move(y * size + x);
       });
@@ -164,8 +179,12 @@ export function sichuanScene(view: () => GameView) {
         if (selected) tintTile(this, selected, 0xffce39, 0xffda53).setAlpha(1);
       }
       if (data.rejected && data.rejected !== before?.rejected) rejectTile(this, data.rejected.index);
-      if (match) effects.emit(match.path.map(center), match.combo, time, motion.matches);
+      if (match) {
+        effects.emit(match.path.map(center), match.combo, time, motion.matches);
+        if (match.combo > 1 && previous) comboBanner(match.combo, motion.matches);
+      }
       effects.update(time);
+      hud.update(data.hud, current.deadline);
       previous = current;
     },
   };

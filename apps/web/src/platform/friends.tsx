@@ -7,7 +7,7 @@ import { apiAvailable, apiFetch } from '../network/api.ts';
 import { avatars } from './avatars.ts';
 import { games } from './game-catalog.ts';
 import { socialChangeEvent } from './invitations.tsx';
-import { RouteLink } from './navigation.tsx';
+import { BackLink, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 
 const endpoint = '/api/profiles/me/social';
@@ -165,7 +165,7 @@ export function FriendsPage({ model, navigate, openProfile, follow }: { model: F
   }
 
   return <div className="site-width subpage friends-page">
-    <RouteLink className="back-link" href="/profile" navigate={navigate}>{t('myProfile')}</RouteLink>
+    <BackLink fallback="/profile" fallbackLabel="myProfile" navigate={navigate} />
     <section className="surface stat-card friends-panel">
       <h1 tabIndex={-1}>{t('friends')}</h1>
       {!apiAvailable ? <p>{t('friendsUnavailable')}</p> : !owner ? <>

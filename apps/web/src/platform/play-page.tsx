@@ -17,7 +17,7 @@ import { nextDeadline, resolveTurnTimeout, secondsRemaining } from '../games/tur
 import type { PendingTimeout, TimeoutChoice, TurnLimit } from '../games/turn-clock.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import type { Power } from './catalog-pages.tsx';
-import { gamePath, RouteLink } from './navigation.tsx';
+import { BackLink, gamePath } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { onAudioReady, playSound } from './audio.ts';
 import { GameResult } from './game-result.tsx';
@@ -334,7 +334,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
 
   return (
     <div className="site-width subpage play-page">
-      <RouteLink href={back} navigate={navigate} className="back-link">{t(backLabel)}</RouteLink>
+      <BackLink fallback={back} fallbackLabel={backLabel} navigate={navigate} />
       <div className="play-heading">
         <div>
           <h1 tabIndex={-1}>{t(id)}</h1>

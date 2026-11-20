@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { avatarIds, avatarLevel, readName, secondsPerLevel, touchEffects, winRate } from '../../../../packages/protocol/profile.ts';
+import { avatarIds, avatarLevel, readName, readReport, secondsPerLevel, touchEffects, winRate } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, OwnProfile, PresenceMode, ProfilePreferences, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import { apiAvailable, apiFetch } from '../network/api.ts';
 import { avatars } from './avatars.ts';
 import { readBrowserProfile, readBrowserTouchEffect, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
-import { gamePath, routeHref, RouteLink } from './navigation.tsx';
+import { BackLink, gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { randomPlayerName } from './player-names.ts';
 import { FriendButton } from './friends.tsx';
@@ -17,9 +17,27 @@ const recordCount = (profile: PublicProfile) => Object.values(profile.games).red
 const applyBrowserTouchEffect = (profile: OwnProfile): OwnProfile => ({ ...profile,
   touchEffect: readBrowserTouchEffect(profile.id) ?? profile.touchEffect ?? 'soft',
 });
+const matchQueueKey = (owner: string) => 'noriverse.pendingMatches.' + owner;
 
-export function useProfile() {
+function pendingMatches(owner: string): MatchReport[] {
+  try {
+    const values: unknown = JSON.parse(localStorage.getItem(matchQueueKey(owner)) ?? '[]');
+    return Array.isArray(values) ? values.map(readReport).filter(match => match !== undefined) : [];
+  } catch { return []; }
+}
+
+function updatePendingMatch(owner: string, match: MatchReport, keep: boolean) {
+  try {
+    const remaining = pendingMatches(owner).filter(pending => pending.id !== match.id);
+    if (keep) remaining.push(match);
+    if (remaining.length) localStorage.setItem(matchQueueKey(owner), JSON.stringify(remaining));
+    else localStorage.removeItem(matchQueueKey(owner));
+  } catch { /* Saving through the API still works with storage disabled. */ }
+}
+
+export function useProfile(profileOpen: boolean) {
   const [profile, setProfile] = useState<OwnProfile>();
+  const owner = profile?.id;
   const [status, setStatus] = useState<'loading' | 'missing' | 'ready' | 'error'>('loading');
   useEffect(() => {
     if (!apiAvailable) {
@@ -93,19 +111,42 @@ export function useProfile() {
   }
 
   const record = useCallback(async (match: MatchReport) => {
+    if (!apiAvailable || !owner) return false;
+    updatePendingMatch(owner, match, true);
     try {
       const response = await apiFetch('/api/profiles/me/matches', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(match), keepalive: true,
       });
       if (!response.ok) return false;
       const next = await response.json() as PublicProfile;
+      if (next.id !== owner) return false;
+      updatePendingMatch(owner, match, false);
       setProfile(current => current?.id === next.id && recordCount(current) <= recordCount(next)
         ? { ...current, totalSeconds: next.totalSeconds, xp: next.xp, level: next.level, games: next.games, recent: next.recent } : current);
       return true;
     } catch {
       return false;
     }
-  }, []);
+  }, [owner]);
+
+  useEffect(() => {
+    if (!apiAvailable || !owner) return;
+    const id = owner;
+    let active = true;
+    let retrying = false;
+    async function retry() {
+      if (retrying) return;
+      retrying = true;
+      try {
+        for (const match of pendingMatches(id)) {
+          if (!active || !await record(match)) break;
+        }
+      } finally { retrying = false; }
+    }
+    void retry();
+    window.addEventListener('online', retry);
+    return () => { active = false; window.removeEventListener('online', retry); };
+  }, [owner, record, profileOpen]);
 
   return { profile, status, saveName, setPreferences, syncPresence, record };
 }
@@ -244,8 +285,9 @@ function AvatarDialog({ profile, save, close }: {
 function GameHistory({ profile }: { profile: PublicProfile }) {
   const { t, i18n } = useTranslation();
   const [query, setQuery] = useState('');
-  const visible = gameIds.filter(id => matchesGame(id, query, t(id)))
-    .sort((left, right) => (profile.games[right]?.seconds ?? 0) - (profile.games[left]?.seconds ?? 0));
+  const played = gameIds.filter(id => (profile.games[id]?.sessions ?? 0) > 0);
+  const visible = played.filter(id => matchesGame(id, query, t(id)))
+    .sort((left, right) => profile.games[right].seconds - profile.games[left].seconds);
   const date = new Intl.DateTimeFormat(i18n.resolvedLanguage);
   const percentage = new Intl.NumberFormat(i18n.resolvedLanguage, { style: 'percent', maximumFractionDigits: 1 });
   return (
@@ -254,9 +296,9 @@ function GameHistory({ profile }: { profile: PublicProfile }) {
       <div className="history-content">
         <input className="history-search" type="search" aria-label={t('gameSearch')} placeholder={t('gameSearchHint')}
           value={query} onChange={event => setQuery(event.target.value)} />
-        {visible.length === 0 && <p role="status">{t('noSearchResults')}</p>}
+        {visible.length === 0 && <p role="status">{t(played.length ? 'noSearchResults' : 'emptyHistory')}</p>}
         {visible.map(game => {
-          const stats = profile.games[game] ?? { seconds: 0, wins: 0, losses: 0, draws: 0, sessions: 0 };
+          const stats = profile.games[game];
           const rate = winRate(stats);
           const matches = profile.recent.filter(match => match.game === game);
           return <details key={game} className="game-history">
@@ -353,7 +395,7 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
 
   return (
     <div className="site-width subpage profile-page">
-      <RouteLink className="back-link" href="/games" navigate={navigate}>{t('backToGames')}</RouteLink>
+      <BackLink fallback="/games" fallbackLabel="backToGames" navigate={navigate} />
       <section className="profile-banner surface">
         <div className="profile-identity">
           {profile && <img className="profile-avatar" src={avatars[profile.avatar]} alt="" width="80" height="80" />}

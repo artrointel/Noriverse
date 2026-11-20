@@ -4,8 +4,10 @@ import { useTranslation } from 'react-i18next';
 import { touchResolution } from '../../../../packages/protocol/rooms.ts';
 import type { TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import type { GameId, GameView, mountGame } from '../games/scenes.ts';
-import { fixedResolutions, readResolution, renderPixelSize } from '../games/render-resolution.ts';
+import { fixedResolutions, readResolution, renderFrameSize } from '../games/render-resolution.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
+import { tableSize } from '../games/table.ts';
+import { sichuanSceneHeight } from '../games/sichuan/options.ts';
 import { boardSize as omokSize } from '../games/omok/rules.ts';
 import { othelloSize, othelloState } from '../games/othello/rules.ts';
 import { chessSize } from '../games/chess/rules.ts';
@@ -14,7 +16,7 @@ import { TouchBurst } from './touch-burst.tsx';
 import { GearIcon } from './gear-icon.tsx';
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
-  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, onReady, notice }: {
+  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, onReady }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
@@ -22,14 +24,15 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   showTouches: boolean; onTouchDisplay: (active: boolean) => void; localTouch: boolean;
   remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
   onReady?: () => void;
-  notice?: ReactNode;
 }) {
   const { t } = useTranslation();
   const shell = useRef<HTMLDivElement>(null);
+  const field = useRef<HTMLDivElement>(null);
   const mount = useRef<HTMLDivElement>(null);
   const engine = useRef<ReturnType<typeof mountGame>>(null);
-  const requestedSize = useRef(480);
-  const [actualSize, setActualSize] = useState(480);
+  const sceneHeight = id === 'sichuan' ? sichuanSceneHeight : tableSize;
+  const requestedSize = useRef({ width: tableSize, height: sceneHeight });
+  const [actualSize, setActualSize] = useState(requestedSize.current);
   const resultButton = useRef<HTMLButtonElement>(null);
   const gameSettings = useRef<HTMLDetailsElement>(null);
   const gameInfo = useRef<HTMLDetailsElement>(null);
@@ -50,32 +53,42 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   useLayoutEffect(() => { current.current = view; }, [view]);
 
   useLayoutEffect(() => {
-    const element = mount.current;
-    if (!element) return;
+    const element = field.current;
+    const stage = shell.current;
+    if (!element || !stage) return;
+    const page = stage.closest('.play-page') ?? stage;
+    const viewport = window.visualViewport;
     function measure() {
       if (!element) return;
-      const size = renderPixelSize(resolution, element.clientWidth, element.clientHeight, window.devicePixelRatio || 1);
-      if (!size || size === requestedSize.current) return;
+      const fitWindow = resolution === 'auto' || matchMedia('(pointer: coarse)').matches;
+      let availableHeight = Infinity;
+      if (expanded) availableHeight = element.clientHeight;
+      else if (fitWindow) {
+        const visibleHeight = viewport?.scale === 1 ? viewport.height : window.innerHeight;
+        const fieldBounds = element.getBoundingClientRect();
+        const trailingHeight = Math.max(0, page.getBoundingClientRect().bottom - fieldBounds.bottom);
+        const documentTop = window.scrollY + fieldBounds.top;
+        availableHeight = Math.max(Math.min(96, visibleHeight), visibleHeight - documentTop - trailingHeight - 8);
+      }
+      const size = renderFrameSize(resolution, element.clientWidth, availableHeight, sceneHeight);
+      if (!size.width || (size.width === requestedSize.current.width && size.height === requestedSize.current.height)) return;
       requestedSize.current = size;
-      if (engine.current) setActualSize(engine.current.resize(size));
+      engine.current?.resize(size);
+      setActualSize(size);
     }
     measure();
-    if (resolution !== 'auto') return;
     const observer = new ResizeObserver(measure);
     observer.observe(element);
-    let pixelRatio: MediaQueryList | undefined;
-    function watchPixelRatio() {
-      pixelRatio?.removeEventListener('change', watchPixelRatio);
-      measure();
-      pixelRatio = matchMedia('(resolution: ' + (window.devicePixelRatio || 1) + 'dppx)');
-      pixelRatio.addEventListener('change', watchPixelRatio);
+    observer.observe(page);
+    for (const chrome of [stage.querySelector('.stage-bar'), stage.querySelector('.stage-help'), document.querySelector('.site-header')]) {
+      if (chrome) observer.observe(chrome);
     }
-    watchPixelRatio();
-    return () => {
-      observer.disconnect();
-      pixelRatio?.removeEventListener('change', watchPixelRatio);
-    };
-  }, [resolution]);
+    window.addEventListener('resize', measure);
+    viewport?.addEventListener('resize', measure);
+    return () => { observer.disconnect(); window.removeEventListener('resize', measure); viewport?.removeEventListener('resize', measure); };
+  }, [resolution, expanded, sceneHeight]);
+
+  useLayoutEffect(() => { engine.current?.refreshInputBounds(); }, [actualSize, expanded]);
 
   const deciding = Boolean(decision);
   const hasResult = Boolean(result);
@@ -122,8 +135,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     setStatus('loading');
     void import('../games/scenes.ts').then(({ mountGame }) => {
       if (canceled) return;
-      instance = mountGame(element, id, roundAntialias, requestedSize.current, () => current.current, size => {
-        if (!canceled) { setActualSize(size); setStatus('ready'); notifyReady(); }
+      instance = mountGame(element, id, roundAntialias, requestedSize.current, () => current.current, () => {
+        if (!canceled) { setStatus('ready'); notifyReady(); }
       });
       engine.current = instance;
     }).catch(() => { if (!canceled) setStatus('error'); });
@@ -179,6 +192,12 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const hud = view.sichuan?.hud;
+    if (hud && !event.ctrlKey && !event.metaKey && !event.altKey && /^[hs]$/i.test(event.key)) {
+      event.preventDefault();
+      if (!event.repeat) (event.key.toLowerCase() === 'h' ? hud.hint : hud.shuffle)?.();
+      return;
+    }
     const moves: Record<string, [number, number]> = {
       ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
     };
@@ -246,31 +265,33 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
                 <span>{t('resolution')}</span>
                 <select value={resolution} onChange={event => onResolution(readResolution(event.target.value))}>
                   <option value="auto">{t('resolutionAuto')}</option>
-                  {fixedResolutions.map(size => <option key={size} value={size}>{size} × {size}</option>)}
+                  {fixedResolutions.map(size => <option key={size} value={size}>{size} × {renderFrameSize(size, size, Infinity, sceneHeight).height}</option>)}
                 </select>
               </label>
-              {status === 'ready' && <output className="applied-resolution">{t('resolutionApplied', { size: actualSize })}</output>}
+              <small>{t('resolutionFit')}</small>
+              {status === 'ready' && <output className="applied-resolution">{t('resolutionApplied', actualSize)}</output>}
             </div>
           </details>
         </div>
       </div>
-      <div className="stage-field">
-        {notice}
-        <div
-          className="game-viewport" ref={mount} data-ready={status === 'ready'}
-          tabIndex={0}
-          role="group"
-          aria-label={t(boardLabel)}
-          aria-describedby="game-help"
-          onBlur={() => setCursor(null)}
-          onPointerDownCapture={handleTouch}
-          onKeyDown={id === 'physics' ? undefined : onKeyDown}
-        >
-          <div className="touch-layer" aria-hidden="true">{bursts.map(burst => <TouchBurst key={burst.id} remote={burst.remote}
-            style={{ left: burst.x, top: burst.y }} onEnd={() => setBursts(current => current.filter(item => item.id !== burst.id))} />)}</div>
+      <div className="stage-field" ref={field}>
+        <div className="stage-frame" style={actualSize}>
+          <div
+            className="game-viewport" ref={mount} data-ready={status === 'ready'}
+            tabIndex={0}
+            role="group"
+            aria-label={t(boardLabel)}
+            aria-describedby="game-help"
+            onBlur={() => setCursor(null)}
+            onPointerDownCapture={handleTouch}
+            onKeyDown={id === 'physics' ? undefined : onKeyDown}
+          >
+            <div className="touch-layer" aria-hidden="true">{bursts.map(burst => <TouchBurst key={burst.id} remote={burst.remote}
+              style={{ left: burst.x, top: burst.y }} onEnd={() => setBursts(current => current.filter(item => item.id !== burst.id))} />)}</div>
+          </div>
+          {result && <div className="result-layer" hidden={!resultVisible}>{result}</div>}
+          {decision && <div className="result-layer decision-layer">{decision}</div>}
         </div>
-        {result && <div className="result-layer" hidden={!resultVisible}>{result}</div>}
-        {decision && <div className="result-layer decision-layer">{decision}</div>}
       </div>
       {status !== 'ready' && (
         <div className="stage-message">

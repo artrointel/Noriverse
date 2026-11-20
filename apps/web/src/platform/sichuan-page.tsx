@@ -14,7 +14,7 @@ import type { PuzzleRound } from '../games/sichuan/multiplayer.ts';
 import type { SichuanRoomSettings } from '../games/sichuan/options.ts';
 import { playSound } from './audio.ts';
 import { GameResult } from './game-result.tsx';
-import { gamePath, RouteLink } from './navigation.tsx';
+import { BackLink, gamePath } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { PlayTime } from './play-page.tsx';
 import { formatPlayTime } from './profiles.tsx';
@@ -113,6 +113,7 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
       setSelected(undefined);
       setHint(undefined);
       setCombo(undefined);
+      setFeedback('sichuanShuffled');
       if (!matchMedia('(prefers-reduced-motion: reduce)').matches) setFlip({ phase: 'backs', board: onlineBoard.tiles, previous: previous.tiles });
     } else if (visibleEvent?.kind === 'pair' && previous && onlineBoard && previous.tiles.filter(isMatchTile).length !== remaining) {
       if (visibleEvent.combo > 1) {
@@ -228,11 +229,20 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
     setLocalRemoved(0);
   }
 
+  function showHint() {
+    if (!canMove || !pair || Date.now() >= deadline) return;
+    setHint(pair);
+    setSelected(undefined);
+    setFeedback('sichuanHinted');
+  }
+
   const status = onlineResult ? t(onlineResult === 'timeout' ? 'sichuanTimedOut' : onlineResult === 'abandoned' ? 'sichuanAbandoned'
     : onlineResult === 'team' ? 'sichuanTeamWin' : outcome === 'win' ? 'sichuanRaceWin' : 'sichuanRaceLoss')
     : resultState ? t(resultState.reason === 'clear' ? 'sichuanClear' : resultState.reason === 'timeout' ? 'sichuanTimedOut' : 'sichuanStuck')
     : room && !onlineStarted ? t('sichuanWaiting') : t('sichuanRemaining', { count: remaining / 2 });
   const back = room ? '/room' : setup;
+  const description = t('sichuanTheme_' + round.options.theme) + ` · ${round.options.size} × ${round.options.size} · ${round.options.density}%`;
+  const feedbackText = flip ? t('sichuanShuffling') : feedback ? t(feedback) : !finished && canMove && !pair ? t('sichuanNoPairs') : undefined;
   const stats = room ? (['host', 'guest'] as const).map(role => ({ role, ...room.puzzle.stats[role],
     profile: (role === room.role ? ownProfile : undefined) ?? room.participants.find(player => player.role === role)?.profile,
     outcome: onlineResult && puzzleOutcome(onlineResult, role) }))
@@ -244,7 +254,7 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
   </section>;
   const info = <>
     <strong>{status}</strong>
-    <small>{t('sichuanTheme_' + round.options.theme)} · {round.options.size} × {round.options.size} · {round.options.density}%</small>
+    <small>{description}</small>
     <p className="match-time"><span>{t('sichuanRemovable')}</span><strong>{pairs}</strong></p>
     <p className="match-time"><span>{t('sichuanShufflesLeft')}</span><strong>{round.shufflesLeft}</strong></p>
     {round.startedAt > 0 && !finished && <PlayTime key={round.id} startedAt={round.startedAt} />}
@@ -257,29 +267,29 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
     record={record} rematch={reset} back={room ? '/room' : '/games'} navigate={navigate} />;
 
   return <div className="site-width subpage play-page">
-    <RouteLink className="back-link" href={back} navigate={navigate}>{t(room ? 'goToRoom' : 'settings')}</RouteLink>
+    <BackLink fallback={back} fallbackLabel={room ? 'goToRoom' : 'settings'} navigate={navigate} />
     <div className="play-heading"><div><h1 tabIndex={-1}>{t('sichuan')}</h1><p>{t(room ? 'sichuanMode_' + room.puzzleConfig.mode : 'local')}</p></div></div>
     <div className="play-layout">
       <Suspense fallback={<div className="surface stage-loading" role="status">{t('loading')}</div>}>
         <GameStage key={round.id} id="sichuan" matchId={round.id} antialias={antialias} resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
           onReady={() => { setLoaded(true); setRound(current => !current || current.startedAt ? current : { ...current, startedAt: Date.now() }); }}
           timer={deadline > 0 && !finished && (!room || onlineStarted) && <PuzzleClock deadline={deadline} />}
-          notice={combo && combo.count > 1 && <span key={combo.at} className="sichuan-combo" role="status">{t('sichuanCombo', { count: combo.count })}</span>}
           setCursor={setCursor} info={info} infoStatus={status} yourTurn={false} result={result} resultVisible={Boolean(report && showResult)}
           resultPending={false} onShowResult={() => setShowResult(true)} showTouches={showTouches} onTouchDisplay={onTouchDisplay}
-           remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch}
+          remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch}
           localTouch={touchStyle === 'soft'} view={{ history: [], cursor, chessTargets: new Map(), dark, allowDoubleThree: true, force: 1,
             canMove, deadline, finished, move: pick, onAlkkagi: () => {},
             sichuan: { board: flip?.phase === 'backs' && flip.previous ? flip.previous : round.board, size: round.options.size, theme: round.options.theme,
-              selected, hint, match: room ? onlineMatch : match, rejected, flip: flip?.phase } }} />
+              selected, hint, match: room ? onlineMatch : match, rejected, flip: flip?.phase,
+              hud: { status, description, feedback: feedbackText, startedAt: (!room || onlineStarted) ? round.startedAt : 0,
+                endedAt: end ? end + round.startedAt - recordStart : undefined,
+                remaining: remaining / 2, available: pairs, shuffles: round.shufflesLeft,
+                labels: { timeLeft: t('sichuanHudTime'), remaining: t('sichuanHudRemaining'), available: t('sichuanHudAvailable'),
+                  shuffles: t('sichuanShufflesLeft'), elapsed: t('playTime'), shuffle: t('sichuanShuffle'), hint: t('sichuanHint') },
+                shuffle: canMove && !pair && round.shufflesLeft > 0 ? reshuffle : undefined, hint: canMove && pair ? showHint : undefined } } }} />
       </Suspense>
-      {!finished && <div className="sichuan-controls">
-        {pair ? <button type="button" className="button button-secondary" disabled={!canMove}
-          onClick={() => { setHint(pair); setSelected(undefined); setFeedback('sichuanHinted'); }}>{t('sichuanHint')}</button>
-          : <button type="button" className="button button-primary" disabled={!canMove || round.shufflesLeft === 0} onClick={reshuffle}>
-            {t('sichuanShuffle')} · {round.shufflesLeft}</button>}
-        <span role="status">{flip ? t('sichuanShuffling') : !pair ? t('sichuanNoPairs') : feedback && t(feedback)}</span>
-      </div>}
+      <span className="visually-hidden" role="status">{feedbackText}</span>
+      <span className="visually-hidden" role="status">{combo && combo.count > 1 && <span key={combo.at}>{t('sichuanCombo', { count: combo.count })}</span>}</span>
     </div>
   </div>;
 }

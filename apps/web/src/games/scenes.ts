@@ -10,6 +10,8 @@ import { chessScene } from './chess/scene.ts';
 import { sichuanScene } from './sichuan/scene.ts';
 import type { Tile, TilePoint } from './sichuan/rules.ts';
 import type { SichuanSize, SichuanTheme } from './sichuan/options.ts';
+import type { RenderSize } from './render-resolution.ts';
+import type { SichuanHudView } from './sichuan/hud.ts';
 
 export type GameId = ProfileGame;
 export interface GameView {
@@ -28,43 +30,44 @@ export interface GameView {
   onlineFlick?: FlickRound & { host: boolean; send: (shot: Flick) => void; settle: (layout: StonePosition[], revision: number) => void };
   sichuan?: { board: readonly Tile[]; size: SichuanSize; theme: SichuanTheme; selected?: number;
     hint?: readonly [number, number]; match?: { path: readonly TilePoint[]; combo: number }; rejected?: { index: number };
-    flip?: 'backs' | 'faces' };
+    flip?: 'backs' | 'faces'; hud: SichuanHudView };
 }
 
-export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, initialSize: number, current: () => GameView, onReady: (size: number) => void) {
+export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, initialSize: RenderSize, current: () => GameView, onReady: () => void) {
   const scene = { omok: omokScene, othello: othelloScene, chess: chessScene, physics: alkkagiScene, sichuan: sichuanScene }[id](current);
   let size = initialSize;
   let camera: Phaser.Cameras.Scene2D.Camera | undefined;
 
   function applyResolution(game: Phaser.Game) {
-    if (camera && game.scale.gameSize.width !== size) game.scale.setGameSize(size, size);
-    camera?.setSize(size, size).setOrigin(0, 0).setZoom(size / tableSize);
-    return game.canvas?.width || initialSize;
+    if (!camera) return;
+    if (game.scale.gameSize.width !== size.width || game.scale.gameSize.height !== size.height) game.scale.resize(size.width, size.height);
+    camera.setSize(size.width, size.height).setOrigin(0, 0).setZoom(size.width / tableSize);
   }
 
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent,
-    width: initialSize,
-    height: initialSize,
-    render: { antialias, antialiasGL: antialias },
+    width: initialSize.width,
+    height: initialSize.height,
+    render: { antialias, antialiasGL: antialias, mipmapFilter: id === 'sichuan' && antialias ? 'LINEAR_MIPMAP_LINEAR' : undefined },
     backgroundColor: current().dark ? '#272132' : '#e8ddd1',
-    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    scale: { mode: Phaser.Scale.NONE },
     physics: id === 'physics' ? { default: 'arcade', arcade: { fps: 90 } } : undefined,
     scene: {
       key: id,
       ...scene,
       create(this: Phaser.Scene) {
         camera = this.cameras.main;
-        const applied = applyResolution(this.game);
+        applyResolution(this.game);
         if (id === 'physics') this.physics.world.setBounds(0, 0, tableSize, tableSize);
         scene.create.call(this);
-        onReady(applied);
+        onReady();
       },
     },
   });
   return {
-    resize(next: number) { size = next; return applyResolution(game); },
+    resize(next: RenderSize) { size = next; applyResolution(game); },
+    refreshInputBounds() { if (camera) game.scale.updateBounds(); },
     destroy() { game.destroy(true); },
   };
 }

@@ -1,4 +1,4 @@
-import { defaultSichuanSettings, motifCount, resolveSichuanSettings } from './options.ts';
+import { defaultSichuanSettings, motifCount, resolveSichuanSettings, sichuanObstacleCount, sichuanTileCount } from './options.ts';
 import type { SichuanSettings } from './options.ts';
 
 export const obstacle = -1;
@@ -128,7 +128,7 @@ function bestRearrangement(board: readonly Tile[], motifs: number[], random: () 
     if (arranged) return arranged;
   }
 
-  // Obstacles are placed in whole dominoes, leaving enough adjacent pairs for a safe reshuffle.
+  // Obstacle placement reserves adjacent pairs for a safe reshuffle.
   const positions = shuffle(openDominoes(board), random).sort(([a, b], [c, d]) =>
     Number(isMatchTile(board[a])) + Number(isMatchTile(board[b])) - Number(isMatchTile(board[c])) - Number(isMatchTile(board[d])))
     .slice(0, motifs.length);
@@ -143,13 +143,14 @@ export function shuffleTiles(board: readonly Tile[], random = Math.random) {
 }
 
 export function createSichuanBoard(settings = resolveSichuanSettings(defaultSichuanSettings), random = Math.random) {
-  const { size, density, theme, obstacles } = settings;
+  const { size, density, theme, obstacleDensity } = settings;
   const cellCount = size ** 2;
   const board: Tile[] = Array(cellCount).fill(null);
   const slots = shuffle(openDominoes(board), random);
-  const blockPairs = obstacles ? Math.round(cellCount * .03) : 0;
-  for (const [first, second] of slots.splice(0, blockPairs)) board[first] = board[second] = obstacle;
-  const pairs = Math.min(slots.length, Math.round(cellCount * density / 200));
+  const blocks = sichuanObstacleCount(size, density, obstacleDensity);
+  for (const [first, second] of slots.splice(0, Math.floor(blocks / 2))) board[first] = board[second] = obstacle;
+  if (blocks % 2) board[slots.shift()![0]] = obstacle;
+  const pairs = sichuanTileCount(size, density) / 2;
   const positions = shuffle(slots.flat(), random).slice(0, pairs * 2);
   for (const index of positions) board[index] = 0;
   const motifs = Array.from({ length: pairs }, (_, index) => index % motifCount(theme));

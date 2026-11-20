@@ -82,7 +82,7 @@ flowchart LR
 
 일반 화면에서 세로·가로 배치를 먼저 제공한다. 권장 방향은 게임 메타데이터로 제시하고 지원 여부와 안내는 공통 셸이 처리한다. 사용자가 최대화 버튼을 누를 때 게임과 메뉴를 함께 담는 컨테이너에 Fullscreen API를 요청한다. 불가하거나 거부되면 동일 컨테이너를 페이지 안에서 뷰포트에 고정하는 확장 모드로 전환한다. 브라우저 UI 숨김과 방향 잠금은 지원 여부에 따르며 방향 잠금이 거부되면 회전 안내를 표시한다. 복귀 버튼, 브라우저의 해제 이벤트, 원래 스크롤과 포커스 복구를 처리한다. [Fullscreen API](https://developer.mozilla.org/en-US/docs/Web/API/Element/requestFullscreen) · [방향 잠금](https://developer.mozilla.org/en-US/docs/Web/API/ScreenOrientation/lock)
 
-`dvh`, safe-area inset, 레이아웃 크기 관찰을 공통 셸이 처리하고 엔진 스케일을 컨테이너 크기에 맞춘다. 필요한 경우 `visualViewport` 변화를 반영한다. 게임은 논리 좌표를 기준으로 하고 엔진의 입력 좌표 변환을 우선 활용한다. CSS 크기와 백버퍼 해상도를 구별해 고해상도 모바일의 렌더링 비용을 조절한다. 회전, 주소창 변화, 노치, 키보드 출현, 터치·포인터 변경에서도 세션과 보드 상태를 유지한다. iPhone Safari, Android Chrome, 주요 PC 브라우저에서 일반·확장·네이티브 전체화면 동작을 확인한다. [동적 뷰포트 단위](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/length) · [CSS safe area](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/env)
+`dvh`, safe-area inset, 레이아웃 크기 관찰을 공통 셸이 처리하고 CSS 픽셀 기준으로 캔버스와 백버퍼에 같은 크기를 적용한다. 공간이 부족하면 화면 비율을 유지하며 두 크기를 함께 줄인다. 이 방식은 기기 픽셀 비율을 곱한 백버퍼보다 모바일 렌더링 부하가 작으며 고밀도 화면에서 물리 픽셀 단위 선명도가 중요해지면 다시 검토한다. 게임은 논리 좌표를 기준으로 하고 엔진의 입력 좌표 변환을 우선 활용한다. 회전, 주소창 변화, 노치, 키보드 출현, 터치·포인터 변경에서도 세션과 보드 상태를 유지한다. iPhone Safari, Android Chrome, 주요 PC 브라우저에서 일반·확장·네이티브 전체화면 동작을 확인한다. [동적 뷰포트 단위](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/length) · [CSS safe area](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Values/env)
 
 ## 저장소 구조 후보
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isRoomGame, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
 import type { RoomGame } from '../../../../packages/protocol/rooms.ts';
@@ -12,11 +12,39 @@ import { gameIds, games } from './game-catalog.ts';
 import { avatars } from './avatars.ts';
 import { FriendButton, InviteDialog } from './friends.tsx';
 import type { Friends } from './friends.tsx';
-import { routeHref, RouteLink } from './navigation.tsx';
+import { BackLink, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { SichuanModePicker, SichuanSettingsFields } from './sichuan-settings.tsx';
+import { GameSelectionGrid } from './catalog-pages.tsx';
 
 type Room = ReturnType<typeof useRoomBoard>;
+
+function RoomGamesDialog({ room, choices, participants, close }: { room: Room; choices: RoomGame[]; participants: number; close: () => void }) {
+  const { t } = useTranslation();
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const element = dialog.current;
+    element?.showModal();
+    return () => { element?.close(); };
+  }, []);
+
+  return <dialog ref={dialog} className="surface profile-dialog room-games-dialog" aria-labelledby="room-games-title"
+    onCancel={event => { event.preventDefault(); if (!room.changingGame) close(); }}>
+    <button className="settings-close" type="button" aria-label={t('close')} disabled={room.changingGame} onClick={close}><span aria-hidden="true" /></button>
+    <h2 id="room-games-title">{t('changeRoomGame')}</h2>
+    <p className="muted">{t('roomGameChoices', { count: participants })}</p>
+    {room.started && !room.finishedAt && <p className="muted">{t('changeLiveGame')}</p>}
+    <GameSelectionGrid ids={choices} busy={room.changingGame} onSelect={async id => {
+      if (!isRoomGame(id) || !choices.includes(id) || room.changingGame) return;
+      setFailed(false);
+      if (await room.changeGame(id)) close();
+      else setFailed(true);
+    }} />
+    {room.changingGame && <p role="status">{t('loading')}</p>}
+    {failed && <p role="alert">{t('changeGameError')}</p>}
+  </dialog>;
+}
 
 export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }: {
   room: Room; friends: Friends; ownProfile?: ProfileSummary; invite: string; navigate: Navigate; onPlay: () => void;
@@ -25,8 +53,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const [code, setCode] = useState(() => invite.trim().toUpperCase().slice(0, 8));
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'manual'>('idle');
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [gameChoice, setGameChoice] = useState<RoomGame>();
-  const [gameError, setGameError] = useState(false);
+  const [gamesOpen, setGamesOpen] = useState(false);
   const [recent, setRecent] = useState<GuestRoom[]>([]);
   const activeGame = room.matchId ? room.game : 'omok';
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
@@ -69,7 +96,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
 
   return (
     <div className="site-width subpage">
-      <RouteLink href="/games" navigate={navigate} className="back-link">{t('backToGames')}</RouteLink>
+      <BackLink fallback="/games" fallbackLabel="backToGames" navigate={navigate} />
       <div className={hasRoom ? 'setup-layout' : 'setup-layout join-layout'}>
         <section className="surface setup-form room-page">
           <h1 tabIndex={-1}>{t(hasRoom ? 'room' : 'joinRoom')}</h1>
@@ -118,31 +145,10 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                     if (room.puzzleConfig) room.configurePuzzle({ ...room.puzzleConfig, settings });
                   }} />
                 </details>}
-              {room.role === 'host' && gameChoices.length > 0 && <details className="room-games">
-                <summary>{t('changeRoomGame')}</summary>
-                <form className="room-game-picker" onSubmit={async event => {
-                  event.preventDefault();
-                  if (!gameChoice || !gameChoices.includes(gameChoice)) return;
-                  setGameError(false);
-                  if (await room.changeGame(gameChoice)) setGameChoice(undefined);
-                  else setGameError(true);
-                }}>
-                  <fieldset disabled={room.changingGame}>
-                    <legend>{t('roomGameChoices', { count: participants.length })}</legend>
-                    <div>{gameChoices.map(id => <label key={id} className="choice">
-                      <input type="radio" name="room-game" checked={gameChoice === id} onChange={() => { setGameChoice(id); setGameError(false); }} />
-                      <img src={games[id].art} alt="" width="40" height="32" /><strong>{t(id)}</strong>
-                    </label>)}</div>
-                  </fieldset>
-                  {room.started && !room.finishedAt && <p className="muted">{t('changeLiveGame')}</p>}
-                  {gameError && <p role="alert">{t('changeGameError')}</p>}
-                  <button type="submit" className="button button-primary" disabled={!gameChoice || !gameChoices.includes(gameChoice) || room.changingGame}>
-                    {t(room.changingGame ? 'loading' : 'applyRoomGame')}
-                  </button>
-                </form>
-              </details>}
               {room.state && <p className="connection" role="status">{t(connected && room.role === 'guest' && !room.started ? 'waitingStart' : room.state)}</p>}
               <div className="panel-actions">
+                {room.role === 'host' && gameChoices.length > 0 && <button type="button" className="button button-secondary"
+                  onClick={() => setGamesOpen(true)}>{t('changeRoomGame')}</button>}
                 {room.role === 'host' && <button className="button button-secondary" type="button"
                   disabled={!friends.owner || participants.some(participant => participant.role === 'guest')}
                   onClick={() => setInviteOpen(true)}>{t('inviteFriend')}</button>}
@@ -178,6 +184,8 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
             </>
           )}
           {inviteOpen && hasRoom && room.role === 'host' && <InviteDialog owner={friends.owner} navigate={navigate} invite={room.invite} close={() => setInviteOpen(false)} />}
+          {gamesOpen && hasRoom && room.role === 'host' && <RoomGamesDialog room={room} choices={gameChoices}
+            participants={participants.length} close={() => setGamesOpen(false)} />}
         </section>
         {hasRoom && <aside className="surface setup-summary">
           <img src={games[activeGame].art} alt="" width="880" height="587" />

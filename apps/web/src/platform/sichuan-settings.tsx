@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { sichuanSizes, sichuanThemes, sichuanTimeLimits } from '../games/sichuan/options.ts';
+import { defaultObstacleDensity, maxSichuanObstacleDensity, sichuanObstacleCount, sichuanSizes, sichuanThemes, sichuanTimeLimits } from '../games/sichuan/options.ts';
 import type { SichuanMode, SichuanSettings, SichuanSize } from '../games/sichuan/options.ts';
 import { formatPlayTime } from './profiles.tsx';
 
@@ -15,6 +15,8 @@ export function SichuanModePicker({ value, change }: { value: SichuanMode; chang
 
 export function SichuanSettingsFields({ value, change }: { value: SichuanSettings; change: (value: SichuanSettings) => void }) {
   const { t } = useTranslation();
+  const obstacleMax = maxSichuanObstacleDensity(value.size, value.density);
+  const obstacleDensity = Math.min(value.obstacleDensity ?? defaultObstacleDensity, obstacleMax);
   return <fieldset className="sichuan-settings">
     <legend>{t('sichuanBoard')}</legend>
     <label>{t('sichuanArt')}
@@ -37,6 +39,13 @@ export function SichuanSettingsFields({ value, change }: { value: SichuanSetting
       <span>{t('sichuanRandomDensity')}</span></label>
     <label className="choice"><input type="checkbox" checked={value.obstacles}
       onChange={event => change({ ...value, obstacles: event.target.checked })} /><span>{t('sichuanObstacles')}</span></label>
+    {value.obstacles && <label>{t('sichuanObstacleDensity')}
+      <small>{value.density === 'random' ? t('sichuanObstacleRandom', { percent: obstacleDensity })
+        : t('sichuanObstacleAllocation', { percent: obstacleDensity, count: sichuanObstacleCount(value.size, value.density, obstacleDensity) })}</small>
+      <input type="range" min={0} max={obstacleMax} value={obstacleDensity} disabled={obstacleMax === 0}
+        onChange={event => change({ ...value, obstacleDensity: event.target.valueAsNumber })} />
+      <small>{t('sichuanObstacleMax', { max: obstacleMax })}</small>
+    </label>}
     <label>{t('sichuanShuffleLimit')}
       <select value={value.shuffles} onChange={event => change({ ...value, shuffles: Number(event.target.value) })}>
         {[0, 1, 2, 3, 4, 5].map(count => <option key={count}>{count}</option>)}
