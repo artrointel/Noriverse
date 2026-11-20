@@ -169,7 +169,7 @@ function App() {
       case 'detail':
         return <GameDetail id={route.id} navigate={navigate} />;
       case 'setup':
-        return <GameSetup id={route.id} online={route.online} practice={route.practice} power={power} onPower={setPower}
+        return <GameSetup id={route.id} online={route.online} power={power} onPower={setPower}
           allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree} activeGame={room.code ? room.game : undefined} onStart={startGame} navigate={navigate} />;
       case 'room':
         return <RoomPage room={room} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
@@ -181,7 +181,7 @@ function App() {
         if (online && (!room.code || !room.started || room.game !== id)) {
           return <RoomPage room={room} invite="" navigate={navigate} onPlay={enterRoomGame} />;
         }
-        return <PlayPage id={id} dark={preferences.dark} power={power} practice={id === 'physics' && route.practice} navigate={navigate}
+        return <PlayPage id={id} dark={preferences.dark} power={power} navigate={navigate}
           room={online ? room : undefined} history={online ? room.history : local?.history ?? []}
           boardRound={online ? undefined : local}
           allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true} record={apiAvailable && profile.profile ? profile.record : undefined}

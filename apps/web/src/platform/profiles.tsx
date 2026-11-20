@@ -87,7 +87,7 @@ export function NameDialog({ name, close, save }: {
 }) {
   const { t, i18n } = useTranslation();
   const element = useRef<HTMLDialogElement>(null);
-  const [value, setValue] = useState(name ?? '');
+  const [value, setValue] = useState(() => name ?? readBrowserProfile()?.name ?? '');
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -291,7 +291,7 @@ export function ProfilePage({ own, id, model, navigate, edit }: {
           {profile && <img className="profile-avatar" src={avatars[profile.avatar]} alt="" width="80" height="80" />}
           <div>
             <p className="profile-kicker">{t(own ? 'myProfile' : 'publicProfile')}</p>
-            <h1 tabIndex={-1}>{profile?.name ?? t(!own && !apiAvailable ? 'serviceUnavailable' : loading ? 'profileLoading' : own ? 'profilePrompt' : 'profileMissing')}</h1>
+            <h1 tabIndex={-1}>{profile?.name ?? t(!own && !apiAvailable ? 'userProfilesUnavailable' : loading ? 'profileLoading' : own ? 'profilePrompt' : 'profileMissing')}</h1>
             {own && !apiAvailable && <p className="muted">{t('browserProfileNotice')}</p>}
             {profile && apiAvailable && <div className="profile-progress">
               <p className="profile-level">{t('levelValue', { level: profile.level })} <span>{t('totalPlayTime')} {formatPlayTime(profile.totalSeconds)}</span></p>

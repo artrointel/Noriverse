@@ -17,8 +17,8 @@ export function isOffBoard(x: number, y: number) {
   return x < alkkagiEdge || x > farEdge || y < alkkagiEdge || y > farEdge;
 }
 
-export function canFlick(status: AlkkagiStatus, owner: Stone, practice: boolean) {
-  return status.phase === 'aim' && (practice || owner === status.turn);
+export function canFlick(status: AlkkagiStatus, owner: Stone) {
+  return status.phase === 'aim' && owner === status.turn;
 }
 
 export function endShot(status: AlkkagiStatus): AlkkagiStatus {

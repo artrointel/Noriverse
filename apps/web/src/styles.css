@@ -241,7 +241,9 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .setup-form legend { font-weight: 750; padding: 0; margin-bottom: 10px; }
 .choice { display: flex; align-items: center; gap: 11px; min-height: 54px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; transition: border-color .18s, background .18s; }
 .choice:has(:checked) { background: var(--active); border-color: var(--primary); }
-.choice:hover { border-color: var(--primary); }
+.choice:not(:has(:disabled)):hover { border-color: var(--primary); }
+.choice:has(:disabled) { cursor: default; }
+.choice:has(:disabled) strong { color: var(--muted); }
 .choice input { accent-color: var(--primary); width: 17px; height: 17px; margin: 0; }
 .choice span, .seat > div { display: grid; gap: 4px; }
 .choice small, .seat small { color: var(--muted); font-size: .88rem; }
@@ -296,6 +298,8 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .match-status { display: grid; gap: 5px; padding: 16px; border-radius: 12px; background: var(--active); }
 .match-status strong { font-size: 1.45rem; letter-spacing: -.04em; }
 .match-status small, .match-status span, .power-summary span { color: var(--muted); font-size: .88rem; }
+.match-time { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0; color: var(--muted); }
+.match-time time { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; }
 .power-summary { display: grid; gap: 4px; }
 .match-rule { width: fit-content; padding: 5px 9px; border-radius: 7px; color: var(--primary); background: var(--active); font-size: .86rem; font-weight: 720; }
 .double-three-badge { padding: 7px 10px; border: 1px solid #d5b47d; border-radius: 8px; background: #fff0ca; color: #553072; font-weight: 780; animation: result-in .3s var(--ease) both; }

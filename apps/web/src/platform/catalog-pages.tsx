@@ -2,6 +2,7 @@ import { useDeferredValue, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import heroArt from '../assets/hero-orbit.jpg';
 import { apiAvailable } from '../network/api.ts';
+import { isBoardGame } from '../games/board-rules.ts';
 import type { BoardGame } from '../games/board-rules.ts';
 import type { GameId } from '../games/scenes.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
@@ -74,7 +75,7 @@ function GamePreview({ id, active, navigate, onClose }: { id: GameId; active: bo
         </section>
         <div className="preview-modes">
           <span>{t('gameMode')}</span>
-          <strong>{t('local')} · {t(id === 'physics' ? 'practice' : 'online')}</strong>
+          <strong>{isBoardGame(id) && apiAvailable ? t('newRoom') + ' · ' : ''}{t('local')}</strong>
         </div>
         <RouteLink href={gamePath(id, 'setup')} navigate={navigate} className="button button-primary preview-play">
           <i className="play-glyph" aria-hidden="true" />{t('selectGame')}
@@ -203,7 +204,7 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
                 favorite={favorites.includes(id)} disableFavorite={disableFavorite} onFavorite={onFavorite} />)}
               {visibleGames.length === 0 && <p className="surface library-empty" role="status">
                 {t(visibleFilter === 'favorites' && favorites.length === 0
-                  ? apiAvailable ? 'emptyFavorites' : 'serviceUnavailable'
+                  ? apiAvailable ? 'emptyFavorites' : 'favoritesUnavailable'
                   : 'noSearchResults')}
               </p>}
             </div>
@@ -250,15 +251,14 @@ export function GameDetail({ id, navigate }: { id: GameId; navigate: Navigate })
   );
 }
 
-export function GameSetup({ id, online, practice, power, onPower, allowDoubleThree, onRule, onStart, navigate, activeGame }: {
-  id: GameId; online: boolean; practice: boolean; power: Power; onPower: (power: Power) => void;
+export function GameSetup({ id, online, power, onPower, allowDoubleThree, onRule, onStart, navigate, activeGame }: {
+  id: GameId; online: boolean; power: Power; onPower: (power: Power) => void;
   allowDoubleThree: boolean; onRule: (allow: boolean) => void;
   onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: BoardGame;
 }) {
   const { t } = useTranslation();
-  const [mode, setMode] = useState<GameMode>(id !== 'physics' && online && apiAvailable ? 'online' : id === 'physics' && practice ? 'practice' : 'local');
-  const alternative = id === 'physics' ? 'practice' : 'online';
-  const onlineUnavailable = alternative === 'online' && !apiAvailable;
+  const roomUnavailable = !isBoardGame(id) ? 'gameRoomUnavailable' : !apiAvailable ? 'roomUnavailable' : undefined;
+  const [mode, setMode] = useState<GameMode>(online && !roomUnavailable ? 'online' : 'local');
   return (
     <div className="site-width subpage">
       <RouteLink href={gamePath(id)} navigate={navigate} className="back-link">{t(id)}</RouteLink>
@@ -268,12 +268,12 @@ export function GameSetup({ id, online, practice, power, onPower, allowDoubleThr
           <fieldset>
             <legend>{t('gameMode')}</legend>
             <label className="choice">
-              <input type="radio" name="mode" value="local" checked={mode === 'local'} onChange={() => setMode('local')} />
-              <span><strong>{t('local')}</strong><small>{t(id === 'physics' ? 'localFlickCopy' : 'localCopy')}</small></span>
+              <input type="radio" name="mode" value="online" checked={mode === 'online'} disabled={Boolean(roomUnavailable)} onChange={() => setMode('online')} />
+              <span><strong>{t('newRoom')}</strong><small>{t(roomUnavailable ?? 'onlineCopy')}</small></span>
             </label>
             <label className="choice">
-              <input type="radio" name="mode" value={alternative} checked={mode === alternative} disabled={onlineUnavailable} onChange={() => setMode(alternative)} />
-              <span><strong>{t(alternative)}</strong><small>{t(onlineUnavailable ? 'serviceUnavailable' : alternative === 'online' ? 'onlineCopy' : 'practiceCopy')}</small></span>
+              <input type="radio" name="mode" value="local" checked={mode === 'local'} onChange={() => setMode('local')} />
+              <span><strong>{t('local')}</strong><small>{t('localCopy')}</small></span>
             </label>
           </fieldset>
           {mode === 'online' && activeGame && activeGame !== id && <p className="muted">{t('otherGameRoom', { game: t(activeGame) })}</p>}

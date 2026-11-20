@@ -12,7 +12,6 @@ export interface GameView {
   cursor: number | null;
   dark: boolean;
   force: number;
-  practice: boolean;
   allowDoubleThree: boolean;
   canMove: boolean;
   finished: boolean;

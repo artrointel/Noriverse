@@ -54,7 +54,7 @@ export function alkkagiScene(view: () => GameView) {
   }
 
   function available(stone: Piece) {
-    return !view().finished && !stone.out && canFlick(status, stone.owner, view().practice);
+    return !view().finished && !stone.out && canFlick(status, stone.owner);
   }
 
   function showAim(dx: number, dy: number) {
@@ -118,20 +118,6 @@ export function alkkagiScene(view: () => GameView) {
     publish({ ...status, remaining });
   }
 
-  function resetPractice() {
-    if (stones.some(stone => stone.out)) {
-      for (const stone of stones) {
-        stage.tweens.killTweensOf(stone.sprite);
-        stone.sprite.destroy();
-        stone.shadow.destroy();
-      }
-      stones.length = 0;
-      addPiece(1, 240, 340);
-      addPiece(2, 240, 140);
-    }
-    publish({ turn: 1, remaining: [1, 1], phase: 'aim' });
-  }
-
   function handleKeyboard(event: KeyboardEvent) {
     if (pointer || status.phase !== 'aim' || !['KeyA', 'KeyD', 'ArrowLeft', 'ArrowRight',
       'ArrowUp', 'ArrowDown', 'Enter', 'Space', 'Escape'].includes(event.code)) return;
@@ -167,16 +153,12 @@ export function alkkagiScene(view: () => GameView) {
       board.paint(dark);
       aim = this.add.graphics().setDepth(2);
       group = this.physics.add.group({ classType: Phaser.Physics.Arcade.Image });
-      if (view().practice) {
-        resetPractice();
-      } else {
-        const rows = [357, 331, 351, 331, 357];
-        rows.forEach((y, index) => {
-          addPiece(1, 100 + index * 70, y);
-          addPiece(2, 100 + index * 70, tableSize - y);
-        });
-        publish(initialAlkkagi);
-      }
+      const rows = [357, 331, 351, 331, 357];
+      rows.forEach((y, index) => {
+        addPiece(1, 100 + index * 70, y);
+        addPiece(2, 100 + index * 70, tableSize - y);
+      });
+      publish(initialAlkkagi);
 
       this.physics.add.collider(group, group, (first, second) => {
         if (now - lastImpact < 55) return;
@@ -272,13 +254,9 @@ export function alkkagiScene(view: () => GameView) {
       slowSince ??= time;
       if (time - slowSince < 130) return;
       for (const stone of stones) if (!stone.out) stone.sprite.setVelocity(0);
-      if (view().practice) {
-        resetPractice();
-      } else {
-        const next = endShot(status);
-        keyboardAim = { angle: next.turn === 1 ? -Math.PI / 2 : Math.PI / 2, power: 68 };
-        publish(next);
-      }
+      const next = endShot(status);
+      keyboardAim = { angle: next.turn === 1 ? -Math.PI / 2 : Math.PI / 2, power: 68 };
+      publish(next);
     },
   };
 }

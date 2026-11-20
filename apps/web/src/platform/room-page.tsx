@@ -67,7 +67,7 @@ export function RoomPage({ room, invite, navigate, onPlay }: {
                 <button type="button" className="button button-secondary" onClick={() => { room.leave(); setCopyState('idle'); }}>{t('leave')}</button>
               </div>
             </>
-          ) : !apiAvailable ? <p className="muted">{t('serviceUnavailable')}</p> : (
+          ) : !apiAvailable ? <p className="muted">{t('roomUnavailable')}</p> : (
             <>
               <p className="muted">{t('codeHint')}</p>
               <form className="room-form" onSubmit={event => { event.preventDefault(); room.join(code); }}>

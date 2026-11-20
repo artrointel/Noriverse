@@ -8,7 +8,7 @@ import type { Navigate } from './navigation.tsx';
 
 export function GameResult({ report, winner, surrendered, scores, visible, onClose, room, record, rematch, back, navigate }: {
   report: MatchReport;
-  winner: Stone | 'draw' | 'practice';
+  winner: Stone | 'draw';
   surrendered?: Stone;
   scores?: readonly [number, number]; visible: boolean; onClose: () => void;
   room?: { canRematch: boolean; reconnect?: () => void };
@@ -28,7 +28,7 @@ export function GameResult({ report, winner, surrendered, scores, visible, onClo
     return () => { current = false; };
   }, [attempt, record, report]);
 
-  const label = winner === 'practice' ? t('practiceDone') : winner === 'draw' ? t('draw')
+  const label = winner === 'draw' ? t('draw')
     : t('winner', { stone: t(winner === 1 ? 'black' : 'white') });
   return (
     <section className="surface result-card" role="dialog" aria-labelledby="match-result-title"
@@ -52,7 +52,7 @@ export function GameResult({ report, winner, surrendered, scores, visible, onClo
       {record && report.mode === 'local' && <p className="muted result-note">{t('localRecord')}</p>}
       <div className="panel-actions">
         {(!room || room.canRematch) && <button type="button" className="button button-primary" onClick={rematch}>
-          {t(winner === 'practice' ? 'restartPractice' : 'rematch')}
+          {t('rematch')}
         </button>}
         {room?.reconnect && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}
         <RouteLink href={back} navigate={navigate} className="button button-secondary">{t(room ? 'goToRoom' : 'backToGames')}</RouteLink>

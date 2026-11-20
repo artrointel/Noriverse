@@ -19,7 +19,6 @@ function readLocation(url = new URL(location.href)) {
 export function readRoute(url: URL) {
   const invite = url.searchParams.get('room') ?? '';
   const online = url.searchParams.get('mode') === 'online';
-  const practice = url.searchParams.get('mode') === 'practice';
   const [section, id, step, extra] = url.pathname.split('/').filter(Boolean);
   if (section === 'room' || (!section && invite)) return { page: 'room', invite } as const;
   if (!section) return { page: 'home' } as const;
@@ -28,12 +27,12 @@ export function readRoute(url: URL) {
   if (section === 'games' && !id) return { page: 'games' } as const;
   if (section === 'games' && isProfileGame(id) && !extra) {
     if (!step) return { page: 'detail', id } as const;
-    if (step === 'setup' || step === 'play') return { page: step, id, online, practice } as const;
+    if (step === 'setup' || step === 'play') return { page: step, id, online } as const;
   }
   return { page: 'missing' } as const;
 }
 
-type GameMode = 'local' | 'online' | 'practice';
+type GameMode = 'local' | 'online';
 export type { GameMode };
 export const gamePath = (id: GameId, step?: 'setup' | 'play', mode: GameMode = 'local') =>
   '/games/' + id + (step ? '/' + step : '') + (mode === 'local' ? '' : '?mode=' + mode);

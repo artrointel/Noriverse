@@ -4,10 +4,9 @@ import { alkkagiEdge, canFlick, endShot, initialAlkkagi, isOffBoard } from '../a
 import { tableSize } from '../apps/web/src/games/table.ts';
 
 test('only the current player can shoot, and moving discs lock the board', () => {
-  assert.equal(canFlick(initialAlkkagi, 1, false), true);
-  assert.equal(canFlick(initialAlkkagi, 2, false), false);
-  assert.equal(canFlick(initialAlkkagi, 2, true), true);
-  assert.equal(canFlick({ ...initialAlkkagi, phase: 'moving' }, 1, false), false);
+  assert.equal(canFlick(initialAlkkagi, 1), true);
+  assert.equal(canFlick(initialAlkkagi, 2), false);
+  assert.equal(canFlick({ ...initialAlkkagi, phase: 'moving' }, 1), false);
   assert.equal(endShot({ ...initialAlkkagi, phase: 'moving', remaining: [4, 2] }).turn, 2);
 });
 
@@ -25,5 +24,5 @@ test('an empty side loses and simultaneous elimination is a draw', () => {
   const tie = endShot({ ...initialAlkkagi, remaining: [0, 0] });
   assert.equal(tie.winner, 'draw');
   assert.equal(tie.phase, 'finished');
-  assert.equal(canFlick(tie, 1, false), false);
+  assert.equal(canFlick(tie, 1), false);
 });
