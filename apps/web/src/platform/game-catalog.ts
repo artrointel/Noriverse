@@ -7,10 +7,10 @@ import type { GameId } from '../games/scenes.ts';
 
 export const games = {
   omok: { art: omokArt, category: 'strategy', players: 'twoPlayers', description: 'omokCopy', rules: 'omokRules', searchNames: '오목 omok gomoku five in a row' },
-  physics: { art: physicsArt, category: 'action', players: 'soloOrPair', description: 'physicsCopy', rules: 'physicsRules', searchNames: '알까기 alkkagi disc flick' },
+  physics: { art: physicsArt, category: 'action', players: 'upToFourPlayers', description: 'physicsCopy', rules: 'physicsRules', searchNames: '알까기 alkkagi disc flick' },
   othello: { art: othelloArt, category: 'strategy', players: 'twoPlayers', description: 'othelloCopy', rules: 'othelloRules', searchNames: '오델로 리버시 othello reversi flip discs' },
   chess: { art: chessArt, category: 'strategy', players: 'twoPlayers', description: 'chessCopy', rules: 'chessRules', searchNames: '체스 chess checkmate' },
-  sichuan: { art: sichuanArt, category: 'strategy', players: 'soloOrPair', description: 'sichuanCopy', rules: 'sichuanRules', searchNames: '사천성 sichuan shisen-sho shisensho tile matching' },
+  sichuan: { art: sichuanArt, category: 'strategy', players: 'upToFourPlayers', description: 'sichuanCopy', rules: 'sichuanRules', searchNames: '사천성 sichuan shisen-sho shisensho tile matching' },
 } as const;
 
 export const gameIds = Object.keys(games) as GameId[];

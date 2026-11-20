@@ -15,6 +15,7 @@ import type { Friends } from './friends.tsx';
 import { BackLink, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { SichuanModePicker, SichuanSettingsFields } from './sichuan-settings.tsx';
+import { FlickSettingsFields } from './flick-settings.tsx';
 import { GameSelectionGrid } from './catalog-pages.tsx';
 
 type Room = ReturnType<typeof useRoomBoard>;
@@ -59,8 +60,9 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
   const connected = room.state === 'connected';
   const hasRoom = Boolean(room.code) && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full';
-  const participants = (['host', 'guest'] as const).map(role => room.participants.find(participant => participant.role === role)
-    ?? (room.role === role || connected ? { role, profile: undefined } : undefined)).filter(participant => participant !== undefined);
+  const participants = room.role && !room.participants.some(person => person.role === room.role)
+    ? [...room.participants, { role: room.role, profile: undefined }] : room.participants;
+  const capacity = roomCapacity[activeGame];
   const gameChoices = gameIds.filter(isRoomGame).filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
 
   useEffect(() => {
@@ -112,12 +114,12 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
               </div>
               {copyState === 'manual' && <input aria-label={t('link')} readOnly value={shareUrl.href} onFocus={event => event.currentTarget.select()} />}
               <section className="room-participants" aria-label={t('participants')}>
-                <h2>{t('participants')} <small>{participants.length}/2</small></h2>
+                <h2>{t('participants')} <small>{participants.length}/{capacity}</small></h2>
                 <ul className="people-list">{participants.map(({ role, profile }) => {
-                  const color = role === 'host' ? room.hostColor : oppositeStone(room.hostColor);
+                  const color = room.colorFor(role) ?? (role === 'host' ? room.hostColor : oppositeStone(room.hostColor));
                   const own = room.role === role;
                   const participant = own ? ownProfile ?? profile : profile;
-                  const seatInfo = [t(role), activeGame === 'sichuan' ? undefined : t(sideLabel(activeGame, color)), own ? t('me') : undefined,
+                  const seatInfo = [t(role === 'host' ? 'host' : 'guest'), activeGame === 'sichuan' || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)), own ? t('me') : undefined,
                     participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
                   return (
                     <li key={role}>
@@ -128,7 +130,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                         </RouteLink>
                         {!own && <FriendButton id={participant.id} model={friends} />}
                       </> : <div className="person-link">
-                        <span className={'stone stone-' + (sideLabel(activeGame, color) === 'black' ? 0 : 1)} aria-hidden="true" />
+                        <span className={'stone stone-' + (color > 2 ? color : sideLabel(activeGame, color) === 'black' ? 0 : 1)} aria-hidden="true" />
                         <span><strong>{t('anonymousPlayer')}</strong><small>{seatInfo}</small></span>
                       </div>}
                     </li>
@@ -145,17 +147,20 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                     if (room.puzzleConfig) room.configurePuzzle({ ...room.puzzleConfig, settings });
                   }} />
                 </details>}
-              {room.state && <p className="connection" role="status">{t(connected && room.role === 'guest' && !room.started ? 'waitingStart' : room.state)}</p>}
+              {room.role === 'host' && room.flickSettings && (!room.started || room.finishedAt > 0) &&
+                <details className="room-games"><summary>{t('settings')}</summary><FlickSettingsFields value={room.flickSettings} change={room.configureFlick} /></details>}
+              {room.state && <p className="connection" role="status">{t(connected && room.role !== 'host'
+                ? room.started && !room.inMatch ? 'waitingNextRound' : !room.started ? 'waitingStart' : room.state : room.state)}</p>}
               <div className="panel-actions">
                 {room.role === 'host' && gameChoices.length > 0 && <button type="button" className="button button-secondary"
                   onClick={() => setGamesOpen(true)}>{t('changeRoomGame')}</button>}
                 {room.role === 'host' && <button className="button button-secondary" type="button"
-                  disabled={!friends.owner || participants.some(participant => participant.role === 'guest')}
+                  disabled={!friends.owner || participants.length >= capacity}
                   onClick={() => setInviteOpen(true)}>{t('inviteFriend')}</button>}
-                {connected && (room.started || room.role === 'host') && (
-                  <button type="button" className="button button-primary" disabled={room.changingGame} onClick={onPlay}>{t(room.finishedAt ? 'resultTitle' : room.started ? 'resume' : 'start')}</button>
+                {connected && ((room.started && room.inMatch) || room.role === 'host') && (
+                  <button type="button" className="button button-primary" disabled={room.changingGame || (!room.started && !room.canStart)} onClick={onPlay}>{t(room.finishedAt ? 'resultTitle' : room.started ? 'resume' : 'start')}</button>
                 )}
-                {(room.state === 'failed' || room.state === 'disconnected') && (
+                {(room.state === 'failed' || room.state === 'disconnected' || (connected && room.role === 'host' && !room.canStart)) && (
                   <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>
                 )}
               {room.rematchNotice === 'incoming' && <p role="status">{t('rematchIncoming')}</p>}

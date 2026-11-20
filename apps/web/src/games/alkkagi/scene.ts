@@ -4,13 +4,12 @@ import { addStoneShadow, createBoardArt, preloadBoard, stoneTexture } from '../b
 import { paintGoldRing } from '../board-marks.ts';
 import { createPieceSelection } from '../piece-selection.ts';
 import { tableSize } from '../table.ts';
-import type { Stone } from '../table.ts';
 import type { GameView } from '../scenes.ts';
-import { alkkagiEdge, canFlick, endShot, initialAlkkagi, initialFlickRound, isOffBoard, pieceOwner, settledStatus } from './rules.ts';
-import type { AlkkagiStatus, Flick, FlickRound, StonePosition } from './rules.ts';
+import { canFlick, defaultFlickSettings, endShot, flickDiameter, flickEdge, initialAlkkagi, initialFlickRound, isOffBoard, pieceOwner, settledStatus } from './rules.ts';
+import type { AlkkagiStatus, Flick, FlickPlayer, FlickRound, StonePosition } from './rules.ts';
 
 type Piece = {
-  owner: Stone;
+  owner: FlickPlayer;
   sprite: Phaser.Physics.Arcade.Image;
   shadow: Phaser.GameObjects.Image;
   x: number;
@@ -18,12 +17,14 @@ type Piece = {
   out: boolean;
 };
 
-const diameter = 42;
 const maxPull = 113;
 const minPull = 7;
 const stopSpeed = 12;
 
 export function alkkagiScene(view: () => GameView) {
+  const initial = view().onlineFlick ?? view().localFlick ?? initialFlickRound;
+  const settings = initial.settings ?? defaultFlickSettings;
+  const edge = flickEdge(settings), diameter = flickDiameter(settings);
   let now = 0;
   let status = initialAlkkagi;
   let board: ReturnType<typeof createBoardArt>;
@@ -45,9 +46,11 @@ export function alkkagiScene(view: () => GameView) {
     view().onAlkkagi(next);
   }
 
-  function addPiece(owner: Stone, x: number, y: number) {
+  function addPiece(owner: FlickPlayer, x: number, y: number) {
     const shadow = addStoneShadow(stage, x, y, diameter);
-    const sprite = group.create(x, y, stoneTexture(owner)) as Phaser.Physics.Arcade.Image;
+    const sprite = group.create(x, y, stoneTexture(owner === 1 ? 1 : 2)) as Phaser.Physics.Arcade.Image;
+    if (owner === 3) sprite.setTint(0x69b8ff);
+    if (owner === 4) sprite.setTint(0xff777c);
     sprite.setDisplaySize(diameter, diameter).setDepth(1);
     const radius = sprite.width * .46;
     const offset = sprite.width / 2 - radius;
@@ -150,7 +153,7 @@ export function alkkagiScene(view: () => GameView) {
         onComplete: () => { if (stone.out) sprite.setVisible(false); },
       });
     }
-    const remaining: [number, number] = [...status.remaining];
+    const remaining = [...status.remaining];
     remaining[stone.owner - 1]--;
     publish({ ...status, remaining });
   }
@@ -185,16 +188,17 @@ export function alkkagiScene(view: () => GameView) {
     preload(this: Phaser.Scene) { preloadBoard(this); },
     create(this: Phaser.Scene) {
       stage = this;
-      board = createBoardArt(this, alkkagiEdge, 19, 9);
+      board = createBoardArt(this, edge, 19, settings.board === 'small' ? 7 : settings.board === 'large' ? 13 : 9);
       dark = view().dark;
       board.paint(dark);
       aim = this.add.graphics().setDepth(2);
       showSelection = createPieceSelection(this);
       group = this.physics.add.group({ classType: Phaser.Physics.Arcade.Image });
-      initialFlickRound.layout.forEach((point, index) => {
-        if (point) addPiece(pieceOwner(index), point[0], point[1]);
+      initial.layout.forEach((point, index) => {
+        const [x, y] = point ?? [tableSize / 2, tableSize / 2];
+        addPiece(pieceOwner(index, initial.players), x, y);
       });
-      publish(initialAlkkagi);
+      applyLayout(initial);
 
       this.physics.add.collider(group, group, (first, second) => {
         if (now - lastImpact < 55) return;
@@ -288,7 +292,7 @@ export function alkkagiScene(view: () => GameView) {
       for (const stone of stones) {
         if (stone.out) continue;
         const sprite = stone.sprite;
-        if (isOffBoard(sprite.x, sprite.y)) {
+        if (isOffBoard(sprite.x, sprite.y, edge)) {
           removeStone(stone);
           continue;
         }

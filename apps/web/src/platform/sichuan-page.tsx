@@ -23,7 +23,7 @@ const GameStage = lazy(() => import('./game-stage.tsx').then(module => ({ defaul
 const setup = gamePath('sichuan', 'setup');
 function newRound(settings: SichuanSettings) {
   const options = resolveSichuanSettings(settings);
-  return { id: crypto.randomUUID(), startedAt: 0, board: createSichuanBoard(options), options, shufflesLeft: options.shuffles };
+  return { id: crypto.randomUUID(), startedAt: 0, board: createSichuanBoard(options), options, shufflesLeft: options.shuffles, hintsLeft: options.hints };
 }
 
 function PuzzleClock({ deadline }: { deadline: number }) {
@@ -57,7 +57,7 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
   const { t } = useTranslation();
   const [local, setRound] = useState(() => room ? undefined : newRound(settings));
   const [selected, setSelected] = useState<number>();
-  const [hint, setHint] = useState<readonly [number, number]>();
+  const [localHint, setHint] = useState<readonly [number, number]>();
   const [cursor, setCursor] = useState<number | null>(null);
   const [match, setMatch] = useState<{ path: readonly TilePoint[]; combo: number }>();
   const [rejected, setRejected] = useState<{ index: number }>();
@@ -72,7 +72,8 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
   const [onlineStarted, setOnlineStarted] = useState(false);
   const onlineBoard = room && puzzleBoardFor(room.puzzle, room.puzzleConfig.mode, room.role);
   const round = room && onlineBoard ? { id: room.matchId, startedAt: room.puzzleDisplayStart, options: room.puzzle.options,
-    board: onlineBoard.tiles, shufflesLeft: onlineBoard.shufflesLeft } : local!;
+    board: onlineBoard.tiles, shufflesLeft: onlineBoard.shufflesLeft, hintsLeft: onlineBoard.hintsLeft } : local!;
+  const hint = room ? onlineBoard?.hint : localHint;
   const remaining = round.board.filter(isMatchTile).length;
   const { pair, pairs } = useMemo(() => availableTileMatches(round.board), [round.board]);
   const deadline = round.startedAt ? round.startedAt + round.options.timeLimit * 1000 : 0;
@@ -115,7 +116,11 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
       setCombo(undefined);
       setFeedback('sichuanShuffled');
       if (!matchMedia('(prefers-reduced-motion: reduce)').matches) setFlip({ phase: 'backs', board: onlineBoard.tiles, previous: previous.tiles });
+    } else if (visibleEvent?.kind === 'hint' && onlineBoard?.hint && previous?.hintsLeft !== onlineBoard.hintsLeft) {
+      setSelected(undefined);
+      setFeedback('sichuanHinted');
     } else if (visibleEvent?.kind === 'pair' && previous && onlineBoard && previous.tiles.filter(isMatchTile).length !== remaining) {
+      setFeedback(undefined);
       if (visibleEvent.combo > 1) {
         setCombo({ count: visibleEvent.combo, at: performance.now() });
         playSound('combo', visibleEvent.combo);
@@ -198,10 +203,11 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
   }
 
   function reshuffle() {
-    if (!canMove || pair || round.shufflesLeft === 0) return;
+    if (!canMove || !remaining || round.shufflesLeft === 0) return;
     if (Date.now() >= deadline) { if (!room) finish('timeout', deadline); return; }
     if (room) { room.puzzleAction({ kind: 'shuffle', generation: round.shufflesLeft }); return; }
     const board = shuffleTiles(round.board);
+    if (board.every((tile, index) => tile === round.board[index])) return;
     const animate = !matchMedia('(prefers-reduced-motion: reduce)').matches;
     setRound(current => current && ({ ...current, shufflesLeft: current.shufflesLeft - 1, board: animate ? current.board : board }));
     if (animate) setFlip({ phase: 'backs', board });
@@ -230,7 +236,9 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
   }
 
   function showHint() {
-    if (!canMove || !pair || Date.now() >= deadline) return;
+    if (!canMove || !pair || hint || !round.hintsLeft || Date.now() >= deadline) return;
+    if (room) { room.puzzleAction({ kind: 'hint', generation: round.shufflesLeft, hintsLeft: round.hintsLeft }); return; }
+    setRound(current => current && ({ ...current, hintsLeft: current.hintsLeft - 1 }));
     setHint(pair);
     setSelected(undefined);
     setFeedback('sichuanHinted');
@@ -243,12 +251,12 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
   const back = room ? '/room' : setup;
   const description = t('sichuanTheme_' + round.options.theme) + ` · ${round.options.size} × ${round.options.size} · ${round.options.density}%`;
   const feedbackText = flip ? t('sichuanShuffling') : feedback ? t(feedback) : !finished && canMove && !pair ? t('sichuanNoPairs') : undefined;
-  const stats = room ? (['host', 'guest'] as const).map(role => ({ role, ...room.puzzle.stats[role],
+  const stats = room ? room.puzzle.players.map(role => ({ role, ...room.puzzle.stats[role]!,
     profile: (role === room.role ? ownProfile : undefined) ?? room.participants.find(player => player.role === role)?.profile,
     outcome: onlineResult && puzzleOutcome(onlineResult, role) }))
     : [{ role: 'solo', maxCombo: localMax, removed: localRemoved, profile: ownProfile, outcome }];
   const results = <section className="sichuan-score" aria-label={t('sichuanPlayerStats')}>
-    {stats.map(row => <div key={row.role}><strong>{row.profile?.name ?? t(row.role === 'solo' ? 'me' : row.role)}
+    {stats.map(row => <div key={row.role}><strong>{row.profile?.name ?? t(row.role === 'solo' ? 'me' : row.role === 'host' ? 'host' : 'guest')}
       {row.outcome && <small>{t('outcome_' + row.outcome)}</small>}</strong>
       <span>{t('sichuanMaxCombo')} <b>{row.maxCombo}</b></span><span>{t('sichuanRemovedTiles')} <b>{row.removed}</b></span></div>)}
   </section>;
@@ -257,13 +265,14 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
     <small>{description}</small>
     <p className="match-time"><span>{t('sichuanRemovable')}</span><strong>{pairs}</strong></p>
     <p className="match-time"><span>{t('sichuanShufflesLeft')}</span><strong>{round.shufflesLeft}</strong></p>
+    <p className="match-time"><span>{t('sichuanHintsLeft')}</span><strong>{round.hintsLeft}</strong></p>
     {round.startedAt > 0 && !finished && <PlayTime key={round.id} startedAt={round.startedAt} />}
     {room && <><p className="connection" role="status">{t(room.state ?? 'joining')}</p>{results}
       {(room.state === 'failed' || room.state === 'disconnected') && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}</>}
   </>;
   const result = report && <GameResult key={report.id} report={report} winner={1} title={status} visible={showResult} onClose={() => setShowResult(false)}
-    details={results} room={room && { canRematch: room.role === 'host' && room.state === 'connected',
-      request: room.role === 'guest' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
+    details={results} room={room && { canRematch: room.role === 'host' && room.canStart,
+      request: room.role !== 'host' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
     record={record} rematch={reset} back={room ? '/room' : '/games'} navigate={navigate} />;
 
   return <div className="site-width subpage play-page">
@@ -285,8 +294,8 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
                 endedAt: end ? end + round.startedAt - recordStart : undefined,
                 remaining: remaining / 2, available: pairs, shuffles: round.shufflesLeft,
                 labels: { timeLeft: t('sichuanHudTime'), remaining: t('sichuanHudRemaining'), available: t('sichuanHudAvailable'),
-                  shuffles: t('sichuanShufflesLeft'), elapsed: t('playTime'), shuffle: t('sichuanShuffle'), hint: t('sichuanHint') },
-                shuffle: canMove && !pair && round.shufflesLeft > 0 ? reshuffle : undefined, hint: canMove && pair ? showHint : undefined } } }} />
+                  shuffles: t('sichuanShufflesLeft'), elapsed: t('playTime'), shuffle: t('sichuanShuffle'), hint: t('sichuanHint') + ' · ' + round.hintsLeft },
+                shuffle: canMove && remaining && round.shufflesLeft > 0 ? reshuffle : undefined, hint: canMove && pair && !hint && round.hintsLeft > 0 ? showHint : undefined } } }} />
       </Suspense>
       <span className="visually-hidden" role="status">{feedbackText}</span>
       <span className="visually-hidden" role="status">{combo && combo.count > 1 && <span key={combo.at}>{t('sichuanCombo', { count: combo.count })}</span>}</span>

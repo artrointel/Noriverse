@@ -2,8 +2,8 @@ import { lazy, Suspense, useEffect, useEffectEvent, useMemo, useRef, useState } 
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, ProfileSummary, TouchEffect } from '../../../../packages/protocol/profile.ts';
-import { initialAlkkagi, settledStatus } from '../games/alkkagi/rules.ts';
-import type { AlkkagiStatus } from '../games/alkkagi/rules.ts';
+import { createFlickRound, flickPlayers, initialAlkkagi, settledStatus } from '../games/alkkagi/rules.ts';
+import type { AlkkagiStatus, FlickSettings } from '../games/alkkagi/rules.ts';
 import { boardRules, isBoardGame } from '../games/board-rules.ts';
 import { chessIndex, chessPosition, chessSquare, encodeChessMove } from '../games/chess/rules.ts';
 import { doubleThreeAxes, isForbiddenDoubleThree } from '../games/omok/rules.ts';
@@ -81,9 +81,9 @@ function TurnClock({ deadline, enabled, audible = false, onExpired, compact = fa
   </p>;
 }
 
-export function PlayPage({ id, dark, antialias, resolution, onResolution, onAntialias, room, ownProfile, power, turnLimit, history, boardRound, allowDoubleThree, overline, move, reset, endLocal, decideLocal, record, navigate,
+export function PlayPage({ id, dark, antialias, resolution, onResolution, onAntialias, room, ownProfile, power, flickSettings, turnLimit, history, boardRound, allowDoubleThree, overline, move, reset, endLocal, decideLocal, record, navigate,
   showTouches, onTouchDisplay, touchStyle }: {
-  id: GameId; dark: boolean; antialias: boolean; room?: Room; ownProfile?: ProfileSummary; power: Power; turnLimit: TurnLimit; history: number[];
+  id: GameId; dark: boolean; antialias: boolean; room?: Room; ownProfile?: ProfileSummary; power: Power; flickSettings: FlickSettings; turnLimit: TurnLimit; history: number[];
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   boardRound?: ReturnType<typeof createLocalRound>;
   allowDoubleThree: boolean; overline: OmokOverline; move: (index: number) => void; reset: () => void;
@@ -96,7 +96,8 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const [cursor, setCursor] = useState<number | null>(null);
   const [tapPreview, setTapPreview] = useState<{ index: number; matchId: string; history: number[]; at: number }>();
   const [chessChoice, setChessChoice] = useState<{ matchId: string; revision: number; last?: number; from: number; to?: number }>();
-  const [alkkagi, setAlkkagi] = useState(initialAlkkagi);
+  const [localFlick, setLocalFlick] = useState(() => id === 'physics' && !room ? createFlickRound(flickSettings) : undefined);
+  const [alkkagi, setAlkkagi] = useState(() => localFlick ? settledStatus(localFlick) : initialAlkkagi);
   const [localRound, setLocalRound] = useState(() => createLocalRound(turnLimit));
   const [confirmSurrender, setConfirmSurrender] = useState(false);
   const [waitingSurrender, setWaitingSurrender] = useState(false);
@@ -119,7 +120,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const pending = room?.timeoutPending ?? boardRound?.timeoutPending ?? localRound.timeoutPending;
   const loser = surrendered ?? timedOut;
   const outcome = loser ? oppositeStone(loser) : isBoardGame(id) ? boardRules[id].result(history, overline) : flickStatus.winner;
-  const canReset = !room || (room.role === 'host' && room.state === 'connected');
+  const canReset = !room || (room.role === 'host' && room.canStart);
   const back = room ? '/room' : gamePath(id, 'setup');
   const backLabel = room ? 'goToRoom' : 'settings';
   const busy = !isBoard && flickStatus.phase === 'moving';
@@ -131,10 +132,13 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const mode = room ? 'online' : 'local';
   const firstPlayerColor = boardRound?.firstPlayerColor ?? localRound.firstPlayerColor;
   const playerColor = room?.playerColor ?? firstPlayerColor;
+  const multiplayerFlick = Boolean(room?.physics && (room.physics.players ?? 2) > 2);
+  const eliminated = multiplayerFlick && !flickStatus.remaining[playerColor - 1];
+  const localTurn = turn === 2 ? 2 : 1;
   const canMove = !outcome && !pending && !waitingSurrender && (room ? room.canMove : !busy);
   const yourTurn = Boolean(room && canMove);
   const status = outcome ? t('gameFinished') : pending ? t('turnTimeout', { stone: t(sideLabel(id, pending.color)) })
-    : busy ? t('settling') : waitingSurrender ? t('surrenderPending')
+    : eliminated ? t('flickEliminated') : busy ? t('settling') : waitingSurrender ? t('surrenderPending')
     : room && room.state !== 'connected' ? t('turnDisconnected')
     : room ? t(yourTurn ? 'yourTurn' : 'opponentTurn') : t('turns', { stone: t(sideLabel(id, turn)) });
   const report = useMemo<MatchReport | undefined>(() => {
@@ -164,7 +168,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   useEffect(() => {
     setWaitingSurrender(false);
     setConfirmSurrender(false);
-  }, [matchId, room?.state]);
+  }, [matchId, room?.state, room?.physics?.revision, eliminated]);
 
   useEffect(() => {
     if (!tapPreview) return;
@@ -223,21 +227,23 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
       reset();
       return;
     }
-    setLocalRound(createLocalRound(localRound.turnLimit, rematchPlayerColor(firstPlayerColor, outcome, loser)));
-    setAlkkagi(initialAlkkagi);
+    const next = createFlickRound(flickSettings);
+    setLocalFlick(next);
+    setLocalRound(createLocalRound(localRound.turnLimit, rematchPlayerColor(firstPlayerColor, outcome === 3 || outcome === 4 ? undefined : outcome, loser)));
+    setAlkkagi(settledStatus(next));
   };
 
   function surrender() {
     if (outcome) return;
     setConfirmSurrender(false);
     if (room) {
-      if (room.surrender() && room.role === 'guest') setWaitingSurrender(true);
+      if (room.surrender() && room.role !== 'host') setWaitingSurrender(true);
     } else if (isBoard) {
-      endLocal(turn);
+      endLocal(localTurn);
     } else {
       const now = Date.now();
       setLocalRound(current => current.finishedAt || (current.deadline && now >= current.deadline) ? current
-        : { ...current, finishedAt: now, surrendered: turn, deadline: 0, timeoutPending: undefined });
+        : { ...current, finishedAt: now, surrendered: localTurn, deadline: 0, timeoutPending: undefined });
     }
   }
 
@@ -257,25 +263,25 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
     {!outcome && <PlayTime key={matchId} startedAt={startedAt} />}
     {!outcome && <TurnClock key={matchId + '/' + deadline} deadline={deadline} enabled={Boolean(limit)} audible={!room || turn === playerColor} onExpired={() => {
       if (room) return;
-      if (isBoard) endLocal(turn, deadline);
+      if (isBoard) endLocal(localTurn, deadline);
       else setLocalRound(current => current.finishedAt || current.deadline !== deadline ? current
-        : { ...current, timeoutPending: { color: turn, at: deadline }, deadline: 0 });
+        : { ...current, timeoutPending: { color: localTurn, at: deadline }, deadline: 0 });
     }} />}
     <section aria-label={room ? t('participants') : undefined}>
       {room && <h2 className="match-roster-label">{t('participants')}</h2>}
       <ul className={room ? 'seats match-roster' : 'seats'}>
-        {([1, 2] as const).map((stone, index) => {
-          const role = stone === room?.hostColor ? 'host' : 'guest';
+        {flickPlayers.slice(0, room?.physics?.players ?? 2).map((stone, index) => {
+          const role = room?.physicsSeats?.[index] ?? (stone === room?.hostColor ? 'host' : 'guest');
           const ownSeat = room?.playerColor === stone;
           const participant = room?.participants.find(candidate => candidate.role === role);
           const profile = ownSeat ? ownProfile ?? participant?.profile : participant?.profile;
           const side = t(sideLabel(id, stone));
           return <li className="seat" key={stone} data-active={!outcome && !busy && turn === stone}>
             {profile ? <img className="seat-avatar" src={avatars[profile.avatar]} alt="" width="34" height="34" />
-              : <span className={'stone stone-' + (sideLabel(id, stone) === 'black' ? 0 : 1)} aria-hidden="true" />}
+              : <span className={'stone stone-' + (stone > 2 ? stone : sideLabel(id, stone) === 'black' ? 0 : 1)} aria-hidden="true" />}
             <div>
               <strong title={profile?.name}>{room ? profile?.name ?? t('anonymousPlayer') : side}</strong>
-              {room ? <small>{[side, t(ownSeat ? 'me' : role), profile ? t('levelValue', { level: profile.level }) : undefined].filter(Boolean).join(' · ')}</small>
+              {room ? <small>{[side, t(ownSeat ? 'me' : role === 'host' ? 'host' : 'guest'), profile ? t('levelValue', { level: profile.level }) : undefined].filter(Boolean).join(' · ')}</small>
                 : <small>{t(stone === firstPlayerColor ? 'playerOne' : 'playerTwo')}</small>}
               {othello && <small>{t('discCount', { count: othello.scores[index] })}</small>}
               {!isBoard && <small>{t('remaining', { count: flickStatus.remaining[index] })}</small>}
@@ -291,14 +297,14 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
     {(room?.state === 'failed' || room?.state === 'disconnected') && (
       <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>
     )}
-    {!outcome && !confirmSurrender && <button type="button" className="button button-secondary" disabled={waitingSurrender || Boolean(room && room.state !== 'connected')}
+    {!outcome && !eliminated && !confirmSurrender && <button type="button" className="button button-secondary" disabled={waitingSurrender || (multiplayerFlick && busy) || Boolean(room && room.state !== 'connected')}
       onClick={() => setConfirmSurrender(true)}>{t('surrender')}</button>}
     {waitingSurrender && <p role="status" className="muted">{t('surrenderPending')}</p>}
-    {!outcome && confirmSurrender && (
+    {!outcome && !eliminated && confirmSurrender && (
       <div className="surrender-confirm">
         <p>{t('confirmSurrender', { stone: t(sideLabel(id, room ? playerColor : turn)) })}</p>
         <div className="panel-actions">
-          <button type="button" className="button button-primary" onClick={surrender}>{t('surrender')}</button>
+          <button type="button" className="button button-primary" disabled={multiplayerFlick && busy} onClick={surrender}>{t('surrender')}</button>
           <button type="button" className="button button-secondary" onClick={() => setConfirmSurrender(false)}>{t('cancel')}</button>
         </div>
       </div>
@@ -307,7 +313,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const resultPanel = outcome && report && <GameResult key={report.id} report={report} winner={outcome} surrendered={surrendered} timedOut={timedOut}
     scores={othello?.scores} visible={resultVisible} onClose={() => setClosedResult(report.id)} record={record} rematch={restart}
     room={room && { canRematch: canReset, reconnect: room.state === 'disconnected' || room.state === 'failed' ? room.reconnect : undefined,
-      request: room.role === 'guest' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
+      request: room.role !== 'host' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
     back={room ? '/room' : '/games'} navigate={navigate} />;
 
   const deadlineDecision = pending && !outcome && <TimeoutDecision key={pending.at}
@@ -355,6 +361,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
             history, cursor: canMove && tapPreview?.matchId === matchId && tapPreview.history === history ? tapPreview.index : cursor,
             chessSelected: choice?.from, chessTargets, dark, allowDoubleThree, onAlkkagi: updateAlkkagi,
             force: room?.power ?? (power === 'fast' ? 1.35 : 1),
+            localFlick,
             onlineFlick: room?.physics && { ...room.physics, host: room.role === 'host', send: room.flick, settle: room.settleFlick },
             canMove, deadline, finished: Boolean(outcome), move: tryMove,
           }} />

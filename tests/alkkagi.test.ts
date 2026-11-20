@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { alkkagiEdge, canFlick, endShot, initialAlkkagi, initialFlickRound, isOffBoard, readFlick, readFlickRound, settledStatus } from '../apps/web/src/games/alkkagi/rules.ts';
+import { advanceFlickRound, alkkagiEdge, canFlick, createFlickRound, defaultFlickSettings, endShot, flickBoardSizes, flickDiameter, flickEdge, initialAlkkagi, initialFlickRound, isOffBoard, pieceOwner, readFlick, readFlickRound, settledStatus } from '../apps/web/src/games/alkkagi/rules.ts';
 import { tableSize } from '../apps/web/src/games/table.ts';
 
 test('only the current player can shoot, and moving discs lock the board', () => {
@@ -40,4 +40,33 @@ test('online flicks validate owner and speed, and settled layouts decide the win
   const settled = readFlickRound({ layout, revision: 1 }, 1);
   assert.equal(settledStatus(settled!).winner, 1);
   assert.equal(readFlickRound({ layout: [[10, 10], ...layout.slice(1)], revision: 1 }, 1), undefined);
+});
+
+test('four players have the configured stones and non-overlapping placements on every board size', () => {
+  for (const board of flickBoardSizes) for (const stones of [3, 5, 7]) for (const random of [false, true]) {
+    const settings = { board, stones, random };
+    const round = createFlickRound(settings, 4, () => .37);
+    assert.deepEqual(settledStatus(round).remaining, [stones, stones, stones, stones]);
+    assert.ok(readFlickRound(round, 1));
+    const diameter = flickDiameter(settings);
+    round.layout.forEach((point, index) => {
+      assert.ok(point && !isOffBoard(...point, flickEdge(settings)));
+      for (const other of round.layout.slice(index + 1)) {
+        assert.ok(other && Math.hypot(point[0] - other[0], point[1] - other[1]) >= diameter);
+      }
+    });
+  }
+});
+
+test('eliminated flick players are skipped and the earliest elimination remains last place', () => {
+  const initial = createFlickRound(defaultFlickSettings, 4);
+  const remove = (round: typeof initial, player: 1 | 2 | 3 | 4) => advanceFlickRound(round,
+    round.layout.map((point, index) => pieceOwner(index, round.players) === player ? null : point), player);
+  const first = remove(initial, 2);
+  assert.equal(settledStatus(first).turn, 1);
+  const second = remove(first, 1);
+  assert.equal(settledStatus(second).turn, 3);
+  const final = remove(second, 4);
+  assert.equal(settledStatus(final).winner, 3);
+  assert.deepEqual(final.eliminated, [2, 1, 4]);
 });

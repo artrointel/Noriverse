@@ -139,7 +139,12 @@ function bestRearrangement(board: readonly Tile[], motifs: number[], random: () 
 
 export function shuffleTiles(board: readonly Tile[], random = Math.random) {
   const motifs = board.filter(isMatchTile).sort((a, b) => a - b).filter((_, index) => index % 2 === 0);
-  return bestRearrangement(board, motifs, random, true);
+  const next = bestRearrangement(board, motifs, random, true);
+  if (next.some((tile, index) => tile !== board[index])) return next;
+  const [first, ...rest] = motifs;
+  const second = rest.find(motif => motif !== first);
+  if (second === undefined || !availableTileMatches(next).pair) return next;
+  return next.map(tile => tile === first ? second : tile === second ? first : tile);
 }
 
 export function createSichuanBoard(settings = resolveSichuanSettings(defaultSichuanSettings), random = Math.random) {

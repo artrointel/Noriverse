@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { defaultObstacleDensity, maxSichuanObstacleDensity, sichuanObstacleCount, sichuanSizes, sichuanThemes, sichuanTimeLimits } from '../games/sichuan/options.ts';
+import { defaultHints, defaultObstacleDensity, maxSichuanObstacleDensity, sichuanObstacleCount, sichuanSizes, sichuanThemes, sichuanTimeLimits } from '../games/sichuan/options.ts';
 import type { SichuanMode, SichuanSettings, SichuanSize } from '../games/sichuan/options.ts';
 import { formatPlayTime } from './profiles.tsx';
 
@@ -48,6 +48,11 @@ export function SichuanSettingsFields({ value, change }: { value: SichuanSetting
     </label>}
     <label>{t('sichuanShuffleLimit')}
       <select value={value.shuffles} onChange={event => change({ ...value, shuffles: Number(event.target.value) })}>
+        {[0, 1, 2, 3, 4, 5].map(count => <option key={count}>{count}</option>)}
+      </select>
+    </label>
+    <label>{t('sichuanHintLimit')}
+      <select value={value.hints ?? defaultHints} onChange={event => change({ ...value, hints: Number(event.target.value) })}>
         {[0, 1, 2, 3, 4, 5].map(count => <option key={count}>{count}</option>)}
       </select>
     </label>

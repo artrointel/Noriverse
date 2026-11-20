@@ -286,6 +286,8 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .stone { width: 31px; height: 31px; flex: none; background-size: contain; background-repeat: no-repeat; filter: drop-shadow(1px 2px 2px #1b102044); }
 .stone-0 { background-image: url('./assets/baduk-black.png'); }
 .stone-1 { background-image: url('./assets/baduk-white.png'); }
+.stone-3 { background: radial-gradient(circle at 34% 27%, #b8e6ff, #4594df 57%, #214b86); }
+.stone-4 { background: radial-gradient(circle at 34% 27%, #ffb4ab, #e96265 57%, #8d3047); }
 .connection { color: var(--muted); font-size: .94rem; }
 .panel-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .missing { display: grid; justify-items: start; gap: 23px; }

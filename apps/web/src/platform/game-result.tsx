@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { MatchReport } from '../../../../packages/protocol/profile.ts';
 import type { Stone } from '../games/table.ts';
+import type { AlkkagiWinner } from '../games/alkkagi/rules.ts';
 import { sideLabel } from '../games/table.ts';
 import { formatPlayTime } from './profiles.tsx';
 import { RouteLink } from './navigation.tsx';
@@ -12,7 +13,7 @@ import { isTurnBasedGame } from '../games/board-rules.ts';
 
 export function GameResult({ report, winner, title, surrendered, timedOut, scores, details, visible, onClose, room, record, rematch, back, navigate }: {
   report: MatchReport;
-  winner: Stone | 'draw';
+  winner: AlkkagiWinner;
   title?: string;
   details?: ReactNode;
   surrendered?: Stone;

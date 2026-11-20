@@ -159,3 +159,29 @@ test('co-op shares removals and scores a tile pair only once across both players
     assert.equal(current.stats[role].maxCombo, 7);
   }
 });
+
+test('all four puzzle players must be ready, with independent race and shared co-op tools', () => {
+  const players = ['host', 'guest', 'guest2', 'guest3'] as const;
+  for (const mode of ['race', 'coop'] as const) {
+    const config = { mode, settings: { ...defaultSichuanSettings, hints: 1, theme: 'numbers' } } as const;
+    let round = makePuzzleRound(config, () => .37, players);
+    for (const player of players.slice(0, 3)) round = readyPuzzle(round, player, 1000)!;
+    assert.equal(round.beginsAt, 0);
+    round = readyPuzzle(round, 'guest3', 1000)!;
+    const before = puzzleBoardFor(round, mode, 'guest3')!;
+    assert.ok(availableTileMatches(before.tiles).pair);
+    const hint = { kind: 'hint', generation: before.shufflesLeft, hintsLeft: before.hintsLeft };
+    const hinted = applyPuzzleAction(round, mode, 'guest3', hint, round.beginsAt)!;
+    assert.equal(puzzleBoardFor(hinted, mode, 'guest3')?.hintsLeft, 0);
+    assert.equal(puzzleBoardFor(hinted, mode, 'host')?.hintsLeft, mode === 'coop' ? 0 : 1);
+    assert.equal(applyPuzzleAction(hinted, mode, 'guest3', hint, round.beginsAt), undefined);
+    const shuffled = applyPuzzleAction(hinted, mode, 'guest3', { kind: 'shuffle', generation: before.shufflesLeft }, round.beginsAt, () => .37)!;
+    const after = puzzleBoardFor(shuffled, mode, 'guest3')!;
+    assert.equal(after.shufflesLeft, before.shufflesLeft - 1);
+    assert.notDeepEqual(after.tiles, before.tiles);
+    assert.equal(after.hint, undefined);
+    assert.ok(availableTileMatches(after.tiles).pair);
+    assert.ok(readPuzzleRound(JSON.parse(JSON.stringify(shuffled)), config));
+    assert.equal(readPuzzleRound({ ...shuffled, players: ['host', 'guest', 'guest', 'guest3'] }, config), undefined);
+  }
+});

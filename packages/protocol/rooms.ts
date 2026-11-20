@@ -4,10 +4,12 @@ import type { ProfileGame, ProfileSummary } from './profile.ts';
 const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 export const roomCodePattern = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
 export type RoomGame = ProfileGame;
-export const roomCapacity = { omok: 2, physics: 2, othello: 2, chess: 2, sichuan: 2 } satisfies Record<RoomGame, number>;
+export const roomCapacity = { omok: 2, physics: 4, othello: 2, chess: 2, sichuan: 4 } satisfies Record<RoomGame, number>;
 export const isRoomGame = (value: unknown): value is RoomGame => typeof value === 'string' && Object.hasOwn(roomCapacity, value);
 
-export type Role = 'host' | 'guest';
+export const roomRoles = ['host', 'guest', 'guest2', 'guest3'] as const;
+export type Role = (typeof roomRoles)[number];
+export const isRoomRole = (value: unknown): value is Role => roomRoles.some(role => role === value);
 export interface Participant { role: Role; profile?: ProfileSummary }
 export type TouchPoint = { x: number; y: number };
 export const touchResolution = 1000;
@@ -38,10 +40,11 @@ export type Signal =
   | { type: 'offer' | 'answer'; sdp: string }
   | { type: 'ice'; candidate: IceCandidate };
 export type RoomMessage =
-  | Signal
+  | (Signal & { peer?: Role })
   | { type: 'welcome'; role: Role; token: string }
   | { type: 'roster'; participants: Participant[] }
-  | { type: 'paired' | 'peer-left' | 'room-closed' }
+  | { type: 'paired' | 'peer-left'; peer?: Role }
+  | { type: 'room-closed' }
   | { type: 'error'; reason: 'missing' | 'full' | 'token' };
 
 export function createRoomCode(): string {

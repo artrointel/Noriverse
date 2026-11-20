@@ -27,6 +27,8 @@ import { createLocalRound, PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
 import { SichuanModePicker, SichuanSettingsFields } from './platform/sichuan-settings.tsx';
 import { defaultSichuanSettings } from './games/sichuan/options.ts';
+import { defaultFlickSettings } from './games/alkkagi/rules.ts';
+import { FlickSettingsFields } from './platform/flick-settings.tsx';
 import type { SichuanMode } from './games/sichuan/options.ts';
 import { puzzleOutcome } from './games/sichuan/multiplayer.ts';
 import { RoomPage } from './platform/room-page.tsx';
@@ -50,13 +52,14 @@ function App() {
   const friends = useFriends(profile.profile?.id, route.page === 'friends');
   const presence = profile.profile?.presence ?? 'online';
   const invitations = useInvitations(profile.profile?.id, presence, profile.syncPresence);
-  const playGame = route.page === 'play' && (!route.online || (room.code && room.started && room.game === route.id
+  const playGame = route.page === 'play' && (!route.online || (room.code && room.inMatch && room.started && room.game === route.id
     && room.state !== 'closed' && room.state !== 'missing')) ? route.id : undefined;
   const [localBoards, setLocalBoards] = useState(() => {
     const boards = Object.fromEntries(Object.keys(boardRules).map(id => [id, createLocalBoard()]));
     return boards as Record<BoardGame, ReturnType<typeof createLocalBoard>>;
   });
   const [power, setPower] = useState<Power>('standard');
+  const [flickSettings, setFlickSettings] = useState(defaultFlickSettings);
   const [allowDoubleThree, setAllowDoubleThree] = useState(true);
   const [sichuanSettings, setSichuanSettings] = useState(defaultSichuanSettings);
   const [sichuanMode, setSichuanMode] = useState<SichuanMode>('race');
@@ -85,7 +88,7 @@ function App() {
   useEffect(() => { setMusicScene(route.page === 'play' ? route.id : 'lobby'); }, [route.page, route.id]);
 
   useEffect(() => {
-    if (!profile.profile || !room.playerColor || !room.finishedAt || !room.matchId || lastAwayResult.current === room.matchId
+    if (!profile.profile || !room.inMatch || !room.playerColor || !room.finishedAt || !room.matchId || lastAwayResult.current === room.matchId
       || (route.page === 'play' && route.id === room.game && route.online)) return;
     const loser = room.surrendered ?? room.timedOut;
     const winner = loser ? oppositeStone(loser) : room.winner;
@@ -98,7 +101,7 @@ function App() {
       id: matchId, game: room.game, mode: 'online', outcome,
       seconds: elapsedPlaySeconds(room.puzzle?.beginsAt || room.startedAt, room.finishedAt),
     }).then(saved => { if (!saved && lastAwayResult.current === matchId) lastAwayResult.current = ''; });
-  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.startedAt, room.puzzle, room.role, route]);
+  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.startedAt, room.puzzle, room.role, room.inMatch, route]);
 
   useEffect(() => {
     const view = route.id ? t(route.id) : route.page === 'room' ? t('room')
@@ -110,7 +113,7 @@ function App() {
   useEffect(() => {
     if (!room.started) {
       matchOpened.current = '';
-    } else if (room.role === 'guest' && matchOpened.current !== room.matchId) {
+    } else if (room.role && room.role !== 'host' && room.inMatch && matchOpened.current !== room.matchId) {
       if (route.page === 'room') {
         matchOpened.current = room.matchId;
         navigate(gamePath(room.game, 'play', 'online'));
@@ -118,13 +121,13 @@ function App() {
         matchOpened.current = room.matchId;
       }
     }
-  }, [room.game, room.started, room.role, room.matchId, route, navigate]);
+  }, [room.game, room.started, room.role, room.inMatch, room.matchId, route, navigate]);
 
   useEffect(() => {
-    if (room.role === 'guest' && room.matchId && route.page === 'play' && route.online && (!room.started || route.id !== room.game)) {
+    if (room.role && room.role !== 'host' && room.matchId && route.page === 'play' && route.online && (!room.started || !room.inMatch || route.id !== room.game)) {
       navigate('/room', true);
     }
-  }, [room.game, room.started, room.role, room.matchId, route, navigate]);
+  }, [room.game, room.started, room.role, room.inMatch, room.matchId, route, navigate]);
 
   async function startGame(mode: GameMode) {
     if (route.page !== 'setup') return false;
@@ -132,9 +135,11 @@ function App() {
     if (mode === 'online' && isRoomGame(id)) {
       const setupUrl = location.href;
       if ((!room.code || room.state === 'closed' || room.state === 'missing' || room.state === 'full') && room.state !== 'joining') {
-        if (!await room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1, overline, { mode: sichuanMode, settings: sichuanSettings })) return false;
+        if (!await room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1, overline, { mode: sichuanMode, settings: sichuanSettings }, flickSettings)) return false;
       } else if (id === 'sichuan' && room.game === 'sichuan' && room.role === 'host' && !room.started) {
         room.configurePuzzle({ mode: sichuanMode, settings: sichuanSettings });
+      } else if (id === 'physics' && room.game === 'physics' && room.role === 'host' && !room.started) {
+        room.configureFlick(flickSettings);
       }
       if (location.href === setupUrl) navigate('/room');
     } else {
@@ -191,8 +196,7 @@ function App() {
   }
 
   function enterRoomGame() {
-    room.start();
-    navigate(gamePath(room.game, 'play', 'online'));
+    if (room.started ? room.inMatch : room.start()) navigate(gamePath(room.game, 'play', 'online'));
   }
 
   function rejoinRoom() {
@@ -263,7 +267,8 @@ function App() {
         return <GameSetup id={route.id} online={route.online} power={power} onPower={setPower}
           turnLimit={turnLimit} onTurnLimit={setTurnLimit}
           allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree} overline={overline} onOverline={setOverline}
-          extraSettings={route.id === 'sichuan' && <SichuanSettingsFields value={sichuanSettings} change={setSichuanSettings} />}
+          extraSettings={route.id === 'sichuan' ? <SichuanSettingsFields value={sichuanSettings} change={setSichuanSettings} />
+            : route.id === 'physics' ? <FlickSettingsFields value={flickSettings} change={setFlickSettings} /> : undefined}
           onlineSettings={route.id === 'sichuan' && <SichuanModePicker value={sichuanMode} change={setSichuanMode} />}
           activeGame={room.code && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full' ? room.game : undefined}
           onStart={startGame} navigate={navigate} />;
@@ -287,7 +292,7 @@ function App() {
             onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'} navigate={navigate}
             record={apiAvailable && profile.profile ? profile.record : undefined} />;
         }
-        return <PlayPage id={id} dark={preferences.dark} antialias={preferences.antialias} power={power} turnLimit={turnLimit} navigate={navigate}
+        return <PlayPage id={id} dark={preferences.dark} antialias={preferences.antialias} power={power} flickSettings={flickSettings} turnLimit={turnLimit} navigate={navigate}
           resolution={preferences.resolution} onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias}
           showTouches={preferences.showTouches} onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
           room={online ? room : undefined} ownProfile={profile.profile} history={online ? room.history : local?.history ?? []}

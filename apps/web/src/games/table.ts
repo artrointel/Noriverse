@@ -7,4 +7,5 @@ export function rematchPlayerColor(color: Stone, winner?: Stone | 'draw', forfei
   return loser === 2 ? oppositeStone(color) : color;
 }
 
-export const sideLabel = (game: string, side: Stone) => (game === 'chess' ? side === 2 : side === 1) ? 'black' : 'white';
+export const sideLabel = (game: string, side: 1 | 2 | 3 | 4) => side === 3 ? 'flickBlue' : side === 4 ? 'flickRed'
+  : (game === 'chess' ? side === 2 : side === 1) ? 'black' : 'white';

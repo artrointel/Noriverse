@@ -27,6 +27,7 @@ export interface GameView {
   finished: boolean;
   move: (index: number, touch?: boolean) => void;
   onAlkkagi: (status: AlkkagiStatus) => void;
+  localFlick?: FlickRound;
   onlineFlick?: FlickRound & { host: boolean; send: (shot: Flick) => void; settle: (layout: StonePosition[], revision: number) => void };
   sichuan?: { board: readonly Tile[]; size: SichuanSize; theme: SichuanTheme; selected?: number;
     hint?: readonly [number, number]; match?: { path: readonly TilePoint[]; combo: number }; rejected?: { index: number };
