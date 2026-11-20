@@ -84,10 +84,12 @@ export default {
       const body = await readBody(request);
       const game = body && typeof body === 'object' && 'game' in body ? body.game : 'omok';
       if (!isProfileGame(game)) return cors(new Response(null, { status: 400 }));
+      const session = profileSession(request, external);
+      const profile = session && await env.PROFILES.getByName(session.id).summary(session.secret);
       for (let attempt = 0; attempt < 4; attempt++) {
         const code = createRoomCode();
         const room = env.ROOMS.getByName(code);
-        const token = await room.reserve(game);
+        const token = await room.reserve(game, profile ?? undefined);
         if (token) return cors(Response.json({ code, token }, { status: 201 }));
       }
       return cors(new Response(null, { status: 503 }));
@@ -102,12 +104,13 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 export class Room extends DurableObject<Env> {
-  async reserve(game: ProfileGame): Promise<string | null> {
+  async reserve(game: ProfileGame, profile?: ProfileSummary): Promise<string | null> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const previous = await this.ctx.storage.get<Reservation>('reservation');
       if (previous && previous.expires > Date.now()) return null;
       this.closeRoomSockets();
-      const reservation = { host: crypto.randomUUID(), hostJoined: false, game, expires: Date.now() + roomLifetime };
+      const reservation: Reservation = { host: crypto.randomUUID(), hostJoined: false, game, expires: Date.now() + roomLifetime,
+        profiles: profile ? { host: profile } : undefined };
       await this.ctx.storage.put('reservation', reservation);
       await this.ctx.storage.setAlarm(reservation.expires);
       return reservation.host;

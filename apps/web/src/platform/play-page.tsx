@@ -7,6 +7,7 @@ import type { AlkkagiStatus } from '../games/alkkagi/rules.ts';
 import { boardRules, isBoardGame } from '../games/board-rules.ts';
 import { chessIndex, chessPosition, chessSquare, encodeChessMove } from '../games/chess/rules.ts';
 import { doubleThreeAxes, isForbiddenDoubleThree } from '../games/omok/rules.ts';
+import type { OmokOverline } from '../games/omok/rules.ts';
 import { othelloState } from '../games/othello/rules.ts';
 import type { GameId } from '../games/scenes.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
@@ -78,12 +79,12 @@ function TurnClock({ deadline, enabled, audible = false, onExpired, compact = fa
   </p>;
 }
 
-export function PlayPage({ id, dark, antialias, resolution, onResolution, onAntialias, room, power, turnLimit, history, boardRound, allowDoubleThree, move, reset, endLocal, decideLocal, record, navigate,
+export function PlayPage({ id, dark, antialias, resolution, onResolution, onAntialias, room, power, turnLimit, history, boardRound, allowDoubleThree, overline, move, reset, endLocal, decideLocal, record, navigate,
   showTouches, onTouchDisplay, touchStyle }: {
   id: GameId; dark: boolean; antialias: boolean; room?: Room; power: Power; turnLimit: TurnLimit; history: number[];
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   boardRound?: ReturnType<typeof createLocalRound> & { firstPlayerColor: Stone };
-  allowDoubleThree: boolean; move: (index: number) => void; reset: () => void;
+  allowDoubleThree: boolean; overline: OmokOverline; move: (index: number) => void; reset: () => void;
   endLocal: (color: Stone, expiredDeadline?: number) => void;
   decideLocal: (choice: TimeoutChoice, at: number) => void;
   record?: (report: MatchReport) => Promise<boolean>; navigate: Navigate;
@@ -91,6 +92,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
 }) {
   const { t } = useTranslation();
   const [cursor, setCursor] = useState<number | null>(null);
+  const [tapPreview, setTapPreview] = useState<{ index: number; matchId: string; history: number[]; at: number }>();
   const [chessChoice, setChessChoice] = useState<{ matchId: string; revision: number; last?: number; from: number; to?: number }>();
   const [alkkagi, setAlkkagi] = useState(initialAlkkagi);
   const [localRound, setLocalRound] = useState(() => createLocalRound(turnLimit));
@@ -114,7 +116,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const timedOut = room?.timedOut ?? boardRound?.timedOut ?? localRound.timedOut;
   const pending = room?.timeoutPending ?? boardRound?.timeoutPending ?? localRound.timeoutPending;
   const loser = surrendered ?? timedOut;
-  const outcome = loser ? oppositeStone(loser) : isBoardGame(id) ? boardRules[id].result(history) : flickStatus.winner;
+  const outcome = loser ? oppositeStone(loser) : isBoardGame(id) ? boardRules[id].result(history, overline) : flickStatus.winner;
   const canReset = !room || (room.role === 'host' && room.state === 'connected');
   const back = room ? '/room' : gamePath(id, 'setup');
   const backLabel = room ? 'goToRoom' : 'settings';
@@ -157,20 +159,40 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
     setConfirmSurrender(false);
   }, [matchId, room?.state]);
 
-  function tryMove(index: number) {
+  useEffect(() => {
+    if (!tapPreview) return;
+    const timer = window.setTimeout(() => setTapPreview(undefined), Math.max(0, 650 - (performance.now() - tapPreview.at)));
+    return () => window.clearTimeout(timer);
+  }, [tapPreview]);
+
+  function confirmTap(index: number, touch: boolean) {
+    const at = performance.now();
+    if (!touch || (tapPreview?.index === index && tapPreview.matchId === matchId && tapPreview.history === history && at - tapPreview.at <= 650)) {
+      setTapPreview(undefined);
+      return true;
+    }
+    setTapPreview({ index, matchId, history, at });
+    return false;
+  }
+
+  function tryMove(index: number, touch = false) {
     if (!canMove) return;
     if (chess) {
       if (choice?.to !== undefined) return;
       const target = chessMoves.find(move => chessIndex(move.to) === index);
       if (target && choice) {
+        if (!confirmTap(index, touch)) return;
         if (target.promotion) setChessChoice({ ...choice, to: index });
         else { move(encodeChessMove(choice.from, index)); setChessChoice(undefined); }
-      } else if (chess.get(chessSquare(index))?.color === chess.turn()) {
-        setChessChoice(choice?.from === index ? undefined : { matchId, revision: history.length, last: history.at(-1), from: index });
-      } else setChessChoice(undefined);
+      } else {
+        setTapPreview(undefined);
+        setChessChoice(chess.get(chessSquare(index))?.color === chess.turn() && choice?.from !== index
+          ? { matchId, revision: history.length, last: history.at(-1), from: index } : undefined);
+      }
       return;
     }
-    const forbidden = isOmok ? isForbiddenDoubleThree(history, index, allowDoubleThree) : Boolean(othello && !othello.legal.includes(index));
+    if (!confirmTap(index, touch)) return;
+    const forbidden = isOmok ? isForbiddenDoubleThree(history, index, allowDoubleThree, overline) : Boolean(othello && !othello.legal.includes(index));
     setRejected(forbidden);
     if (!forbidden) move(index);
   }
@@ -247,7 +269,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
       ))}
     </div>
     {!isBoard && <p className="power-summary"><span>{t('force')}</span><strong>{t(room ? room.power === 1.35 ? 'fast' : 'standard' : power)}</strong></p>}
-    {isOmok && <span className="match-rule">{t(allowDoubleThree ? 'allow33' : 'ban33')}</span>}
+    {isOmok && <span className="match-rule">{t(allowDoubleThree ? 'allow33' : 'ban33')} · {t(overline)}</span>}
     {room?.state && <p className="connection" role="status">{t(room.state)}</p>}
     {(room?.state === 'failed' || room?.state === 'disconnected') && (
       <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>
@@ -311,7 +333,8 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
             remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch} result={resultPanel} resultVisible={resultVisible}
             resultPending={resultPending} decision={deadlineDecision || promotion}
             onShowResult={() => setClosedResult('')} view={{
-            history, cursor, chessSelected: choice?.from, chessTargets, dark, allowDoubleThree, onAlkkagi: updateAlkkagi,
+            history, cursor: canMove && tapPreview?.matchId === matchId && tapPreview.history === history ? tapPreview.index : cursor,
+            chessSelected: choice?.from, chessTargets, dark, allowDoubleThree, onAlkkagi: updateAlkkagi,
             force: room?.power ?? (power === 'fast' ? 1.35 : 1),
             onlineFlick: room?.physics && { ...room.physics, host: room.role === 'host', send: room.flick, settle: room.settleFlick },
             canMove, deadline, finished: Boolean(outcome), move: tryMove,

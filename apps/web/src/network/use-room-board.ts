@@ -4,6 +4,8 @@ import type { Participant, Role, TouchPoint } from '../../../../packages/protoco
 import { isProfileGame } from '../../../../packages/protocol/profile.ts';
 import type { ProfileGame, ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { boardRules, isBoardGame, rematchFirstColor } from '../games/board-rules.ts';
+import { defaultOmokOverline, isOmokOverline } from '../games/omok/rules.ts';
+import type { OmokOverline } from '../games/omok/rules.ts';
 import { initialFlickRound, readFlick, readFlickRound, readLayout, settledStatus } from '../games/alkkagi/rules.ts';
 import type { Flick, FlickPower, FlickRound, StonePosition } from '../games/alkkagi/rules.ts';
 import { connectToRoom } from './room-connection.ts';
@@ -15,10 +17,11 @@ import { oppositeStone } from '../games/table.ts';
 import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../games/turn-clock.ts';
 import type { PendingTimeout, TimeoutChoice, TurnLimit } from '../games/turn-clock.ts';
 
-type Match = { id: string; game: ProfileGame; hostColor: Stone; startedAt: number; finishedAt: number; allowDoubleThree: boolean;
+type Match = { id: string; game: ProfileGame; hostColor: Stone; startedAt: number; finishedAt: number; allowDoubleThree: boolean; overline: OmokOverline;
   history: number[]; physics?: FlickRound; power?: FlickPower; surrendered?: Stone; timedOut?: Stone; timeoutPending?: PendingTimeout;
   turnLimit: TurnLimit; deadline: number; clockOffset?: number };
-const blankMatch: Match = { id: '', game: 'omok', hostColor: 1, startedAt: 0, finishedAt: 0, allowDoubleThree: true, history: [], turnLimit: 0, deadline: 0 };
+const blankMatch: Match = { id: '', game: 'omok', hostColor: 1, startedAt: 0, finishedAt: 0, allowDoubleThree: true,
+  overline: defaultOmokOverline, history: [], turnLimit: 0, deadline: 0 };
 type Seat = { code: string; role: Role; token: string };
 
 function matchTurn(match: Match) {
@@ -30,7 +33,7 @@ function matchTurn(match: Match) {
 }
 
 function matchWinner(match: Match) {
-  return match.physics ? settledStatus(match.physics).winner : isBoardGame(match.game) ? boardRules[match.game].result(match.history) : undefined;
+  return match.physics ? settledStatus(match.physics).winner : isBoardGame(match.game) ? boardRules[match.game].result(match.history, match.overline) : undefined;
 }
 
 export function useRoomBoard(profile?: ProfileSummary) {
@@ -43,7 +46,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const [remoteTouch, setRemoteTouch] = useState<TouchPoint & { matchId: string; receivedAt: number }>();
   const lastIncomingTouch = useRef(-Infinity);
   const lastOutgoingTouch = useRef(-Infinity);
-  const { id: matchId, game, hostColor, startedAt, finishedAt, allowDoubleThree, history, surrendered, timedOut, timeoutPending, turnLimit, deadline } = round;
+  const { id: matchId, game, hostColor, startedAt, finishedAt, allowDoubleThree, overline, history, surrendered, timedOut, timeoutPending, turnLimit, deadline } = round;
   const playerColor = role === 'host' ? hostColor : role === 'guest' ? oppositeStone(hostColor) : undefined;
   const started = startedAt > 0;
   const seat = useRef<Seat | undefined>(undefined);
@@ -60,9 +63,18 @@ export function useRoomBoard(profile?: ProfileSummary) {
   useEffect(() => {
     if (!profile?.id || !assignedSeat) return;
     const { code, token } = assignedSeat;
-    void apiFetch('/api/rooms/' + code + '/participants', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seat: token }),
-    }).catch(() => { /* Signaling still lists the seat if the profile cannot be loaded. */ });
+    const request = new AbortController();
+    let retry: number | undefined;
+    async function identify(attempt: number) {
+      const response = await apiFetch('/api/rooms/' + code + '/participants', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seat: token }), signal: request.signal,
+      }).catch(() => undefined);
+      if (!request.signal.aborted && attempt < 2 && (!response || response.status >= 500)) {
+        retry = window.setTimeout(() => void identify(attempt + 1), 500 * (attempt + 1));
+      }
+    }
+    void identify(0);
+    return () => { request.abort(); window.clearTimeout(retry); };
   }, [assignedSeat, profile?.id, profile?.name, profile?.avatar, profile?.level]);
 
   function update(next: Match) {
@@ -192,7 +204,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
           }
           if (!isBoardGame(current.game) || raw.type !== 'move' || !('index' in raw) || !('revision' in raw)
             || raw.revision !== current.history.length || matchTurn(current) !== guestColor) return;
-          const next = boardRules[current.game].place(current.history, raw.index, current.allowDoubleThree);
+          const next = boardRules[current.game].place(current.history, raw.index, current.allowDoubleThree, current.overline);
           if (next) commitMove(next);
         } else if (raw.type === 'launch') {
           if (!current.physics || current.physics.shot || current.timeoutPending || !current.startedAt || current.finishedAt || !('id' in raw) || current.id !== raw.id
@@ -223,19 +235,21 @@ export function useRoomBoard(profile?: ProfileSummary) {
           const nextDeadlineAt = 'deadline' in raw ? raw.deadline : 0;
           if (!isTurnLimit(nextLimit) || typeof nextDeadlineAt !== 'number' || !Number.isSafeInteger(nextDeadlineAt)
             || (nextLimit && raw.startedAt && !raw.finishedAt && !physics?.shot && !pending ? nextDeadlineAt < raw.startedAt + nextLimit * 1000 : nextDeadlineAt !== 0)) return;
-          const next = isBoardGame(game) ? boardRules[game].readHistory(raw.history, raw.allowDoubleThree) : [];
+          const nextOverline = 'overline' in raw ? raw.overline : 'freestyle';
+          if (!isOmokOverline(nextOverline)) return;
+          const next = isBoardGame(game) ? boardRules[game].readHistory(raw.history, raw.allowDoubleThree, nextOverline) : [];
           if (next && pending && (!nextLimit || pending.color !== matchTurn({ ...current, game, history: next, physics }))) return;
           const previousRevision = current.physics?.revision ?? current.history.length;
           const nextRevision = physics?.revision ?? next?.length ?? 0;
           if (next && (raw.id !== current.id || (nextRevision >= previousRevision
             && current.hostColor === nextHostColor && current.game === game
-            && current.allowDoubleThree === raw.allowDoubleThree && current.turnLimit === nextLimit
+            && current.allowDoubleThree === raw.allowDoubleThree && current.overline === nextOverline && current.turnLimit === nextLimit
             && raw.finishedAt >= current.finishedAt
             && (nextRevision > previousRevision || !current.physics?.shot || physics?.shot || raw.finishedAt)))) {
             const clockOffset = 'sentAt' in raw && typeof raw.sentAt === 'number' && Number.isSafeInteger(raw.sentAt)
               ? Date.now() - raw.sentAt : 0;
             update({ id: raw.id, game, hostColor: nextHostColor, startedAt: raw.startedAt, finishedAt: raw.finishedAt, allowDoubleThree: raw.allowDoubleThree,
-              history: next, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, timeoutPending: pending,
+              overline: nextOverline, history: next, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, timeoutPending: pending,
               turnLimit: nextLimit, deadline: nextDeadlineAt, clockOffset });
           }
         }
@@ -243,7 +257,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     });
   }
 
-  async function create(game: ProfileGame, allowRule = true, limit: TurnLimit = 0, power: FlickPower = 1) {
+  async function create(game: ProfileGame, allowRule = true, limit: TurnLimit = 0, power: FlickPower = 1, overline: OmokOverline = defaultOmokOverline) {
     const attempt = ++operation.current;
     link.current?.close();
     link.current = undefined;
@@ -264,7 +278,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
       if (attempt !== operation.current) return;
       seat.current = { ...room, role: 'host' };
       setRole('host');
-      update({ ...blankMatch, id: crypto.randomUUID(), game, allowDoubleThree: allowRule, turnLimit: limit,
+      update({ ...blankMatch, id: crypto.randomUUID(), game, allowDoubleThree: allowRule, overline, turnLimit: limit,
         physics: game === 'physics' ? initialFlickRound : undefined, power });
       connect(room.code, room.token);
     } catch {
@@ -302,7 +316,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     if (!ready.current || !current.id || !current.startedAt || current.finishedAt || current.timeoutPending || !isBoardGame(current.game)) return;
     const rules = boardRules[current.game];
     const turn = rules.turn(current.history);
-    const next = rules.place(current.history, index, current.allowDoubleThree);
+    const next = rules.place(current.history, index, current.allowDoubleThree, current.overline);
     if (!next) return;
     if (seat.current?.role === 'host' && turn === current.hostColor) {
       commitMove(next);
@@ -323,7 +337,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   return {
     code, role, state, game, hostColor, playerColor, history, started, matchId, startedAt, finishedAt, surrendered, timedOut, timeoutPending, turnLimit,
     displayDeadline: deadline ? deadline + (round.clockOffset ?? 0) : 0,
-    allowDoubleThree, participants, create, join, leave, move, physics: round.physics, power: round.power ?? 1, flick, settleFlick,
+    allowDoubleThree, overline, participants, create, join, leave, move, physics: round.physics, power: round.power ?? 1, flick, settleFlick,
     winner: matchWinner(round), turn: matchTurn(round),
     remoteTouch: remoteTouch?.matchId === matchId && performance.now() - remoteTouch.receivedAt < 500 ? remoteTouch : undefined,
     sendTouch(point: TouchPoint) {
@@ -366,10 +380,10 @@ export function useRoomBoard(profile?: ProfileSummary) {
       const current = match.current;
       if (role !== 'host' || !ready.current || !current.finishedAt) return;
       const nextHostColor = isBoardGame(current.game)
-        ? rematchFirstColor(current.game, current.hostColor, current.history, current.surrendered ?? current.timedOut) : current.hostColor;
+        ? rematchFirstColor(current.game, current.hostColor, current.history, current.surrendered ?? current.timedOut, current.overline) : current.hostColor;
       const now = Date.now();
       update({ ...blankMatch, id: crypto.randomUUID(), game: current.game, hostColor: nextHostColor, startedAt: now,
-        allowDoubleThree: current.allowDoubleThree, turnLimit: current.turnLimit, deadline: nextDeadline(current.turnLimit, now),
+        allowDoubleThree: current.allowDoubleThree, overline: current.overline, turnLimit: current.turnLimit, deadline: nextDeadline(current.turnLimit, now),
         physics: current.physics ? initialFlickRound : undefined, power: current.power });
       snapshot();
     },

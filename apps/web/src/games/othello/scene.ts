@@ -51,7 +51,7 @@ export function othelloScene(view: () => GameView) {
         const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
         const x = Math.floor((point.x - edge) / cell);
         const y = Math.floor((point.y - edge) / cell);
-        if (x >= 0 && x < othelloSize && y >= 0 && y < othelloSize) view().move(y * othelloSize + x);
+        if (x >= 0 && x < othelloSize && y >= 0 && y < othelloSize) view().move(y * othelloSize + x, pointer.wasTouch);
       });
     },
     update(this: Phaser.Scene) {

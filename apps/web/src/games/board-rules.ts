@@ -1,5 +1,6 @@
 import type { ProfileGame } from '../../../../packages/protocol/profile.ts';
 import { nextStone, place, readHistory, result } from './omok/rules.ts';
+import type { OmokOverline } from './omok/rules.ts';
 import { othelloState, placeOthello, readOthelloHistory } from './othello/rules.ts';
 import type { Stone } from './table.ts';
 import { oppositeStone } from './table.ts';
@@ -10,9 +11,9 @@ export const isBoardGame = (id: unknown): id is BoardGame => id === 'omok' || id
 
 interface BoardRules {
   turn(history: readonly number[]): Stone | undefined;
-  place(history: readonly number[], move: unknown, allowDoubleThree: boolean): number[] | undefined;
-  readHistory(value: unknown, allowDoubleThree: boolean): number[] | undefined;
-  result(history: readonly number[]): Stone | 'draw' | undefined;
+  place(history: readonly number[], move: unknown, allowDoubleThree: boolean, overline?: OmokOverline): number[] | undefined;
+  readHistory(value: unknown, allowDoubleThree: boolean, overline?: OmokOverline): number[] | undefined;
+  result(history: readonly number[], overline?: OmokOverline): Stone | 'draw' | undefined;
 }
 
 export const boardRules: Record<BoardGame, BoardRules> = {
@@ -26,9 +27,9 @@ export const boardRules: Record<BoardGame, BoardRules> = {
   },
 };
 
-export function rematchFirstColor(game: BoardGame, firstColor: Stone, history: readonly number[], surrendered?: Stone): Stone {
+export function rematchFirstColor(game: BoardGame, firstColor: Stone, history: readonly number[], surrendered?: Stone, overline?: OmokOverline): Stone {
   if (game !== 'omok') return firstColor;
-  const winner = boardRules[game].result(history);
+  const winner = boardRules[game].result(history, overline);
   const loser = surrendered ?? (winner === 1 || winner === 2 ? oppositeStone(winner) : undefined);
   return loser === 2 ? oppositeStone(firstColor) : firstColor;
 }

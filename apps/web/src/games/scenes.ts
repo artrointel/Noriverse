@@ -19,7 +19,7 @@ export interface GameView {
   canMove: boolean;
   deadline: number;
   finished: boolean;
-  move: (index: number) => void;
+  move: (index: number, touch?: boolean) => void;
   onAlkkagi: (status: AlkkagiStatus) => void;
   onlineFlick?: FlickRound & { host: boolean; send: (shot: Flick) => void; settle: (layout: StonePosition[], revision: number) => void };
 }

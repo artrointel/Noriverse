@@ -138,7 +138,7 @@ export function chessScene(view: () => GameView) {
         const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
         const x = Math.floor((point.x - offset) / cell), y = Math.floor((point.y - offset) / cell);
         const current = view();
-        if (current.canMove && x >= 0 && x < 8 && y >= 0 && y < 8) current.move(y * 8 + x);
+        if (current.canMove && x >= 0 && x < 8 && y >= 0 && y < 8) current.move(y * 8 + x, pointer.wasTouch);
       });
     },
     update(this: Phaser.Scene) {

@@ -32,7 +32,7 @@ export function omokScene(view: () => GameView) {
         const x = Math.round((point.x - (edge + inset)) / pitch);
         const y = Math.round((point.y - (edge + inset)) / pitch);
         const current = view();
-        if (current.canMove && x >= 0 && y >= 0 && x < boardSize && y < boardSize) current.move(y * boardSize + x);
+        if (current.canMove && x >= 0 && y >= 0 && x < boardSize && y < boardSize) current.move(y * boardSize + x, pointer.wasTouch);
       });
     },
     update(this: Phaser.Scene) {

@@ -268,7 +268,9 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         </div>
       )}
       <div className="visually-hidden" aria-live="polite">{position}</div>
-      <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : 'boardHelp')}</p>
+      <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : 'boardHelp')}
+        {id !== 'physics' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
+      </p>
     </section>
   );
 }

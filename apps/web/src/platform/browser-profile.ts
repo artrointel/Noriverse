@@ -4,13 +4,19 @@ import type { GameStats, PublicProfile, TouchEffect } from '../../../../packages
 const cookiePrefix = 'noriverse_browser_profile=';
 const touchKey = 'noriverse.browser-profile-touch';
 
-function browserTouchEffect(): TouchEffect {
-  try { if (localStorage.getItem(touchKey) === 'none') return 'none'; } catch { /* Optional storage. */ }
-  return 'soft';
+export function readBrowserTouchEffect(id?: string): TouchEffect | undefined {
+  try {
+    const value = localStorage.getItem(id ? touchKey + '.' + id : touchKey);
+    return value === 'soft' || value === 'none' ? value : undefined;
+  } catch { return undefined; }
 }
 
-export function saveBrowserTouchEffect(touchEffect: TouchEffect) {
-  localStorage.setItem(touchKey, touchEffect);
+export function saveBrowserTouchEffect(id: string, touchEffect?: TouchEffect) {
+  try {
+    if (touchEffect) localStorage.setItem(touchKey + '.' + id, touchEffect);
+    else localStorage.removeItem(touchKey + '.' + id);
+    return true;
+  } catch { return false; }
 }
 
 function readCookie() {
@@ -21,7 +27,7 @@ function readCookie() {
 function browserProfile(id: string, name: string): PublicProfile {
   const emptyStats = (): GameStats => ({ seconds: 0, wins: 0, losses: 0, draws: 0, sessions: 0 });
   return {
-    id, name, avatar: defaultAvatar, favorites: [], touchEffect: browserTouchEffect(), level: 1, xp: 0, totalSeconds: 0,
+    id, name, avatar: defaultAvatar, favorites: [], touchEffect: readBrowserTouchEffect(id) ?? readBrowserTouchEffect() ?? 'soft', level: 1, xp: 0, totalSeconds: 0,
     games: { omok: emptyStats(), physics: emptyStats(), othello: emptyStats(), chess: emptyStats() }, recent: [],
   };
 }

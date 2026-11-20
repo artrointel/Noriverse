@@ -25,8 +25,8 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
   const connected = room.state === 'connected';
   const hasRoom = Boolean(room.code) && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full';
-  const participants = room.participants.length ? room.participants : (['host', 'guest'] as const)
-    .filter(role => room.role === role || connected).map(role => ({ role, profile: undefined }));
+  const participants = (['host', 'guest'] as const).map(role => room.participants.find(participant => participant.role === role)
+    ?? (room.role === role || connected ? { role, profile: undefined } : undefined)).filter(participant => participant !== undefined);
 
   async function copyInvite() {
     try {
@@ -46,7 +46,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           {hasRoom ? (
             <>
               <p className="muted">{t('inviteHelp')}</p>
-              {activeGame === 'omok' && (room.role === 'host' || connected) && <span className="match-rule">{t(room.allowDoubleThree ? 'allow33' : 'ban33')}</span>}
+              {activeGame === 'omok' && (room.role === 'host' || connected) && <span className="match-rule">{t(room.allowDoubleThree ? 'allow33' : 'ban33')} · {t(room.overline)}</span>}
               <div className="invite-code">
                 <div><span>{t('code')}</span><code>{room.code}</code></div>
                 <button type="button" className="button button-secondary" onClick={() => void copyInvite()}>
@@ -59,7 +59,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                 <ul className="people-list">{participants.map(({ role, profile }) => {
                   const color = role === 'host' ? room.hostColor : oppositeStone(room.hostColor);
                   const own = room.role === role;
-                  const participant = profile ?? (own ? ownProfile : undefined);
+                  const participant = own ? ownProfile ?? profile : profile;
                   const seatInfo = [t(role), t(sideLabel(activeGame, color)), own ? t('me') : undefined,
                     participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
                   return (

@@ -21,6 +21,19 @@ test('rejects invalid coordinates and repeated intersections', () => {
   assert.deepEqual(place([0], 1), [0, 1]);
 });
 
+test('an overline ends the game only when five or more stones count', () => {
+  const blackSix = [0, 15, 1, 17, 2, 19, 4, 21, 5, 30, 3];
+  const whiteSix = [15, 0, 17, 1, 19, 2, 21, 4, 30, 5, 32, 3];
+  for (const [history, winner] of [[blackSix, 1], [whiteSix, 2]] as const) {
+    assert.equal(result(history), undefined);
+    assert.equal(result(history, 'freestyle'), winner);
+    assert.deepEqual(readHistory([...history, 45]), [...history, 45]);
+    assert.deepEqual(readHistory(history, true, 'freestyle'), history);
+    assert.equal(readHistory([...history, 45], true, 'freestyle'), undefined);
+  }
+  assert.equal(rematchFirstColor('omok', 1, blackSix, undefined, 'freestyle'), 2);
+});
+
 test('Omok rematches assign black to the previous loser', () => {
   const blackWin = [0, 15, 1, 16, 2, 17, 3, 18, 4];
   const whiteWin = [15, 0, 16, 1, 17, 2, 18, 3, 30, 4];

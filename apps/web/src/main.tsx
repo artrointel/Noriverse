@@ -5,6 +5,8 @@ import { elapsedPlaySeconds } from '../../../packages/protocol/profile.ts';
 import licenseUrl from '../../../LICENSE?url&no-inline';
 import logo from './assets/noriverse-icon.png';
 import { boardRules, isBoardGame, rematchFirstColor } from './games/board-rules.ts';
+import { defaultOmokOverline } from './games/omok/rules.ts';
+import type { OmokOverline } from './games/omok/rules.ts';
 import type { BoardGame } from './games/board-rules.ts';
 import { useRoomBoard } from './network/use-room-board.ts';
 import { apiAvailable } from './network/api.ts';
@@ -28,8 +30,8 @@ import { SettingsMenu } from './platform/settings-menu.tsx';
 import { NameDialog, ProfileNav, ProfilePage, useProfile } from './platform/profiles.tsx';
 import './styles.css';
 
-function createLocalBoard(allowDoubleThree = true, firstPlayerColor: Stone = 1, turnLimit: TurnLimit = 0) {
-  return { ...createLocalRound(turnLimit), history: [] as number[], allowDoubleThree, firstPlayerColor };
+function createLocalBoard(allowDoubleThree = true, firstPlayerColor: Stone = 1, turnLimit: TurnLimit = 0, overline: OmokOverline = defaultOmokOverline) {
+  return { ...createLocalRound(turnLimit), history: [] as number[], allowDoubleThree, firstPlayerColor, overline };
 }
 
 function App() {
@@ -44,6 +46,7 @@ function App() {
   const [localBoards, setLocalBoards] = useState(() => ({ omok: createLocalBoard(), othello: createLocalBoard(), chess: createLocalBoard() }));
   const [power, setPower] = useState<Power>('standard');
   const [allowDoubleThree, setAllowDoubleThree] = useState(true);
+  const [overline, setOverline] = useState<OmokOverline>(defaultOmokOverline);
   const [turnLimit, setTurnLimit] = useState<TurnLimit>(0);
   const [nameDismissed, setNameDismissed] = useState(false);
   const [editName, setEditName] = useState(false);
@@ -102,11 +105,11 @@ function App() {
     const id = route.id;
     if (mode === 'online') {
       if ((!room.code || room.state === 'closed' || room.state === 'missing' || room.state === 'full') && room.state !== 'joining') {
-        void room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1);
+        void room.create(id, allowDoubleThree, turnLimit, power === 'fast' ? 1.35 : 1, overline);
       }
       navigate('/room');
     } else {
-      if (isBoardGame(id)) setLocalBoards(previous => ({ ...previous, [id]: createLocalBoard(allowDoubleThree, 1, turnLimit) }));
+      if (isBoardGame(id)) setLocalBoards(previous => ({ ...previous, [id]: createLocalBoard(allowDoubleThree, 1, turnLimit, overline) }));
       navigate(gamePath(id, 'play', mode));
     }
   }
@@ -115,8 +118,8 @@ function App() {
     setLocalBoards(previous => {
       const current = previous[id];
       if (!current.finishedAt) return previous;
-      const firstPlayerColor = rematchFirstColor(id, current.firstPlayerColor, current.history, current.surrendered ?? current.timedOut);
-      return { ...previous, [id]: createLocalBoard(current.allowDoubleThree, firstPlayerColor, current.turnLimit) };
+      const firstPlayerColor = rematchFirstColor(id, current.firstPlayerColor, current.history, current.surrendered ?? current.timedOut, current.overline);
+      return { ...previous, [id]: createLocalBoard(current.allowDoubleThree, firstPlayerColor, current.turnLimit, current.overline) };
     });
   }
 
@@ -126,9 +129,9 @@ function App() {
       const current = previous[id];
       if (current.finishedAt || current.timeoutPending || (current.deadline && time >= current.deadline)) return previous;
       const rules = boardRules[id];
-      const history = rules.place(current.history, index, current.allowDoubleThree);
+      const history = rules.place(current.history, index, current.allowDoubleThree, current.overline);
       if (!history) return previous;
-      const finishedAt = rules.result(history) ? time : 0;
+      const finishedAt = rules.result(history, current.overline) ? time : 0;
       return { ...previous, [id]: { ...current, history, finishedAt, deadline: finishedAt ? 0 : nextDeadline(current.turnLimit, time) } };
     });
   }
@@ -208,7 +211,7 @@ function App() {
       case 'setup':
         return <GameSetup id={route.id} online={route.online} power={power} onPower={setPower}
           turnLimit={turnLimit} onTurnLimit={setTurnLimit}
-          allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree}
+          allowDoubleThree={allowDoubleThree} onRule={setAllowDoubleThree} overline={overline} onOverline={setOverline}
           activeGame={room.code && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full' ? room.game : undefined}
           onStart={startGame} navigate={navigate} />;
       case 'room':
@@ -226,7 +229,8 @@ function App() {
           showTouches={preferences.showTouches} onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
           room={online ? room : undefined} history={online ? room.history : local?.history ?? []}
           boardRound={online ? undefined : local}
-          allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true} record={apiAvailable && profile.profile ? profile.record : undefined}
+          allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true}
+          overline={online ? room.overline : local?.overline ?? defaultOmokOverline} record={apiAvailable && profile.profile ? profile.record : undefined}
           move={online ? room.move : index => { if (board) placeLocal(board, index); }}
           reset={online ? room.rematch : () => { if (board) rematchBoard(board); }}
           endLocal={(color, deadline) => { if (board) endLocalBoard(board, color, deadline); }}

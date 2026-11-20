@@ -4,7 +4,7 @@ import { avatarIds, avatarLevel, readName, secondsPerLevel, touchEffects, winRat
 import type { MatchReport, ProfilePreferences, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import { apiAvailable, apiFetch } from '../network/api.ts';
 import { avatars } from './avatars.ts';
-import { readBrowserProfile, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
+import { readBrowserProfile, readBrowserTouchEffect, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
@@ -14,6 +14,9 @@ import type { Friends } from './friends.tsx';
 import { TouchBurst } from './touch-burst.tsx';
 
 const recordCount = (profile: PublicProfile) => Object.values(profile.games).reduce((sum, game) => sum + game.sessions, 0);
+const applyBrowserTouchEffect = (profile: PublicProfile): PublicProfile => ({ ...profile,
+  touchEffect: readBrowserTouchEffect(profile.id) ?? profile.touchEffect ?? 'soft',
+});
 
 export function useProfile() {
   const [profile, setProfile] = useState<PublicProfile>();
@@ -33,7 +36,7 @@ export function useProfile() {
       } else if (response.ok) {
         const next = await response.json() as PublicProfile;
         if (!controller.signal.aborted) {
-          setProfile(next);
+          setProfile(applyBrowserTouchEffect(next));
           setStatus('ready');
         }
       } else setStatus('error');
@@ -53,22 +56,28 @@ export function useProfile() {
     });
     if (!response.ok) throw new Error();
     const next = await response.json() as PublicProfile;
-    setProfile(next);
+    setProfile(applyBrowserTouchEffect(next));
     setStatus('ready');
   }
 
   async function setPreferences(preferences: ProfilePreferences) {
-    if (!apiAvailable && 'touchEffect' in preferences) {
-      saveBrowserTouchEffect(preferences.touchEffect);
-      const saved = readBrowserProfile();
-      if (saved) setProfile(saved);
+    const touchEffect = 'touchEffect' in preferences ? preferences.touchEffect : undefined;
+    const id = profile?.id;
+    let next: PublicProfile;
+    try {
+      const response = await apiFetch('/api/profiles/me/preferences', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preferences),
+      });
+      if (!response.ok) throw new Error();
+      next = await response.json() as PublicProfile;
+      if (touchEffect && next.touchEffect !== touchEffect) throw new Error();
+    } catch (error) {
+      if (!touchEffect || !id || !saveBrowserTouchEffect(id, touchEffect)) throw error;
+      setProfile(current => current?.id === id ? { ...current, touchEffect } : current);
       return;
     }
-    const response = await apiFetch('/api/profiles/me/preferences', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preferences),
-    });
-    if (!response.ok) throw new Error();
-    const next = await response.json() as PublicProfile;
+    if (touchEffect) saveBrowserTouchEffect(next.id);
+    next = applyBrowserTouchEffect(next);
     setProfile(current => current?.id === next.id && recordCount(current) > recordCount(next)
       ? { ...current, avatar: next.avatar, favorites: next.favorites, touchEffect: next.touchEffect } : next);
   }

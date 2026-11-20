@@ -2,6 +2,8 @@ import { useDeferredValue, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import heroArt from '../assets/hero-orbit.jpg';
 import { apiAvailable } from '../network/api.ts';
+import { omokOverlineRules } from '../games/omok/rules.ts';
+import type { OmokOverline } from '../games/omok/rules.ts';
 import type { GameId } from '../games/scenes.ts';
 import { isTurnLimit, maxTurnLimit, turnLimits } from '../games/turn-clock.ts';
 import type { TurnLimit } from '../games/turn-clock.ts';
@@ -251,10 +253,11 @@ export function GameDetail({ id, navigate }: { id: GameId; navigate: Navigate })
   );
 }
 
-export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, allowDoubleThree, onRule, onStart, navigate, activeGame }: {
+export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, allowDoubleThree, onRule, overline, onOverline, onStart, navigate, activeGame }: {
   id: GameId; online: boolean; power: Power; onPower: (power: Power) => void;
   turnLimit: TurnLimit; onTurnLimit: (limit: TurnLimit) => void;
   allowDoubleThree: boolean; onRule: (allow: boolean) => void;
+  overline: OmokOverline; onOverline: (value: OmokOverline) => void;
   onStart: (mode: GameMode) => void; navigate: Navigate; activeGame?: GameId;
 }) {
   const { t } = useTranslation();
@@ -308,7 +311,7 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
             </label>}
             <p className="muted">{t('turnLimitHelp')}</p>
           </fieldset>}
-          {id === 'omok' && (mode === 'local' || !activeGame) && (
+          {id === 'omok' && (mode === 'local' || !activeGame) && <>
             <fieldset>
               <legend>{t('rule33')}</legend>
               <p className="muted">{t('rule33Help')}</p>
@@ -319,7 +322,17 @@ export function GameSetup({ id, online, power, onPower, turnLimit, onTurnLimit, 
                 </label>
               ))}
             </fieldset>
-          )}
+            <fieldset>
+              <legend>{t('overlineRule')}</legend>
+              <p className="muted">{t('overlineHelp')}</p>
+              {omokOverlineRules.map(rule => (
+                <label className="choice" key={rule}>
+                  <input type="radio" name="overline" value={rule} checked={overline === rule} onChange={() => onOverline(rule)} />
+                  <span><strong>{t(rule)}</strong></span>
+                </label>
+              ))}
+            </fieldset>
+          </>}
           {id === 'physics' && (mode === 'local' || !activeGame) && (
             <fieldset>
               <legend>{t('force')}</legend>

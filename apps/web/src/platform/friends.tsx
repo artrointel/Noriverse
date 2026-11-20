@@ -142,14 +142,36 @@ export function FriendsPage({ model, navigate, openProfile }: { model: Friends; 
   const { t } = useTranslation();
   const [input, setInput] = useState('');
   const [failed, setFailed] = useState(false);
+  const [copiedId, setCopiedId] = useState<string>();
+  const ownIdField = useRef<HTMLInputElement>(null);
+  const owner = model.owner;
+
+  async function copyOwnId(id: string) {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopiedId(id);
+    } catch {
+      ownIdField.current?.focus();
+      ownIdField.current?.select();
+    }
+  }
+
   return <div className="site-width subpage friends-page">
     <RouteLink className="back-link" href="/profile" navigate={navigate}>{t('myProfile')}</RouteLink>
     <section className="surface stat-card friends-panel">
       <h1 tabIndex={-1}>{t('friends')}</h1>
-      {!apiAvailable ? <p>{t('friendsUnavailable')}</p> : !model.owner ? <>
+      {!apiAvailable ? <p>{t('friendsUnavailable')}</p> : !owner ? <>
         <p>{t('friendsNeedProfile')}</p>
         <button className="button button-primary" type="button" onClick={openProfile}>{t('saveName')}</button>
       </> : <>
+        <div className="room-form share-profile-id">
+          <label htmlFor="own-profile-id">{t('myProfileId')}</label>
+          <div><input id="own-profile-id" ref={ownIdField} value={owner} readOnly onFocus={event => event.currentTarget.select()} />
+            <button className="button button-secondary" type="button" onClick={() => void copyOwnId(owner)}>
+              {t(copiedId === owner ? 'profileIdCopied' : 'copyProfileId')}
+            </button></div>
+          <small className="muted">{t('shareProfileId')}</small>
+        </div>
         <form className="room-form" onSubmit={async event => {
           event.preventDefault();
           const id = profileIdFromInput(input);

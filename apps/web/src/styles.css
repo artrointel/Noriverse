@@ -312,7 +312,7 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .game-viewport canvas { display: block; }
 .game-viewport[data-ready="true"] canvas { animation: view-in .23s var(--ease) both; }
 .touch-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; overflow: hidden; }
-.touch-burst { position: absolute; inset: 50% auto auto 50%; width: 1px; height: 1px; color: #f5dfb4; pointer-events: none; animation: touch-fade .5s ease-out forwards; }
+.touch-burst { position: absolute; inset: 50% auto auto 50%; width: 1px; height: 1px; color: #f5dfb4; pointer-events: none; opacity: 0; animation: touch-fade .5s ease-out forwards; }
 .touch-burst[data-remote="true"] { color: #c7b5fa; }
 .touch-burst::before { content: ''; position: absolute; inset: -7px; border: 1px solid currentColor; opacity: .65; border-radius: 50%; animation: touch-ring .5s ease-out forwards; }
 .touch-burst i { position: absolute; width: 4px; height: 4px; border-radius: 100%; background: currentColor; box-shadow: 0 0 5px currentColor; animation: touch-particle .5s ease-out forwards; }
@@ -321,6 +321,8 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 @keyframes touch-ring { from { transform: scale(.4); } to { transform: scale(2); } }
 @keyframes touch-particle { to { transform: translate(var(--dx),var(--dy)) scale(.45); } }
 .stage-help { color: var(--muted); font-size: .89rem; padding: 10px 2px 2px; }
+.touch-move-help { display: none; }
+@media (any-pointer: coarse) { .touch-move-help { display: inline; } }
 .stage-message { position: absolute; inset: 35% 10px auto; display: grid; justify-items: center; gap: 10px; pointer-events: none; }
 .stage-message button { pointer-events: auto; }
 .stage-expanded, .stage:fullscreen { position: fixed; inset: 0; z-index: 10; width: 100%; height: 100dvh; border-radius: 0; padding: max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); display: grid; grid-template-rows: auto minmax(0,1fr) auto; color: var(--text); }
@@ -341,6 +343,7 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .room-participants h2 { margin: 0 0 10px; font-size: 1.05rem; }
 .room-participants h2 small { color: var(--muted); }
 .friends-panel { max-width: 700px; display: grid; gap: 16px; }
+.share-profile-id input { text-transform: none; letter-spacing: normal; font-size: .9rem; }
 .friend-groups { display: grid; gap: 9px; }
 .friend-group { border: 1px solid var(--line); border-radius: 11px; padding: 8px 10px; }
 .friend-group > summary { cursor: pointer; font-weight: 730; }
@@ -503,5 +506,7 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  .touch-burst { animation: touch-fade .16s ease-out forwards !important; }
+  .touch-burst i { display: none; }
   .game-card:hover, .game-card:hover img { transform: none; }
 }

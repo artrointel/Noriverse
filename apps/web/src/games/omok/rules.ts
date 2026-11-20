@@ -2,6 +2,13 @@ import type { Stone } from '../table.ts';
 
 export const boardSize = 15;
 export type Cell = Stone | 0;
+export const omokOverlineRules = ['exactFive', 'freestyle'] as const;
+export type OmokOverline = typeof omokOverlineRules[number];
+export const defaultOmokOverline: OmokOverline = 'exactFive';
+
+export function isOmokOverline(value: unknown): value is OmokOverline {
+  return value === 'exactFive' || value === 'freestyle';
+}
 
 const directions = [[1, 0], [0, 1], [1, 1], [1, -1]];
 
@@ -15,7 +22,7 @@ export function boardFrom(history: readonly number[]): Cell[] {
   return board;
 }
 
-export function result(history: readonly number[]): Stone | 'draw' | undefined {
+export function result(history: readonly number[], overline: OmokOverline = defaultOmokOverline): Stone | 'draw' | undefined {
   const last = history.at(-1);
   if (last === undefined) return;
   const board = boardFrom(history);
@@ -34,7 +41,7 @@ export function result(history: readonly number[]): Stone | 'draw' | undefined {
         row += dy * sign;
       }
     }
-    if (count >= 5 && stone) return stone;
+    if (stone && (count === 5 || (count > 5 && overline === 'freestyle'))) return stone;
   }
   if (history.length === boardSize * boardSize) return 'draw';
 }
@@ -61,23 +68,23 @@ export function doubleThreeAxes(history: readonly number[], index: number): (rea
   }).map(([dx, dy]) => [dx, dy] as const);
 }
 
-export function isForbiddenDoubleThree(history: readonly number[], index: number, allowed: boolean): boolean {
+export function isForbiddenDoubleThree(history: readonly number[], index: number, allowed: boolean, overline: OmokOverline = defaultOmokOverline): boolean {
   return !allowed && nextStone(history) === 1 && doubleThreeAxes(history, index).length >= 2
-    && result([...history, index]) !== 1;
+    && result([...history, index], overline) !== 1;
 }
 
-export function place(history: readonly number[], index: unknown, allowDoubleThree = true): number[] | undefined {
+export function place(history: readonly number[], index: unknown, allowDoubleThree = true, overline: OmokOverline = defaultOmokOverline): number[] | undefined {
   if (typeof index !== 'number' || !Number.isInteger(index) || index < 0
-    || index >= boardSize * boardSize || history.includes(index) || result(history)) return;
-  if (isForbiddenDoubleThree(history, index, allowDoubleThree)) return;
+    || index >= boardSize * boardSize || history.includes(index) || result(history, overline)) return;
+  if (isForbiddenDoubleThree(history, index, allowDoubleThree, overline)) return;
   return [...history, index];
 }
 
-export function readHistory(value: unknown, allowDoubleThree = true): number[] | undefined {
+export function readHistory(value: unknown, allowDoubleThree = true, overline: OmokOverline = defaultOmokOverline): number[] | undefined {
   if (!Array.isArray(value) || value.length > boardSize * boardSize) return;
   let history: number[] = [];
   for (const index of value) {
-    const next = place(history, index, allowDoubleThree);
+    const next = place(history, index, allowDoubleThree, overline);
     if (!next) return;
     history = next;
   }
