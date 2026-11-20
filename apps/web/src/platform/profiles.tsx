@@ -4,6 +4,7 @@ import { avatarIds, avatarLevel, readName, secondsPerLevel, winRate } from '../.
 import type { MatchReport, ProfilePreferences, PublicProfile } from '../../../../packages/protocol/profile.ts';
 import { apiAvailable, apiFetch } from '../network/api.ts';
 import { avatars } from './avatars.ts';
+import { readBrowserProfile, saveBrowserProfile } from './browser-profile.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
@@ -15,6 +16,12 @@ export function useProfile() {
   const [profile, setProfile] = useState<PublicProfile>();
   const [status, setStatus] = useState<'loading' | 'missing' | 'ready' | 'error'>('loading');
   useEffect(() => {
+    if (!apiAvailable) {
+      const saved = readBrowserProfile();
+      setProfile(saved);
+      setStatus(saved ? 'ready' : 'missing');
+      return;
+    }
     const controller = new AbortController();
     void apiFetch('/api/profiles/me', { signal: controller.signal }).then(async response => {
       if (controller.signal.aborted) return;
@@ -32,6 +39,12 @@ export function useProfile() {
   }, []);
 
   async function saveName(name: string) {
+    if (!apiAvailable) {
+      const next = saveBrowserProfile(name);
+      setProfile(next);
+      setStatus('ready');
+      return;
+    }
     const response = await apiFetch('/api/profiles/me', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
     });
@@ -39,7 +52,6 @@ export function useProfile() {
     const next = await response.json() as PublicProfile;
     setProfile(next);
     setStatus('ready');
-    return next;
   }
 
   async function setPreferences(preferences: ProfilePreferences) {
@@ -103,7 +115,7 @@ export function NameDialog({ name, close, save }: {
       onCancel={event => { event.preventDefault(); if (!busy) close(); }}>
       <form onSubmit={event => { event.preventDefault(); void submit(); }}>
         <h2 id="profile-prompt">{t(name ? 'editName' : 'profilePrompt')}</h2>
-        <p className="muted">{t('profileNotice')}</p>
+        <p className="muted">{t(apiAvailable ? 'profileNotice' : 'browserProfileNotice')}</p>
         <label htmlFor="profile-name">{t('displayName')}</label>
         <div className="name-input">
           <input id="profile-name" value={value} onChange={event => setValue(event.target.value)}
@@ -140,7 +152,7 @@ export function ProfileNav({ profile, navigate }: { profile?: PublicProfile; nav
     <div className="profile-nav">
       <RouteLink href="/profile" navigate={navigate} className="profile-nav-link" aria-label={t('myProfile')}>
         {profile && <span className="profile-nav-tag">
-          <strong>{profile.name}</strong><small>{t('levelValue', { level: profile.level })}</small>
+          <strong>{profile.name}</strong>{apiAvailable && <small>{t('levelValue', { level: profile.level })}</small>}
         </span>}
         <span className="profile-link">
           {profile ? <img className="nav-avatar" src={avatars[profile.avatar]} alt="" width="34" height="34" /> : (
@@ -150,7 +162,7 @@ export function ProfileNav({ profile, navigate }: { profile?: PublicProfile; nav
           )}
         </span>
       </RouteLink>
-      {profile && <div className="profile-preview">
+      {profile && apiAvailable && <div className="profile-preview">
         <div className="profile-preview-person">
           <img src={avatars[profile.avatar]} alt="" width="48" height="48" />
           <div><strong>{profile.name}</strong><span>{t('levelValue', { level: profile.level })}</span></div>
@@ -279,23 +291,24 @@ export function ProfilePage({ own, id, model, navigate, edit }: {
           {profile && <img className="profile-avatar" src={avatars[profile.avatar]} alt="" width="80" height="80" />}
           <div>
             <p className="profile-kicker">{t(own ? 'myProfile' : 'publicProfile')}</p>
-            <h1 tabIndex={-1}>{profile?.name ?? t(!apiAvailable ? 'serviceUnavailable' : loading ? 'profileLoading' : own ? 'profilePrompt' : 'profileMissing')}</h1>
-            {profile && <div className="profile-progress">
+            <h1 tabIndex={-1}>{profile?.name ?? t(!own && !apiAvailable ? 'serviceUnavailable' : loading ? 'profileLoading' : own ? 'profilePrompt' : 'profileMissing')}</h1>
+            {own && !apiAvailable && <p className="muted">{t('browserProfileNotice')}</p>}
+            {profile && apiAvailable && <div className="profile-progress">
               <p className="profile-level">{t('levelValue', { level: profile.level })} <span>{t('totalPlayTime')} {formatPlayTime(profile.totalSeconds)}</span></p>
               <progress aria-label={t('levelProgress')} max={secondsPerLevel} value={profile.totalSeconds % secondsPerLevel} />
             </div>}
           </div>
         </div>
-        {own && apiAvailable && !loading && <div className="panel-actions">
+        {own && !loading && <div className="panel-actions">
           <button type="button" className="button button-primary" onClick={edit}>{t(profile ? 'editName' : 'saveName')}</button>
-          {profile && <button type="button" className="button button-secondary" onClick={() => setAvatarOpen(true)}>{t('chooseAvatar')}</button>}
-          {profile && <button type="button" className="button button-secondary" onClick={() => void share()}>
+          {profile && apiAvailable && <button type="button" className="button button-secondary" onClick={() => setAvatarOpen(true)}>{t('chooseAvatar')}</button>}
+          {profile && apiAvailable && <button type="button" className="button button-secondary" onClick={() => void share()}>
             {t(copied ? 'copied' : 'shareProfile')}
           </button>}
         </div>}
         {showLink && <input aria-label={t('shareProfile')} readOnly value={shareUrl} onFocus={event => event.currentTarget.select()} />}
       </section>
-      {profile && (
+      {profile && apiAvailable && (
         <>
           {own && avatarOpen && <AvatarDialog profile={profile} save={model.setPreferences} close={() => setAvatarOpen(false)} />}
           <section className="surface stat-card profile-favorites">

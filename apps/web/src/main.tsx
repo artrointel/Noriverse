@@ -184,7 +184,7 @@ function App() {
         return <PlayPage id={id} dark={preferences.dark} power={power} practice={id === 'physics' && route.practice} navigate={navigate}
           room={online ? room : undefined} history={online ? room.history : local?.history ?? []}
           boardRound={online ? undefined : local}
-          allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true} record={profile.profile ? profile.record : undefined}
+          allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true} record={apiAvailable && profile.profile ? profile.record : undefined}
           move={online ? room.move : index => { if (board) placeLocal(board, index); }}
           reset={online ? room.rematch : () => { if (board) resetBoard(board); }}
           surrenderLocal={color => { if (board) surrenderBoard(board, color); }} />;
@@ -239,7 +239,7 @@ function App() {
         </div>
         <div className="site-width footer-meta"><small>© {new Date().getFullYear()} Noriverse</small></div>
       </footer>
-      {(editName || (profile.status === 'missing' && !nameDismissed && route.page !== 'publicProfile')) && (
+      {(editName || (profile.status === 'missing' && !nameDismissed)) && (
         <NameDialog name={profile.profile?.name} close={() => {
           setNameDismissed(true); setEditName(false); setPendingFavorite(undefined);
         }} save={saveProfileName} />
