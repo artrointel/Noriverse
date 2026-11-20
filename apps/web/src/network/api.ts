@@ -1,4 +1,5 @@
 import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
+import type { PublicProfile } from '../../../../packages/protocol/profile.ts';
 
 const pages = import.meta.env.VITE_GITHUB_PAGES === 'true';
 const configuredBase = import.meta.env.VITE_API_ORIGIN?.replace(/\/$/, '') as string | undefined;
@@ -43,4 +44,9 @@ export async function apiFetch(path: string, init?: RequestInit) {
     if (session) saveSession(session);
   }
   return response;
+}
+
+export async function fetchPublicProfile(id: string, signal: AbortSignal): Promise<PublicProfile | null> {
+  const response = await apiFetch('/api/profiles/' + id, { signal });
+  return response.ok ? await response.json() as PublicProfile : null;
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { avatarIds, avatarLevel, readName, readReport, secondsPerLevel, touchEffects, winRate } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, OwnProfile, PresenceMode, ProfilePreferences, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
-import { apiAvailable, apiFetch } from '../network/api.ts';
+import { apiAvailable, apiFetch, fetchPublicProfile } from '../network/api.ts';
 import { avatars } from './avatars.ts';
 import { readBrowserProfile, readBrowserTouchEffect, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
@@ -374,8 +374,7 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
   useEffect(() => {
     if (!id || own) return;
     const controller = new AbortController();
-    void apiFetch('/api/profiles/' + id, { signal: controller.signal }).then(async response => {
-      const next = response.ok ? await response.json() as PublicProfile : null;
+    void fetchPublicProfile(id, controller.signal).then(next => {
       if (!controller.signal.aborted) setVisited(next);
     }).catch(() => { if (!controller.signal.aborted) setVisited(null); });
     return () => controller.abort();

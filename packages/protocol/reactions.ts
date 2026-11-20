@@ -3,12 +3,25 @@ import type { AvatarId } from './profile.ts';
 import { isRoomRole } from './rooms.ts';
 import type { Role } from './rooms.ts';
 
-export const emojiChoices = {
+export const defaultEmojiChoices = {
   smile: '😄', laugh: '😂', surprise: '😮', thinking: '🤔', sad: '😢', anger: '😤',
   hearts: '😍', clap: '👏', thumbsUp: '👍', handshake: '🤝', fire: '🔥', celebrate: '🎉',
 } as const;
+export const emojiChoices = {
+  ...defaultEmojiChoices,
+  grin: '😁', wink: '😉', sweatSmile: '😅', victory: '✌️', salute: '🫡', hug: '🤗', hot: '🥵', cold: '🥶',
+  sunglasses: '😎', mindBlown: '🤯', scream: '😱', cry: '😭', worried: '😟', dizzy: '😵‍💫', sleeping: '😴',
+  angry: '😡', upsideDown: '🙃', shush: '🤫', eyes: '👀', facepalm: '🤦', skull: '💀', ghost: '👻',
+  robot: '🤖', alien: '👽', cat: '😺', dog: '🐶', fox: '🦊', frog: '🐸', panda: '🐼', penguin: '🐧',
+  heart: '❤️', brokenHeart: '💔', sparkle: '✨', star: '⭐', trophy: '🏆', medal: '🥇', crown: '👑',
+  lightning: '⚡', rocket: '🚀', rainbow: '🌈', snowflake: '❄️', dice: '🎲', puzzle: '🧩',
+  flex: '💪', raisedHands: '🙌', fistBump: '👊', pray: '🙏', ok: '👌', thumbsDown: '👎',
+  coffee: '☕', pizza: '🍕', popcorn: '🍿', musicalNote: '🎵', gift: '🎁', hourglass: '⌛',
+} as const;
 export type Emoji = keyof typeof emojiChoices;
+export type DefaultEmoji = keyof typeof defaultEmojiChoices;
 export const emojiIds = Object.keys(emojiChoices) as Emoji[];
+export const defaultEmojiIds = Object.keys(defaultEmojiChoices) as DefaultEmoji[];
 export const reactionCorners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
 export type ReactionCorner = typeof reactionCorners[number];
 export type ReactionSender = { name: string; avatar: AvatarId };
@@ -25,9 +38,8 @@ export function recentEmojis(values: readonly unknown[]): Emoji[] {
   return [...new Set(values.filter(isEmoji))].slice(0, recentEmojiLimit);
 }
 
-export function freeReactionCorner(reactions: readonly TimedReaction[], now: number, random = Math.random) {
-  const available = reactionCorners.filter(corner => !reactions.some(reaction => reaction.corner === corner && reaction.expiresAt > now));
-  return available[Math.floor(random() * available.length)];
+export function assignReactionSlots<Player>(players: readonly Player[]) {
+  return new Map(players.map((player, index) => [player, reactionCorners[index % reactionCorners.length]]));
 }
 
 export function showReaction(previous: readonly TimedReaction[], reaction: Reaction, now: number): TimedReaction[] {

@@ -4,10 +4,11 @@ import { isRoomGame, roomCapacity, roomCodePattern } from '../../../../packages/
 import type { RoomGame } from '../../../../packages/protocol/rooms.ts';
 import { oppositeStone, sideLabel } from '../games/table.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
-import { apiAvailable, apiFetch } from '../network/api.ts';
+import { apiAvailable, apiFetch, fetchPublicProfile } from '../network/api.ts';
 import { readGuestSeat, readRecentRooms } from '../network/guest-seat.ts';
 import type { GuestRoom } from '../network/guest-seat.ts';
-import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
+import { winRate } from '../../../../packages/protocol/profile.ts';
+import type { PublicProfile } from '../../../../packages/protocol/profile.ts';
 import { gameIds, games } from './game-catalog.ts';
 import { avatars } from './avatars.ts';
 import { FriendButton, InviteDialog } from './friends.tsx';
@@ -96,8 +97,42 @@ function RoomGamesDialog({ room, choices, participants, close }: { room: Room; c
   </dialog>;
 }
 
+function ParticipantStats({ id, game, own, latest }: { id: string; game: RoomGame; own?: PublicProfile; latest?: Room['roomHistory'][number] }) {
+  const { t, i18n } = useTranslation();
+  const [remote, setRemote] = useState<PublicProfile | null>();
+  const ownId = own?.id;
+  const latestId = latest?.id;
+  const endedAt = latest?.endedAt;
+  useEffect(() => {
+    if (ownId === id) return;
+    const controller = new AbortController();
+    const retries = [400, 900, 1800];
+    let timer: number | undefined;
+    async function refresh(attempt: number) {
+      const profile = await fetchPublicProfile(id, controller.signal).catch(() => null);
+      if (controller.signal.aborted) return;
+      setRemote(profile);
+      // The participant may still be submitting the result when the lobby opens.
+      if (attempt < retries.length && latestId && endedAt && Math.abs(Date.now() - endedAt) < 15_000
+        && !profile?.recent.some(match => match.id === latestId && match.game === game)) {
+        timer = window.setTimeout(() => void refresh(attempt + 1), retries[attempt]);
+      }
+    }
+    void refresh(0);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [id, game, ownId, latestId, endedAt]);
+
+  const stats = (own ?? remote)?.games[game];
+  if (!stats) return <small className="lobby-participant-record">{t(remote === null ? 'lobbyStatsUnavailable' : 'lobbyStatsLoading')}</small>;
+  const rate = winRate(stats);
+  return <small className="lobby-participant-record" aria-label={t('lobbyGameStats', { game: t(game) })}>
+    <b>{t('recordScore', { wins: stats.wins, losses: stats.losses, draws: stats.draws })}</b>
+    {rate !== null && <span>{t('winRate')} {new Intl.NumberFormat(i18n.resolvedLanguage, { style: 'percent', maximumFractionDigits: 1 }).format(rate)}</span>}
+  </small>;
+}
+
 export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }: {
-  room: Room; friends: Friends; ownProfile?: ProfileSummary; invite: string; navigate: Navigate; onPlay: () => void;
+  room: Room; friends: Friends; ownProfile?: PublicProfile; invite: string; navigate: Navigate; onPlay: () => void;
 }) {
   const { t } = useTranslation();
   const [code, setCode] = useState(() => invite.trim().toUpperCase().slice(0, 8));
@@ -212,7 +247,10 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
             {participant ? <>
               <RouteLink className="person-link" href={own ? '/profile' : '/profiles/' + participant.id} navigate={navigate}>
                 <img src={avatars[participant.avatar]} width="38" height="38" alt="" />
-                <span><strong>{participant.name}</strong><small>{seatInfo}</small></span>
+                <span><strong>{participant.name}</strong><small>{seatInfo}</small>
+                  <ParticipantStats key={participant.id} id={participant.id} game={activeGame} own={own ? ownProfile : undefined}
+                    latest={room.roomHistory.find(entry => entry.game === activeGame && entry.players.some(player => player.role === role))} />
+                </span>
               </RouteLink>
               {!own && <FriendButton id={participant.id} model={friends} />}
             </> : <div className="person-link">

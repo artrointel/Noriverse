@@ -16,7 +16,7 @@ import type { Stone } from './games/table.ts';
 import { oppositeStone, rematchPlayerColor } from './games/table.ts';
 import { nextDeadline, resolveTurnTimeout } from './games/turn-clock.ts';
 import type { TimeoutChoice, TurnLimit } from './games/turn-clock.ts';
-import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setMusicScene } from './platform/audio.ts';
+import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setLobbyMusic } from './platform/audio.ts';
 import type { AudioLevels } from './platform/audio.ts';
 import { CatalogPage, GameDetail } from './platform/catalog-pages.tsx';
 import { GameSetup } from './platform/game-setup.tsx';
@@ -78,7 +78,7 @@ function App() {
     playSound('navigate');
   }, [path]);
 
-  useEffect(() => { setMusicScene(route.page === 'play' ? route.id : 'lobby'); }, [route.page, route.id]);
+  useEffect(() => { if (!playGame) setLobbyMusic(); }, [playGame]);
 
   useEffect(() => {
     if (!profile.profile || !room.inMatch || !room.playerColor || !room.finishedAt || !room.matchId || lastAwayResult.current === room.matchId

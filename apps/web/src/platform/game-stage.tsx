@@ -17,6 +17,7 @@ import { TouchBurst } from './touch-burst.tsx';
 import { GearIcon } from './gear-icon.tsx';
 import { GameReactions } from './game-reactions.tsx';
 import type { RoomReactions } from './game-reactions.tsx';
+import { setMatchMusic } from './audio.ts';
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
   showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, reactions, ownProfile, onReady }: {
@@ -55,6 +56,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : id === 'sichuan' ? 'sichuanBoard' : 'board';
 
   useLayoutEffect(() => { current.current = view; }, [view]);
+  useEffect(() => { setMatchMusic(id, matchId); }, [id, matchId]);
 
   useLayoutEffect(() => {
     const element = field.current;

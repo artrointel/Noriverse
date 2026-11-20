@@ -1,5 +1,8 @@
 import { arrangements, playArrangement } from './music-arrangements.ts';
 import type { ArrangementTrack } from './music-arrangements.ts';
+import type { ProfileGame } from '../../../../packages/protocol/profile.ts';
+import type { Emoji } from '../../../../packages/protocol/reactions.ts';
+import { playReactionCue } from './reaction-sounds.ts';
 
 type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'paper';
 type Channel = 'music' | 'effects';
@@ -11,25 +14,28 @@ const scores = {
   skylight: { chords: [[48, 55, 59, 64], [45, 52, 60, 67], [41, 48, 57, 62], [43, 50, 59, 65]], pattern: [3, 2, -1, 1, 2, -1, 3, 1], interval: .43 },
   lantern: { chords: [[50, 57, 60, 65], [55, 62, 65, 70], [53, 60, 64, 69], [57, 64, 67, 73]], pattern: [1, -1, 3, 2, -1, 1], interval: .52 },
   paperComet: { chords: [[43, 55, 59, 62], [47, 54, 57, 62], [48, 55, 59, 64], [50, 57, 60, 66]], pattern: [0, 2, 3, -1, 1, 2, -1, 3], interval: .32 },
-  omok: { chords: [[48, 55, 62, 64], [45, 52, 57, 60], [41, 48, 57, 60], [43, 50, 57, 62]], pattern: [1, -1, -1, 3, 2, -1, 0, -1], interval: .45 },
-  othello: { chords: [[50, 57, 60, 65], [46, 53, 60, 62], [48, 55, 62, 67], [45, 52, 55, 61]], pattern: [2, -1, 3, -1, 1, 2, -1, 0], interval: .36 },
   chess: { chords: [[45, 52, 60, 64], [47, 54, 59, 62], [43, 55, 59, 62], [44, 52, 59, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, -1], interval: .4 },
-  sichuan: { chords: [[50, 57, 62, 66], [48, 55, 60, 64], [47, 54, 59, 62], [45, 52, 57, 64]], pattern: [2, -1, 1, 3, -1, 2, 1, -1], interval: .49 },
   physics: { chords: [[43, 50, 58, 62], [46, 53, 60, 65], [41, 48, 57, 60], [45, 52, 55, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, 1], interval: .265 },
 } as const;
 const lobbyTracks = ['orbit', 'skylight', 'lantern', 'paperComet', ...Object.keys(arrangements) as ArrangementTrack[]] as const;
 type LobbyTrack = typeof lobbyTracks[number];
 export type MusicTrack = keyof typeof scores | ArrangementTrack;
-type MusicScene = 'lobby' | Exclude<MusicTrack, LobbyTrack>;
+const gameTracks: Record<ProfileGame, readonly MusicTrack[]> = {
+  omok: ['paperConstellation', 'rainAtMidnight', 'citrusTerrace', 'belowTheTide', 'rooftopStatic', 'pebbleDub'],
+  othello: ['citrusTerrace', 'neonAvenue', 'islandPostcard', 'highlandParade', 'mirrorSteps', 'meadowTrail'],
+  chess: ['chess', 'rainAtMidnight', 'paperConstellation', 'highlandParade', 'pocketDetective', 'winterChorale'],
+  physics: ['physics', 'midnightCourier', 'lemonSprint', 'highlandParade', 'melonSurf', 'skyRelay', 'prismDrive'],
+  sichuan: ['islandPostcard', 'velvetCarousel', 'neonAvenue', 'paperConstellation', 'bambooClock', 'rooftopStatic'],
+};
 
-function randomLobbyTrack(previous?: string | null): LobbyTrack {
-  const choices = lobbyTracks.filter(track => track !== previous);
+function randomTrack<T extends MusicTrack>(tracks: readonly T[], previous?: string | null, lastMatchTrack?: MusicTrack): T {
+  const choices = tracks.filter(track => track !== previous && track !== lastMatchTrack);
   return choices[Math.floor(Math.random() * choices.length)];
 }
 
 function initialLobbyTrack() {
-  try { return randomLobbyTrack(localStorage.getItem('noriverse.lobby-track')); }
-  catch { return randomLobbyTrack(); }
+  try { return randomTrack(lobbyTracks, localStorage.getItem('noriverse.lobby-track')); }
+  catch { return randomTrack(lobbyTracks); }
 }
 const frequency = (note: number) => 440 * 2 ** ((note - 69) / 12);
 let levels = defaultLevels;
@@ -37,7 +43,8 @@ let graph: { context: AudioContext; music: GainNode; effects: GainNode; noise: A
 let clock: number | undefined;
 let nextBeat = 0;
 let beat = 0;
-let musicScene: MusicScene = 'lobby';
+let inMatch = false;
+let lastMatch: { id: string; game: ProfileGame; track: MusicTrack } | undefined;
 let lobbyTrack = initialLobbyTrack();
 let musicTrack: MusicTrack = lobbyTrack;
 const trackListeners = new Set<() => void>();
@@ -110,15 +117,30 @@ export function subscribeMusicTrack(listener: () => void) {
 }
 
 export function shuffleMusicTrack() {
-  const track = randomLobbyTrack(musicTrack);
-  if (musicScene === 'lobby') { lobbyTrack = track; rememberLobbyTrack(); }
-  changeMusicTrack(track);
+  if (inMatch && lastMatch) {
+    lastMatch.track = randomTrack(gameTracks[lastMatch.game], musicTrack);
+    changeMusicTrack(lastMatch.track);
+  } else {
+    lobbyTrack = randomTrack(lobbyTracks, musicTrack);
+    rememberLobbyTrack();
+    changeMusicTrack(lobbyTrack);
+  }
 }
 
-export function setMusicScene(scene: MusicScene) {
-  if (musicScene === scene) return;
-  musicScene = scene;
-  changeMusicTrack(scene === 'lobby' ? lobbyTrack : scene);
+export function setLobbyMusic() {
+  inMatch = false;
+  changeMusicTrack(lobbyTrack);
+}
+
+export function setMatchMusic(game: ProfileGame, id: string) {
+  if (!id) return;
+  inMatch = true;
+  if (lastMatch?.id === id && lastMatch.game === game) { changeMusicTrack(lastMatch.track); return; }
+  const tracks = gameTracks[game];
+  const previous = lastMatch?.game === game ? lastMatch.track : undefined;
+  const track = previous || musicTrack === tracks[0] ? randomTrack(tracks, musicTrack, previous) : tracks[0];
+  lastMatch = { id, game, track };
+  changeMusicTrack(track);
 }
 
 function createGraph() {
@@ -160,7 +182,7 @@ function unlockAudio() {
 }
 
 function tone(when: number, hz: number, duration: number, volume: number, channel: Channel,
-  wave: OscillatorType = 'sine', endHz = hz, attack = .008) {
+  wave: OscillatorType = 'sine', endHz = hz, attack = .008, sustain = 0) {
   if (!graph) return;
   const { context } = graph;
   const oscillator = context.createOscillator();
@@ -169,7 +191,9 @@ function tone(when: number, hz: number, duration: number, volume: number, channe
   oscillator.frequency.setValueAtTime(hz, when);
   oscillator.frequency.exponentialRampToValueAtTime(endHz, when + duration);
   envelope.gain.setValueAtTime(0.0001, when);
-  envelope.gain.exponentialRampToValueAtTime(volume, when + Math.min(attack, duration / 2));
+  const peak = Math.min(attack, duration / 2);
+  envelope.gain.exponentialRampToValueAtTime(volume, when + peak);
+  if (sustain) envelope.gain.exponentialRampToValueAtTime(volume * .69, when + peak + (duration - peak) * sustain);
   envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration);
   oscillator.connect(envelope).connect(graph[channel]);
   trackNote(oscillator, channel);
@@ -193,6 +217,14 @@ function texture(when: number, duration: number, volume: number, center: number,
   trackNote(source, channel);
   source.start(when);
   source.stop(when + duration);
+}
+
+export function playReactionSound(emoji: Emoji) {
+  if (!levels.effects || graph?.context.state !== 'running' || document.hidden) return;
+  const time = graph.context.currentTime;
+  playReactionCue(emoji,
+    (at, start, length, gain, wave, end, attack, sustain) => tone(time + at, start, length, gain, 'effects', wave, end, attack, sustain),
+    (at, length, gain, center) => texture(time + at, length, gain, center));
 }
 
 export function playSound(effect: Effect, strength = 1) {

@@ -3,7 +3,7 @@ import { isRoomGame, isRoomRole, readTouch, roomCapacity, roomCodePattern } from
 import type { Participant, Role, RoomGame, TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import { elapsedPlaySeconds, profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
-import { freeReactionCorner, isEmoji, readRoomReaction, showReaction } from '../../../../packages/protocol/reactions.ts';
+import { assignReactionSlots, isEmoji, readRoomReaction, showReaction } from '../../../../packages/protocol/reactions.ts';
 import type { Emoji, Reaction, TimedReaction } from '../../../../packages/protocol/reactions.ts';
 import { boardRules, isBoardGame, isTurnBasedGame } from '../games/board-rules.ts';
 import { defaultOmokOverline, isOmokOverline } from '../games/omok/rules.ts';
@@ -71,7 +71,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const [round, setRound] = useState(blankMatch);
   const [roomHistory, setRoomHistory] = useState<RoomResult[]>([]);
   const results = useRef<RoomResult[]>([]);
-  const matchRoster = useRef<{ seats: Role[]; names: Map<Role, string> }>(undefined);
+  const matchRoster = useRef<{ seats: Role[]; names: Map<Role, string>; reactionSlots: ReturnType<typeof assignReactionSlots<Role>> }>(undefined);
   const previousMatch = useRef<Match>(undefined);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const roster = useRef<Participant[]>([]);
@@ -169,7 +169,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     const current = match.current;
     if (!ready.current || !current.startedAt || current.finishedAt || !inRound(current, role)) return;
     const now = performance.now();
-    const corner = freeReactionCorner(activeReactions.current, now);
+    const corner = matchRoster.current?.reactionSlots.get(role);
     if (!corner) return;
     const profile = (role === 'host' ? ownProfile.current : undefined) ?? roster.current.find(person => person.role === role)?.profile;
     const reaction = { id: crypto.randomUUID(), role, emoji, corner, sender: profile && { name: profile.name, avatar: profile.avatar } };
@@ -617,7 +617,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
       hostColor = rematchPlayerColor(previous.hostColor, winner === 3 || winner === 4 ? undefined : winner, previous.surrendered ?? previous.timedOut);
     }
     const now = Date.now();
-    matchRoster.current = { seats, names: new Map(participants.flatMap(person => person.profile ? [[person.role, person.profile.name]] : [])) };
+    matchRoster.current = { seats, reactionSlots: assignReactionSlots(seats),
+      names: new Map(participants.flatMap(person => person.profile ? [[person.role, person.profile.name]] : [])) };
     previousMatch.current = undefined;
     update({ ...current, id: rematch ? crypto.randomUUID() : current.id, hostColor, startedAt: now, finishedAt: 0,
       history: [], surrendered: undefined, timedOut: undefined, timeoutPending: undefined, deadline: nextDeadline(current.turnLimit, now),

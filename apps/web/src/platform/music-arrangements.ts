@@ -1,8 +1,13 @@
-type Arrangement = {
+import { encoreArrangements, playEncoreBacking } from './music-encore.ts';
+import type { EncoreBacking } from './music-encore.ts';
+
+type Backing = 'arcade' | 'piano' | 'funk' | 'waltz' | 'ambient' | 'bossa' | 'breakbeat' | 'march' | 'musicBox' | 'reggae' | EncoreBacking;
+
+export type Arrangement<Style extends string = Backing> = {
   bpm: number; steps: number; swing: number;
   bars: readonly { chord: readonly [number, number, number]; melody: readonly number[] }[];
   lead: readonly [wave: OscillatorType, length: number, attack: number, gain: number];
-  accompaniment: 'arcade' | 'piano' | 'funk' | 'waltz' | 'ambient';
+  accompaniment: Style;
 };
 
 export const arrangements = {
@@ -42,19 +47,57 @@ export const arrangements = {
     { chord: [45, 52, 59], melody: [0, 0, 76, 0, 0, 0, 71, 0] }, { chord: [41, 48, 55], melody: [0, 0, 0, 72, 0, 0, 79, 0] },
     { chord: [38, 45, 52], melody: [0, 0, 76, 0, 0, 0, 69, 0] }, { chord: [43, 50, 57], melody: [0, 0, 74, 0, 0, 0, 0, 0] },
   ] },
+  citrusTerrace: { bpm: 118, steps: 8, swing: 0, accompaniment: 'bossa', lead: ['triangle', 1.24, .012, .085], bars: [
+    { chord: [60, 64, 71], melody: [79, 0, 76, 74, 0, 76, 0, 71] }, { chord: [57, 60, 67], melody: [72, 0, 0, 76, 79, 76, 74, 0] },
+    { chord: [50, 53, 60], melody: [77, 0, 74, 72, 0, 74, 0, 69] }, { chord: [55, 59, 65], melody: [71, 0, 74, 77, 0, 76, 74, 0] },
+    { chord: [53, 57, 64], melody: [81, 0, 79, 76, 0, 72, 0, 76] }, { chord: [54, 57, 64], melody: [78, 0, 76, 72, 0, 69, 0, 72] },
+    { chord: [55, 60, 65], melody: [77, 0, 74, 72, 0, 76, 0, 77] }, { chord: [55, 59, 65], melody: [79, 77, 0, 74, 71, 0, 74, 0] },
+  ] },
+  midnightCourier: { bpm: 172, steps: 8, swing: .11, accompaniment: 'breakbeat', lead: ['triangle', .9, .018, .068], bars: [
+    { chord: [45, 52, 57], melody: [0, 0, 69, 0, 0, 0, 72, 0] }, { chord: [43, 50, 58], melody: [0, 0, 67, 0, 74, 0, 0, 70] },
+    { chord: [41, 48, 56], melody: [0, 68, 72, 0, 0, 72, 0, 0] }, { chord: [40, 47, 55], melody: [0, 67, 0, 71, 0, 74, 0, 0] },
+    { chord: [45, 52, 57], melody: [76, 0, 0, 72, 0, 79, 0, 0] }, { chord: [48, 55, 60], melody: [0, 0, 72, 0, 79, 0, 82, 0] },
+    { chord: [46, 53, 57], melody: [81, 0, 0, 77, 0, 72, 0, 74] }, { chord: [40, 47, 55], melody: [0, 71, 0, 67, 0, 0, 0, 64] },
+    { chord: [45, 52, 57], melody: [0, 69, 0, 0, 72, 0, 76, 0] }, { chord: [46, 53, 58], melody: [0, 70, 77, 0, 0, 81, 0, 0] },
+    { chord: [41, 48, 57], melody: [0, 81, 0, 76, 0, 72, 0, 0] }, { chord: [40, 47, 55], melody: [76, 0, 74, 0, 71, 0, 67, 0] },
+  ] },
+  highlandParade: { bpm: 106, steps: 8, swing: 0, accompaniment: 'march', lead: ['sawtooth', 1.6, .045, .043], bars: [
+    { chord: [48, 55, 60], melody: [67, 0, 67, 0, 72, 0, 76, 0] }, { chord: [43, 50, 55], melody: [74, 0, 0, 71, 67, 0, 0, 0] },
+    { chord: [45, 52, 57], melody: [69, 0, 72, 0, 76, 0, 81, 0] }, { chord: [41, 48, 53], melody: [79, 0, 0, 77, 72, 0, 0, 0] },
+    { chord: [46, 53, 58], melody: [77, 0, 70, 0, 74, 0, 77, 0] }, { chord: [48, 55, 60], melody: [79, 0, 0, 76, 84, 0, 0, 0] },
+    { chord: [45, 52, 57], melody: [81, 0, 81, 0, 79, 0, 76, 0] }, { chord: [43, 50, 55], melody: [74, 0, 0, 71, 67, 0, 0, 0] },
+  ] },
+  paperConstellation: { bpm: 76, steps: 10, swing: 0, accompaniment: 'musicBox', lead: ['sine', 2.3, .009, .09], bars: [
+    { chord: [57, 60, 64], melody: [81, 0, 84, 0, 88, 0, 83, 0, 84, 0] }, { chord: [53, 57, 64], melody: [89, 0, 88, 0, 84, 0, 81, 0, 0, 0] },
+    { chord: [50, 53, 60], melody: [86, 0, 0, 84, 81, 0, 77, 0, 81, 0] }, { chord: [52, 56, 62], melody: [80, 0, 83, 0, 86, 0, 88, 0, 0, 0] },
+    { chord: [48, 52, 59], melody: [91, 0, 88, 0, 83, 0, 86, 0, 0, 0] }, { chord: [47, 50, 57], melody: [86, 0, 81, 0, 77, 0, 81, 0, 0, 0] },
+    { chord: [53, 57, 64], melody: [84, 0, 88, 0, 89, 0, 88, 0, 81, 0] }, { chord: [52, 56, 62], melody: [86, 0, 83, 0, 80, 0, 76, 0, 0, 0] },
+  ] },
+  islandPostcard: { bpm: 86, steps: 8, swing: .07, accompaniment: 'reggae', lead: ['triangle', 1.25, .017, .088], bars: [
+    { chord: [55, 59, 62], melody: [0, 74, 0, 71, 69, 0, 67, 0] }, { chord: [48, 52, 55], melody: [0, 72, 0, 76, 74, 0, 0, 72] },
+    { chord: [52, 55, 59], melody: [0, 71, 0, 67, 71, 0, 76, 0] }, { chord: [50, 54, 57], melody: [0, 74, 0, 69, 66, 0, 0, 69] },
+    { chord: [55, 59, 62], melody: [79, 0, 0, 74, 71, 0, 74, 0] }, { chord: [57, 60, 64], melody: [0, 76, 0, 72, 69, 0, 0, 72] },
+    { chord: [48, 52, 55], melody: [0, 79, 0, 76, 72, 0, 76, 0] }, { chord: [50, 54, 57], melody: [0, 74, 0, 72, 69, 0, 66, 0] },
+  ] },
+  ...encoreArrangements,
 } as const satisfies Record<string, Arrangement>;
 
 export type ArrangementTrack = keyof typeof arrangements;
 
 export const musicMoods = {
   orbit: ['cosmic', 'calm'], skylight: ['bright', 'soft'], lantern: ['warm', 'calm'], paperComet: ['playful', 'bright'],
-  omok: ['calm', 'soft'], othello: ['playful', 'warm'], chess: ['moody', 'soft'], physics: ['energetic', 'rhythmic'], sichuan: ['soft', 'warm'],
+  chess: ['moody', 'soft'], physics: ['energetic', 'rhythmic'],
   lemonSprint: ['energetic', 'bright', 'arcade'], rainAtMidnight: ['melancholy', 'slow', 'piano'], neonAvenue: ['funky', 'rhythmic', 'night'],
   velvetCarousel: ['whimsical', 'waltz'], belowTheTide: ['ambient', 'slow', 'cosmic'],
+  citrusTerrace: ['bossa', 'warm'], midnightCourier: ['breakbeat', 'night', 'energetic'], highlandParade: ['march', 'bright'],
+  paperConstellation: ['musicBox', 'moody'], islandPostcard: ['reggae', 'calm'],
+  rooftopStatic: ['lofi', 'warm'], melonSurf: ['surf', 'playful'], mirrorSteps: ['disco', 'rhythmic'], meadowTrail: ['folk', 'bright'],
+  pebbleDub: ['dub', 'slow'], prismDrive: ['synthwave', 'night'], pocketDetective: ['pizzicato', 'playful'],
+  bambooClock: ['kalimba', 'rhythmic'], skyRelay: ['garage', 'energetic'], winterChorale: ['chorale', 'calm'],
 } as const;
 
-type Voice = (note: number, length: number, gain: number, wave?: OscillatorType, attack?: number) => void;
-type Percussion = (length: number, gain: number, hz: number) => void;
+export type Voice = (note: number, length: number, gain: number, wave?: OscillatorType, attack?: number) => void;
+export type Percussion = (length: number, gain: number, hz: number) => void;
 
 export function playArrangement(track: ArrangementTrack, beat: number, note: Voice, noise: Percussion) {
   const { bpm, steps, swing, bars, lead, accompaniment }: Arrangement = arrangements[track];
@@ -91,6 +134,35 @@ export function playArrangement(track: ArrangementTrack, beat: number, note: Voi
       if (step === 0) for (const chordNote of [root - 12, ...chord]) note(chordNote, interval * 9, .12, 'sine', 1.25);
       if (step === 4) note(middle + 12, interval * 4, .034, 'triangle', .57);
       break;
+    case 'bossa':
+      if (step === 0 || step === 4) note((step === 0 ? root : upper) - 12, .35, .13, 'sine');
+      if (step === 0 || step === 3 || step === 5 || step === 7) for (const tone of chord) note(tone, .19, .034, 'triangle');
+      if (step === 2 || step === 6) noise(.054, .083, 2200);
+      else if (step % 2) noise(.036, .045, 6200);
+      break;
+    case 'breakbeat':
+      if (step === 0 || step === 3 || step === 5) note(step === 5 ? middle - 12 : root - 12, .29, .25, 'sine');
+      if (step === 2 || step === 6) noise(.105, .21, 1400);
+      else if (step % 2) noise(.05, .095, 7700);
+      if (step === 0) for (const tone of chord) note(tone + 12, 1.25, .018, 'triangle', .26);
+      break;
+    case 'march':
+      if (step === 0 || step === 4) note((step === 0 ? root : middle) - 12, .33, .15, 'triangle');
+      if (step === 2 || step === 6) for (const tone of chord) note(tone, .24, .034, 'sawtooth', .045);
+      if (step % 2 === 0 || step === 7) noise(.062, step % 4 === 0 ? .12 : .066, 2800);
+      break;
+    case 'musicBox':
+      if (step % 2 === 0) note([root, middle, upper, middle, upper][step / 2], .74, .075, 'sine');
+      if (pitch) note(pitch + 19, .24, .023, 'sine', .004);
+      break;
+    case 'reggae':
+      if (step === 0 || step === 3 || step === 6) note((step === 0 ? root : step === 3 ? upper : middle) - 12, .5, .19, 'sine');
+      if (step % 2) for (const tone of chord) note(tone + 12, .105, .035, 'triangle');
+      if (step === 4) noise(.09, .13, 1950);
+      else if (step % 2) noise(.034, .055, 6500);
+      break;
+    default:
+      playEncoreBacking(accompaniment, step, chord, pitch, note, noise);
   }
   return interval * (1 + (step % 2 ? -swing : swing));
 }
