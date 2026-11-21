@@ -1,13 +1,15 @@
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { roomRoles } from '../../../../packages/protocol/rooms.ts';
+import { defaultAvatar } from '../../../../packages/protocol/profile.ts';
 import type { Participant, Role } from '../../../../packages/protocol/rooms.ts';
 import { roomPoints, roomRankChange, roomRankingEntries, roomStandings } from '../../../../packages/protocol/room-history.ts';
 import type { RoomResult } from '../../../../packages/protocol/room-history.ts';
 import { games } from './game-catalog.ts';
 import { formatPlayTime } from './game-time.tsx';
+import { Avatar } from './avatar.tsx';
 
 type Ranking = { entries: RoomResult[]; participants: Participant[]; test?: boolean; matchId?: string; roomTitle?: string; finished?: boolean };
 type View = 'ranking' | 'history';
@@ -23,13 +25,49 @@ function rankingName(player: { mock?: boolean; name?: string; role: Role }, t: T
     : player.name ?? (player.role === 'host' ? t('host') : t('anonymousSeat', { number: roomRoles.indexOf(player.role) + 1 }));
 }
 
+const fireworkSparks = Array.from({ length: 10 }, (_, index) => {
+  const angle = index * Math.PI / 5;
+  const distance = index % 2 ? 24 : 34;
+  return { '--spark-x': Math.round(Math.cos(angle) * distance) + 'px',
+    '--spark-y': Math.round(Math.sin(angle) * distance) + 'px',
+    '--spark-color': ['#f6be50', '#ec886f', '#a78dea', '#69c7ba'][index % 4] } as CSSProperties;
+});
+
+function fireworkPositions() {
+  return [
+    { insetInlineStart: 17 + Math.random() * 26 + '%', insetBlockStart: 19 + Math.random() * 16 + '%' },
+    { insetInlineStart: 57 + Math.random() * 26 + '%', insetBlockStart: 26 + Math.random() * 21 + '%' },
+  ];
+}
+
+function RankingFireworks() {
+  const [positions, setPositions] = useState(fireworkPositions);
+  return <span className="ranking-fireworks" aria-hidden="true">
+    {positions.map((position, burst) => <span className="ranking-firework" key={burst} style={position}>
+      {fireworkSparks.map((style, index) => <i key={index} style={style}
+        onAnimationIteration={burst === 0 && index === 0 ? () => setPositions(fireworkPositions()) : undefined} />)}
+    </span>)}
+  </span>;
+}
+
 function RankingRows({ entries, participants }: Ranking) {
   const { t } = useTranslation();
+  if (!entries.length && participants.length) return <ul className="ranking-rows ranking-roster" aria-label={t('participants')}>
+    {participants.map(player => <li key={player.role}>
+      <Avatar appearance={{ avatar: player.profile?.avatar ?? (player.mock ? 'die' : defaultAvatar) }} size={32} characterOnly />
+      <strong>{rankingName({ ...player, name: player.profile?.name }, t)}</strong>
+    </li>)}
+  </ul>;
   const rows = roomStandings(entries, participants);
   return rows.length ? <ol className="ranking-rows" data-podium-count={Math.min(3, rows.length)}>
     {rows.map((row, i) => <li key={row.key} data-medal={i < 3 ? i + 1 : undefined} data-leading={i === 0 && row.played > 0}>
+      {i === 0 && <RankingFireworks key={row.wins} />}
       <span className="ranking-position">
-        {i < 3 && <span className="ranking-medal-art" aria-hidden="true" />}
+        {i < 3 && <>
+          <Avatar className="ranking-avatar" appearance={{ avatar: row.avatar ?? (row.mock ? 'die' : defaultAvatar) }}
+            size={i === 0 ? 66 : 54} characterOnly />
+          <span className="ranking-medal-art" aria-hidden="true" />
+        </>}
         <span className="ranking-number">{i + 1}</span>
       </span>
       <div className="ranking-player">

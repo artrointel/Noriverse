@@ -4,7 +4,7 @@ import type { Participant, Role, RoomGame, TouchPoint } from '../../../../packag
 import { elapsedPlaySeconds, profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { assignReactionSlots, isEmoji, readRoomReaction, showReaction } from '../../../../packages/protocol/reactions.ts';
-import type { Emoji, Reaction, TimedReaction } from '../../../../packages/protocol/reactions.ts';
+import type { Emoji, Reaction, ReactionContent, TimedReaction } from '../../../../packages/protocol/reactions.ts';
 import { boardRules, isBoardGame, isTurnBasedGame } from '../games/board-rules.ts';
 import { advanceFlickRound, createFlickRound, defaultFlickSettings, flickPlayers, pieceOwner, readFlick, readLayout, settledStatus } from '../games/alkkagi/rules.ts';
 import type { Flick, FlickPlayer, FlickRound, StonePosition } from '../games/alkkagi/rules.ts';
@@ -28,15 +28,19 @@ import { awardRoomPoints } from './room-scoring.ts';
 import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchOutcome, matchTurn, matchWinner, mockSeatsFor, readMatchSnapshot, roundSeats } from './room-match.ts';
 import type { Match } from './room-match.ts';
 import { countdownDuration } from '../games/round-cues.ts';
-import { advanceSketch, applySketchAction, chooseSketchMap, defaultSketchSettings, makeSketchRound, nextSketchEvent, sketchDeck, startSketchTurn, visibleSketch } from '../games/sketch/rules.ts';
+import { advanceSketch, applySketchAction, chooseSketchMap, defaultSketchSettings, makeSketchRound, nextSketchEvent, readSketchGuess, sketchDeck, startSketchTurn, visibleSketch } from '../games/sketch/rules.ts';
 import type { Prompt, SketchAction, SketchRound } from '../games/sketch/rules.ts';
 import { inkBatch, inkLimit, packInk, readInk } from '../games/sketch/ink.ts';
 import { advanceLiar, applyLiarAction, defaultLiarSettings, isLiarRound, makeLiarRound, visibleLiar } from '../games/liar/rules.ts';
 import type { LiarAction, LiarRound } from '../games/liar/rules.ts';
+import { defaultMemorySettings } from '../games/memory/rules.ts';
+import { advanceOrbit, applyOrbitInput, createOrbitRound, nextOrbitAt, orbitGravityMs, resignOrbit } from '../games/slime/rules.ts';
+import type { OrbitInput, OrbitRound } from '../games/slime/rules.ts';
 
 type Seat = { code: string; role: Role; token: string };
 const lobbySlots = assignReactionSlots(roomRoles);
-const matchDeadline = (match: Match) => match.liar?.deadline
+const orbitBroadcastInterval = 85;
+const matchDeadline = (match: Match) => (match.slime ? nextOrbitAt(match.slime) : undefined) ?? match.liar?.deadline
   ?? (match.sketch && match.sketchConfig ? nextSketchEvent(match.sketch, match.sketchConfig) : undefined)
   ?? (match.puzzle ? puzzleEnd(match.puzzle) : match.deadline);
 
@@ -72,6 +76,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const seat = useRef<Seat | undefined>(undefined);
   const link = useRef<ReturnType<typeof connectToRoom> | undefined>(undefined);
   const match = useRef<Match>(blankMatch);
+  const orbitBroadcast = useRef({ sentAt: -Infinity, timer: 0 });
   const operation = useRef(0);
   const ready = useRef(false);
   const readyForPlay = () => ready.current || Boolean(import.meta.env.DEV && seat.current?.role === 'host' && match.current.mockSeats?.length);
@@ -86,6 +91,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   useEffect(() => () => {
     operation.current++;
+    window.clearTimeout(orbitBroadcast.current.timer);
     link.current?.close();
   }, []);
 
@@ -116,7 +122,11 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function update(next: Match) {
     const currentSeat = seat.current;
     const previous = match.current;
-    if (next.id !== previous.id) setReactions([]);
+    if (next.id !== previous.id) {
+      setReactions([]);
+      window.clearTimeout(orbitBroadcast.current.timer);
+      orbitBroadcast.current = { sentAt: -Infinity, timer: 0 };
+    }
     if (currentSeat && next.startedAt && !next.mockSeats?.length && (previous.id !== next.id || !previous.startedAt)) {
       rememberRecentRoom(currentSeat.code, next.game);
     }
@@ -132,7 +142,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
         if (next.mockSeats?.includes(role)) return [{ role, outcome, mock: true as const, ...score }];
         const seat = matchRoster.current?.players.get(role);
         const profile = role === 'host' ? ownProfile.current ?? seat?.profile : seat?.profile;
-        return [{ role, name: profile?.name, profileId: profile?.id, memberId: seat?.memberId, outcome, ...score }];
+        return [{ role, name: profile?.name, avatar: profile?.avatar, profileId: profile?.id, memberId: seat?.memberId, outcome, ...score }];
       });
       if (players.length) {
         const entry: RoomResult = { id: next.id, game: next.game, endedAt: next.finishedAt,
@@ -172,13 +182,13 @@ export function useRoomBoard(profile?: ProfileSummary) {
     (lobby ? setLobbyReactions : setReactions)(previous => showReaction(previous, reaction, now));
   }
 
-  function broadcastReaction(role: Role, emoji: Emoji, lobby: boolean) {
+  function broadcastReaction(role: Role, content: ReactionContent, lobby: boolean) {
     const current = match.current;
     if (!lobby && (!readyForPlay() || !current.startedAt || !inRound(current, role))) return;
     const corner = (lobby ? lobbySlots : matchRoster.current?.reactionSlots)?.get(role);
     if (!corner) return;
     const profile = (role === 'host' ? ownProfile.current : undefined) ?? roster.current.find(person => person.role === role)?.profile;
-    const reaction = { id: crypto.randomUUID(), role, emoji, corner, sender: profile && { name: profile.name, avatar: profile.avatar } };
+    const reaction = { ...content, id: crypto.randomUUID(), role, corner, sender: profile && { name: profile.name, avatar: profile.avatar } };
     displayReaction(reaction, lobby);
     link.current?.send({ type: 'reaction', scope: lobby ? 'lobby' : undefined, matchId: lobby ? undefined : current.id, reaction });
     return true;
@@ -236,7 +246,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
     const sketch = current.sketch && current.sketchConfig
       ? startSketchTurn(current.sketch, current.sketchConfig, beginsAt) : undefined;
     const liar = current.liar && current.liarConfig ? { ...current.liar, deadline: beginsAt + current.liarConfig.seconds * 1000 } : undefined;
-    update({ ...current, beginsAt, deadline: nextDeadline(current.turnLimit, beginsAt), sketch, liar });
+    const slime = current.slime && { ...current.slime, tickAt: beginsAt + orbitGravityMs };
+    update({ ...current, beginsAt, deadline: nextDeadline(current.turnLimit, beginsAt), sketch, liar, slime });
     snapshot();
   }
 
@@ -251,6 +262,29 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function syncSketch(sketch: SketchRound, now: number) {
     update({ ...match.current, sketch, finishedAt: sketch.phase === 'done' ? now : 0 });
     snapshot();
+  }
+
+  function syncOrbit(slime: OrbitRound, now: number) {
+    update({ ...match.current, slime, finishedAt: slime.winner ? now : 0 });
+    const broadcast = orbitBroadcast.current;
+    const delay = orbitBroadcastInterval - (performance.now() - broadcast.sentAt);
+    function send() {
+      window.clearTimeout(broadcast.timer);
+      broadcast.timer = 0;
+      broadcast.sentAt = performance.now();
+      snapshot();
+    }
+    if (slime.winner || delay <= 0) send();
+    else if (!broadcast.timer) broadcast.timer = window.setTimeout(send, delay);
+  }
+
+  function commitOrbit(actor: Role, action: unknown) {
+    const current = match.current;
+    const now = Date.now();
+    if (!current.slime || !matchInProgress(current, now)) return;
+    const advanced = advanceOrbit(current.slime, now);
+    const next = applyOrbitInput(advanced ?? current.slime, actor, action, now) ?? advanced;
+    if (next) syncOrbit(next, now);
   }
 
   function syncLiar(liar: LiarRound, now: number) {
@@ -273,6 +307,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
     const now = Date.now();
     if (!current.sketch || !matchInProgress(current, now)) return false;
     if (current.sketch.phase === 'draw' && current.sketch.deadline <= now) { expireTurn(now); return false; }
+    const guess = readSketchGuess(current.sketch, actor, action, now);
+    if (guess) broadcastReaction(actor, { text: guess }, false);
     const sketch = applySketchAction(current.sketch, actor, action, now);
     if (!sketch) return false;
     if (action && typeof action === 'object' && 'kind' in action && action.kind === 'ink') {
@@ -326,6 +362,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   function expireTurn(now: number) {
     const current = match.current;
+    if (current.slime) {
+      const next = advanceOrbit(current.slime, now);
+      if (!next) return false;
+      syncOrbit(next, now);
+      return true;
+    }
     if (current.liar && isLiarRound(current.liar) && current.liarConfig) {
       const next = advanceLiar(current.liar, current.liarConfig, now);
       if (!next) return false;
@@ -378,7 +420,15 @@ export function useRoomBoard(profile?: ProfileSummary) {
     if (current.sketch) return commitSketch(actor, { kind: 'resign' });
     if (current.liar) return commitLiar(actor, { kind: 'resign' });
     const now = Date.now();
-    if (!matchInProgress(current, now) || expireTurn(now)) return false;
+    if (!matchInProgress(current, now)) return false;
+    if (current.slime) {
+      const advanced = advanceOrbit(current.slime, now);
+      const next = resignOrbit(advanced ?? current.slime, actor) ?? advanced;
+      if (!next) return false;
+      syncOrbit(next, now);
+      return true;
+    }
+    if (expireTurn(now)) return false;
     if ((current.physics?.players ?? 2) > 2) return eliminateFlick(color, now);
     if (current.puzzle && current.puzzleConfig) {
       const next = resignPuzzle(current.puzzle, current.puzzleConfig.mode, actor);
@@ -458,10 +508,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
           const matches = 'matchId' in raw && raw.matchId === current.id && current.startedAt > 0 && inRound(current, peer);
           if (!lobby && !matches) return;
           if (raw.type === 'reaction-request' && seat.current?.role === 'host' && 'emoji' in raw && isEmoji(raw.emoji)) {
-            broadcastReaction(peer, raw.emoji, lobby);
+            broadcastReaction(peer, { emoji: raw.emoji }, lobby);
           } else if (raw.type === 'reaction' && peer === 'host' && 'reaction' in raw) {
             const event = readRoomReaction(raw.reaction);
-            if (event) displayReaction(event, lobby);
+            if (event && (event.text === undefined || (!lobby && current.sketch && event.role && inRound(current, event.role)))) {
+              displayReaction(event, lobby);
+            }
           }
           return;
         }
@@ -489,6 +541,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
           if (raw.type === 'sketch-sync' && current.sketch) { snapshot(peer); return; }
           if (raw.type === 'round-ready' || raw.type === 'puzzle-ready') { markRoundReady(peer); return; }
           if (!matchInProgress(current, Date.now())) return;
+          if (raw.type === 'slime-action' && 'action' in raw) { commitOrbit(peer, raw.action); return; }
           if (raw.type === 'puzzle-action' && 'action' in raw) { commitPuzzle(peer, raw.action); return; }
           if (raw.type === 'liar-action' && current.liar && 'phase' in raw && raw.phase === current.liar.phase && 'action' in raw) {
             commitLiar(peer, raw.action);
@@ -644,7 +697,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     const own = seat.current?.role;
     if (!own || !isEmoji(emoji) || (!readyForPlay() && (!lobby || own !== 'host'))) return false;
     if (!lobby && (!current.startedAt || !inRound(current, own))) return false;
-    return own === 'host' ? Boolean(broadcastReaction(own, emoji, lobby))
+    return own === 'host' ? Boolean(broadcastReaction(own, { emoji }, lobby))
       : Boolean(link.current?.send({ type: 'reaction-request', scope: lobby ? 'lobby' : undefined, matchId: lobby ? undefined : current.id, emoji }));
   }
 
@@ -673,12 +726,13 @@ export function useRoomBoard(profile?: ProfileSummary) {
     drawingDeck.current = current.sketchConfig ? sketchDeck(current.sketchConfig.language) : [];
     matchRoster.current = { seats, reactionSlots: assignReactionSlots(seats),
       players: new Map(roster.current.map(person => [person.role, person])) };
-    let puzzle = current.puzzleConfig ? makePuzzleRound(current.puzzleConfig, Math.random, seats) : undefined;
+    let puzzle = current.puzzleConfig ? makePuzzleRound(current.puzzleConfig, Math.random, seats, current.game === 'memory') : undefined;
     for (const mock of mocks) if (puzzle) puzzle = readyPuzzle(puzzle, mock, now) ?? puzzle;
     previousMatch.current = undefined;
     update({ ...current, id: rematch ? crypto.randomUUID() : current.id, hostColor, startedAt: now, finishedAt: 0,
       history: [], surrendered: undefined, timedOut: undefined, timeoutPending: undefined, deadline: 0, beginsAt: current.puzzleConfig ? undefined : 0,
       mockSeats: mocks.length ? mocks : undefined, puzzle,
+      slime: current.game === 'slime' ? createOrbitRound(seats) : undefined,
       sketch: current.sketchConfig ? makeSketchRound(seats, drawingDeck.current[0], chooseSketchMap(current.sketchConfig.map)) : undefined,
       liar: current.liarConfig ? makeLiarRound(seats, current.liarConfig.language, Math.random, previous?.liar?.result?.word) : undefined,
       physicsSeats, physics: physicsSeats ? createFlickRound(current.flickSettings ?? defaultFlickSettings, physicsSeats.length) : undefined });
@@ -700,7 +754,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
       remove: () => setMockCount(Math.max(0, mockSeats.length - 1)),
     } : undefined,
     settings: { allowDoubleThree, overline, power: round.power ?? 1, turnLimit, flick: round.flickSettings ?? defaultFlickSettings,
-      puzzle: round.puzzleConfig ?? defaultSichuanRoomSettings, sketch: round.sketchConfig ?? defaultSketchSettings,
+      puzzle: game === 'sichuan' && round.puzzleConfig ? round.puzzleConfig : defaultSichuanRoomSettings,
+      memory: game === 'memory' && round.puzzleConfig ? round.puzzleConfig : defaultMemorySettings, sketch: round.sketchConfig ?? defaultSketchSettings,
       liar: round.liarConfig ?? defaultLiarSettings } satisfies MatchSettings,
     physicsSeats: round.physicsSeats,
     colorFor: (player: Role) => matchColor(round, player),
@@ -709,6 +764,14 @@ export function useRoomBoard(profile?: ProfileSummary) {
     playStartedAt: matchBeginsAt(round),
     displayStart: matchBeginsAt(round) ? matchBeginsAt(round) + (round.clockOffset ?? 0) : 0,
     roundOutcome: role ? matchOutcome(round, role) : undefined,
+    slime: round.slime,
+    slimeAction(input: OrbitInput, serial: number) {
+      const current = match.current, own = seat.current?.role;
+      if (!own || !current.slime || current.finishedAt || (own !== 'host' && !ready.current)) return;
+      const action = { input, serial };
+      if (own === 'host') commitOrbit(own, action);
+      else link.current?.send({ type: 'slime-action', id: current.id, action });
+    },
     liar: round.liar && isLiarRound(round.liar) ? visibleLiar(round.liar, role ?? 'host') : round.liar,
     liarDisplayDeadline: round.liar?.deadline ? round.liar.deadline + (round.clockOffset ?? 0) : 0,
     liarAction(action: LiarAction) {
@@ -800,10 +863,11 @@ export function useRoomBoard(profile?: ProfileSummary) {
       if (link.current?.send({ type: 'request-rematch', id: current.id })) setRematchNotice({ id: current.id, kind: 'sent' });
     },
     surrender() {
-      if (!readyForPlay() || !matchInProgress(match.current, Date.now())) return false;
-      if (!role || !inRound(match.current, role)) return false;
-      return role === 'host' ? finishBySurrender(matchColor(match.current, role)!, role)
-        : Boolean(link.current?.send({ type: 'surrender', id: match.current.id }));
+      const current = match.current;
+      if (!role || !matchInProgress(current, Date.now()) || !inRound(current, role)) return false;
+      if (!readyForPlay() && !(current.slime && role === 'host')) return false;
+      return role === 'host' ? finishBySurrender(matchColor(current, role)!, role)
+        : Boolean(link.current?.send({ type: 'surrender', id: current.id }));
     },
   };
 }

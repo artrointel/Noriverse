@@ -1,0 +1,29 @@
+.slime-page .game-viewport { container-type: inline-size; }
+.slime-page .game-viewport canvas { image-rendering: pixelated; }
+
+.orbit-hud-tabs {
+  --orbit-texel: calc(100cqw / 240);
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--orbit-texel) * 2);
+}
+
+.orbit-hud-tabs button {
+  border: 1px solid transparent;
+  border-image: url('../assets/jelly-orbit-button.png') 6 fill / calc(var(--orbit-texel) * 6) stretch;
+  background: transparent;
+  color: #fff4ff;
+  image-rendering: pixelated;
+  padding: 0 .32cqw;
+  font: 400 clamp(8px, 3.15cqw, 22px)/1 "Sketch Jua", ui-rounded, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: filter 140ms;
+}
+
+.orbit-hud-tabs button[aria-selected="false"] { filter: brightness(.79); }
+.orbit-hud-tabs button[aria-selected="true"] { filter: brightness(1.2); }
+.orbit-hud-tabs button:hover { filter: brightness(1.17); }
+.orbit-hud-tabs button:focus-visible { outline: 2px solid #cdaeff; outline-offset: 2px; }

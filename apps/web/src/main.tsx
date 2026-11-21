@@ -36,6 +36,7 @@ import { useProfile } from './platform/use-profile.ts';
 import './styles.css';
 
 const LiarPage = lazy(() => import('./platform/liar-page.tsx').then(module => ({ default: module.LiarPage })));
+const SlimePage = lazy(() => import('./platform/slime-page.tsx').then(module => ({ default: module.SlimePage })));
 
 function App() {
   const { t, i18n } = useTranslation();
@@ -254,11 +255,23 @@ function App() {
             onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
             record={online && apiAvailable && profile.profile && !room.testMatch ? profile.record : undefined} />;
         }
-        if (id === 'sichuan') {
+        if (id === 'slime') {
+          const slimeRoom = online && room.slime && room.role ? { ...room, slime: room.slime, role: room.role } : undefined;
+          if (online && !slimeRoom) return <p role="status">{t('loading')}</p>;
+          return <Suspense fallback={<div className="surface stage-loading" role="status">{t('loading')}</div>}>
+            <SlimePage room={slimeRoom} ownProfile={profile.profile} navigate={navigate}
+              dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
+              onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
+              onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
+              record={online && apiAvailable && profile.profile && !room.testMatch ? profile.record : undefined} />
+          </Suspense>;
+        }
+        if (id === 'sichuan' || id === 'memory') {
           const puzzleRoom = online && room.puzzle && room.puzzleConfig && room.role
             ? { ...room, puzzle: room.puzzle, puzzleConfig: room.puzzleConfig, role: room.role } : undefined;
           if (online && !puzzleRoom) return <p role="status">{t('loading')}</p>;
-          return <SichuanPage settings={sichuanSettings} room={puzzleRoom} ownProfile={profile.profile}
+          return <SichuanPage game={id} settings={id === 'memory' ? settings.memory.settings : sichuanSettings}
+            room={puzzleRoom} ownProfile={profile.profile}
             dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
             onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
             onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'} navigate={navigate}

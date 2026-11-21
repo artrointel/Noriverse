@@ -5,6 +5,7 @@ import { defaultHints, motifCount, readSichuanRoomSettings, resolveSichuanSettin
 import type { SichuanMode, SichuanRoomSettings } from './options.ts';
 import { availableTileMatches, connectTiles, createSichuanBoard, isMatchTile, nextSichuanCombo, obstacle, shuffleTiles } from './rules.ts';
 import type { Tile, TilePoint } from './rules.ts';
+import { createMemoryBoard, memoryPair, memoryPreviewMs } from '../memory/rules.ts';
 
 type Options = ReturnType<typeof resolveSichuanSettings>;
 type PuzzleBoard = { tiles: Tile[]; shufflesLeft: number; hintsLeft: number; hint?: readonly [number, number] };
@@ -13,6 +14,7 @@ type PuzzleEvent = { actor: Role; kind: 'shuffle' | 'hint' } | { actor: Role; ki
 export type PuzzleResult = Role | 'team' | 'timeout' | 'abandoned';
 type Seats<T> = Partial<Record<Role, T>>;
 export type PuzzleRound = {
+  memory?: true;
   options: Options; players: readonly Role[]; ready: Seats<boolean>; beginsAt: number; revision: number;
   boards: Seats<PuzzleBoard>; stats: Seats<PuzzleStats>; event?: PuzzleEvent; result?: PuzzleResult; resigned?: readonly Role[];
 };
@@ -21,7 +23,7 @@ const defaultPlayers = ['host', 'guest'] as const;
 const initialStats = (): PuzzleStats => ({ removed: 0, maxCombo: 0, streak: 0, lastAt: 0 });
 export const puzzleBoardFor = (round: PuzzleRound, mode: SichuanMode, role: Role) => round.boards[mode === 'coop' ? 'host' : role];
 export const puzzleOutcome = (result: PuzzleResult, role: Role) => result === role || result === 'team' ? 'win' : 'loss';
-export const puzzleEnd = (round: PuzzleRound) => round.beginsAt ? round.beginsAt + round.options.timeLimit * 1000 : 0;
+export const puzzleEnd = (round: PuzzleRound) => round.beginsAt ? round.beginsAt + round.options.timeLimit * 1000 + (round.memory ? memoryPreviewMs : 0) : 0;
 
 export function puzzleProgress(round: PuzzleRound, role: Role) {
   const { size, density } = round.options;
@@ -29,10 +31,10 @@ export function puzzleProgress(round: PuzzleRound, role: Role) {
   return Math.min(100, Math.floor(100 * removed / sichuanTileCount(size, density)));
 }
 
-export function makePuzzleRound(config: SichuanRoomSettings, random = Math.random, players: readonly Role[] = defaultPlayers): PuzzleRound {
+export function makePuzzleRound(config: SichuanRoomSettings, random = Math.random, players: readonly Role[] = defaultPlayers, memory = false): PuzzleRound {
   const options = resolveSichuanSettings(config.settings, random);
-  const tiles = createSichuanBoard(options, random);
-  return { options, players, ready: {}, beginsAt: 0, revision: 0,
+  const tiles = memory ? createMemoryBoard(options.size, options.theme, random) : createSichuanBoard(options, random);
+  return { ...(memory && { memory: true as const }), options, players, ready: {}, beginsAt: 0, revision: 0,
     boards: Object.fromEntries(players.map(role => [role, { tiles: [...tiles], shufflesLeft: options.shuffles, hintsLeft: options.hints }])),
     stats: Object.fromEntries(players.map(role => [role, initialStats()])) };
 }
@@ -57,7 +59,7 @@ export function resignPuzzle(round: PuzzleRound, mode: SichuanMode, actor: Role)
 
 export function applyPuzzleAction(round: PuzzleRound, mode: SichuanMode, actor: Role, raw: unknown, now: number, random = Math.random): PuzzleRound | undefined {
   if (!raw || typeof raw !== 'object' || !round.players.includes(actor) || round.result || !round.beginsAt
-    || round.resigned?.includes(actor) || now < round.beginsAt || now >= puzzleEnd(round)) return;
+    || round.resigned?.includes(actor) || now < round.beginsAt + (round.memory ? memoryPreviewMs : 0) || now >= puzzleEnd(round)) return;
   const action = raw as Partial<PuzzleAction>;
   const key = mode === 'coop' ? 'host' : actor;
   const board = round.boards[key];
@@ -81,7 +83,7 @@ export function applyPuzzleAction(round: PuzzleRound, mode: SichuanMode, actor: 
   }
   if (action.kind !== 'pair' || typeof action.first !== 'number' || typeof action.second !== 'number'
     || !Number.isInteger(action.first) || !Number.isInteger(action.second)) return;
-  const path = connectTiles(board.tiles, action.first, action.second);
+  const path = (round.memory ? memoryPair : connectTiles)(board.tiles, action.first, action.second);
   if (!path) return;
   const tiles = [...board.tiles];
   tiles[action.first] = tiles[action.second] = null;
@@ -94,13 +96,13 @@ export function applyPuzzleAction(round: PuzzleRound, mode: SichuanMode, actor: 
 const integer = (value: unknown, maximum = Number.MAX_SAFE_INTEGER) =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= maximum;
 
-export function readPuzzleRound(value: unknown, config: SichuanRoomSettings): PuzzleRound | undefined {
+export function readPuzzleRound(value: unknown, config: SichuanRoomSettings, memory = false): PuzzleRound | undefined {
   if (!value || typeof value !== 'object') return;
   const r = value as Partial<PuzzleRound>;
   const players = r.players ?? defaultPlayers;
   if (!Array.isArray(players) || players.length < 2 || players.length > 4 || !players.includes('host')
     || !players.every(isRoomRole) || new Set(players).size !== players.length) return;
-  if (!r.options || !readSichuanRoomSettings({ mode: config.mode, settings: r.options })
+  if (r.memory !== (memory ? true : undefined) || !r.options || !readSichuanRoomSettings({ mode: config.mode, settings: r.options }, memory)
     || !integer(r.options.timeLimit, 3600) || typeof r.options.density !== 'number'
     || (r.options.theme as string) === 'random' || !integer(r.beginsAt) || !integer(r.revision, 340)
     || !r.ready || players.some(role => r.ready?.[role] !== undefined && typeof r.ready[role] !== 'boolean')
@@ -111,7 +113,7 @@ export function readPuzzleRound(value: unknown, config: SichuanRoomSettings): Pu
     const board = r.boards[role], stats = r.stats[role];
     if (!board || !Array.isArray(board.tiles) || board.tiles.length !== size ** 2 || !integer(board.shufflesLeft, 5)
       || (board.hintsLeft !== undefined && !integer(board.hintsLeft, 5))
-      || board.tiles.some(tile => tile !== null && tile !== obstacle && !integer(tile, motifCount(theme) - 1))
+      || board.tiles.some(tile => tile !== null && !(tile === obstacle && !memory) && !integer(tile, motifCount(theme) - 1))
       || !stats || !integer(stats.removed, size ** 2) || !integer(stats.maxCombo, size ** 2 / 2)
       || !integer(stats.streak, stats.maxCombo) || !integer(stats.lastAt)) return;
     if (board.hint !== undefined && (!Array.isArray(board.hint) || board.hint.length !== 2

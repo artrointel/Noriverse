@@ -59,7 +59,7 @@ export function availableTileMatches(board: readonly Tile[]) {
   return { pair, pairs };
 }
 
-function shuffle<T>(items: T[], random: () => number) {
+export function shuffle<T>(items: T[], random: () => number) {
   for (let end = items.length - 1; end > 0; end--) {
     const index = Math.floor(random() * (end + 1));
     [items[end], items[index]] = [items[index], items[end]];

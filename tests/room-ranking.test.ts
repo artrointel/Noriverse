@@ -100,3 +100,16 @@ test('a completed game reports the highest overtaking move against established r
   const sameOrder = { ...initial, id: crypto.randomUUID(), endedAt: 120 };
   assert.equal(roomRankChange([sameOrder, initial], [], sameOrder), undefined);
 });
+
+test('ranked characters use the active profile and preserve the recorded character after leaving', () => {
+  const profileId = crypto.randomUUID();
+  const entry: RoomResult = {
+    id: crypto.randomUUID(), game: 'omok', endedAt: 100, seconds: 20, players: [
+      { role: 'host', name: 'Blue', profileId, avatar: 'ink', outcome: 'win' },
+      { role: 'guest', outcome: 'loss' },
+    ],
+  };
+  assert.deepEqual(readRoomResult(entry), entry);
+  assert.equal(roomStandings([entry], [])[0].avatar, 'ink');
+  assert.equal(roomStandings([entry], [{ role: 'host', profile: { id: profileId, name: 'Blue', avatar: 'lunar', level: 1 } }])[0].avatar, 'lunar');
+});

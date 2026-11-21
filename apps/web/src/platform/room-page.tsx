@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 import { isRoomGame, roomCapacity, roomCodePattern, roomRoles } from '../../../../packages/protocol/rooms.ts';
+import { isTilePuzzle } from '../../../../packages/protocol/games.ts';
 import type { Participant, RoomGame } from '../../../../packages/protocol/rooms.ts';
 import { oppositeStone, sideLabel } from '../games/table.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
@@ -260,7 +261,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           const color = room.colorFor(role) ?? (role === 'host' ? room.hostColor : oppositeStone(room.hostColor));
           const own = room.role === role;
           const participant = own ? ownProfile ?? profile : profile;
-          const seatInfo = [t(role === 'host' ? 'host' : 'guest'), activeGame === 'sichuan' || activeGame === 'sketch' || activeGame === 'liar'
+          const seatInfo = [t(role === 'host' ? 'host' : 'guest'), isTilePuzzle(activeGame) || activeGame === 'sketch' || activeGame === 'liar' || activeGame === 'slime'
             || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)),
             own ? t('me') : undefined, participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
           return <li key={role}>

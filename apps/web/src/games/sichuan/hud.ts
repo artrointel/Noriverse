@@ -23,7 +23,7 @@ export function loadSichuanHud(scene: Phaser.Scene) {
   } });
 }
 
-export function createSichuanHud(scene: Phaser.Scene) {
+export function createSichuanHud(scene: Phaser.Scene, memory = false) {
   const image = (x: number, y: number, key: string, width: number, height: number) => scene.add.image(x, y, texture, key)
     .setDisplaySize(width, height).setDepth(8);
   image(240, 560, 'panel', 472, 156);
@@ -34,9 +34,9 @@ export function createSichuanHud(scene: Phaser.Scene) {
   }).setResolution(2).setOrigin(0, .5).setDepth(9);
   const status = text(31, 503, 15, true);
   const description = text(446, 503, 11).setOrigin(1, .5).setColor('#e1d2f2');
-  const feedback = text(240, 624, 11).setOrigin(.5).setColor('#f6d794');
-  const metrics = metricNames.map((key, i) => {
-    const x = 74 + i * 83;
+  const feedback = text(240, memory ? 596 : 624, memory ? 15 : 11).setOrigin(.5).setColor('#f6d794');
+  const metrics = (memory ? (['timeLeft', 'remaining', 'elapsed'] as const) : metricNames).map((key, i) => {
+    const x = memory ? 104 + i * 136 : 74 + i * 83;
     return { key, icon: image(x - 23, 537, key, 18, 16), label: text(x, 555, 11).setOrigin(.5).setColor('#e4d6f1'),
       value: text(x + 9, 537, 19, true).setOrigin(.5) };
   });
@@ -45,7 +45,7 @@ export function createSichuanHud(scene: Phaser.Scene) {
     return { key, x, width, plate: image(x + width / 2, y, key + 'Button', width, buttonHeight),
       icon: image(x + 25, y, key, 20, 18).setDepth(9), label: text(x + width / 2 + 8, y, 14, true).setOrigin(.5) };
   };
-  const buttons = [makeButton('shuffle', 29, 268), makeButton('hint', 304, 147)];
+  const buttons = memory ? [] : [makeButton('shuffle', 29, 268), makeButton('hint', 304, 147)];
   let lastLabels: Record<HudLabel, string> | undefined;
   let backgroundState = '';
   let hotButton: HudLabel | undefined;

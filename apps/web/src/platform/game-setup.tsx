@@ -59,7 +59,8 @@ export function GameSetup({ id, online, settings, change, onStart, navigate, act
           <p className="setup-help" id="setup-mode-help">{useLobby
             ? t(activeGame === id ? 'editRulesInLobby' : 'otherGameRoom', { game: t(activeGame!) })
             : t(blocked ? 'roomUnavailable' : onlineOnly ? 'liarOnlineOnly'
-              : mode === 'online' ? 'onlineCopy' : id === 'sketch' ? 'sketchPractice' : !apiAvailable ? 'roomUnavailable' : id === 'sichuan' ? 'sichuanSolo' : 'localCopy')}</p>
+              : id === 'slime' ? 'slimeCopy' : mode === 'online' ? 'onlineCopy' : id === 'sketch' ? 'sketchPractice' : id === 'memory' ? 'memoryRules'
+                : !apiAvailable ? 'roomUnavailable' : id === 'sichuan' ? 'sichuanSolo' : 'localCopy')}</p>
         </SettingsSection>
         {creatingRoom && <SettingsSection title={t('roomTitle')}>
           <label className="visually-hidden" htmlFor="setup-room-title">{t('roomTitle')}</label>

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { defaultAvatar } from '../../../../packages/protocol/profile.ts';
@@ -35,20 +35,50 @@ function EmojiGlyph({ emoji }: { emoji: Emoji }) {
   return <span className="reaction-glyph" data-emoji={emoji} aria-hidden="true">{emojiChoices[emoji]}</span>;
 }
 
+function ReactionText({ text }: { text: string }) {
+  const frame = useRef<HTMLSpanElement>(null);
+  const label = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const box = frame.current;
+    const word = label.current;
+    if (!box || !word) return;
+    const fit = () => {
+      if (!word.isConnected || !box.clientWidth) return;
+      let min = 1, max = Math.floor(box.clientWidth * .83);
+      while (min < max) {
+        const size = Math.ceil((min + max) / 2);
+        word.style.fontSize = size + 'px';
+        if (word.scrollHeight <= box.clientHeight && word.scrollWidth <= box.clientWidth) min = size;
+        else max = size - 1;
+      }
+      word.style.fontSize = min + 'px';
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(box);
+    void document.fonts.load('16px "Sketch Jua"').then(fit).catch(() => {});
+    return () => observer.disconnect();
+  }, [text]);
+  return <span className="stage-reaction-text" ref={frame}><span ref={label} dir="auto">{text}</span></span>;
+}
+
 function ReactionBubble({ event }: { event: TimedReaction }) {
   const { t, i18n } = useTranslation();
   const { emoji, corner, sender, role, expiresAt } = event;
   const [delay] = useState(() => Math.min(0, expiresAt - performance.now() - reactionDuration));
   const played = useRef(false);
   useEffect(() => {
-    if (played.current || expiresAt - performance.now() < reactionDuration - 450) return;
+    if (!emoji || played.current || expiresAt - performance.now() < reactionDuration - 450) return;
     played.current = true;
     playReactionSound(emoji);
   }, [emoji, expiresAt]);
   const name = sender?.name ?? t(role ? role === 'host' ? 'host' : 'anonymousPlayer' : 'me');
   return <div className="stage-reaction" data-corner={corner} style={{ '--reaction-duration': reactionDuration + 'ms',
     animationDelay: delay + 'ms' } as CSSProperties}>
-    <span className="stage-reaction-emoji" role="img" aria-label={emojiName(emoji, i18n.resolvedLanguage)}><EmojiGlyph emoji={emoji} /></span>
+    {event.text !== undefined ? <ReactionText text={event.text} />
+      : <span className="stage-reaction-emoji" role="img" aria-label={emojiName(event.emoji, i18n.resolvedLanguage)}>
+        <EmojiGlyph emoji={event.emoji} />
+      </span>}
     <span className="stage-reaction-sender">
       <Avatar appearance={sender ?? { avatar: defaultAvatar }} size={33} characterOnly /><span>{name}</span>
     </span>

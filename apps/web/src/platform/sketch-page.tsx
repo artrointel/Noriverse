@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, ProfileSummary, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import type { Role } from '../../../../packages/protocol/rooms.ts';
+import { reactionTextLimit } from '../../../../packages/protocol/reactions.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 import { chooseSketchMap, drawer, sketchDeck, sketchOutcome, sketchRanking, wordIntroDuration } from '../games/sketch/rules.ts';
 import type { Prompt, SketchMap, SketchRound, SketchSettings } from '../games/sketch/rules.ts';
@@ -47,7 +48,7 @@ function GuessForm({ submit }: { submit: (text: string) => void }) {
   }
   return <form className="sketch-guess" onSubmit={send}>
     <input value={guess} onChange={event => setGuess(event.target.value)} aria-label={t('sketchGuess')}
-      placeholder={t('sketchGuess')} autoComplete="off" maxLength={64} required />
+      placeholder={t('sketchGuess')} autoComplete="off" maxLength={reactionTextLimit} required />
     <button className="button button-primary" type="submit" disabled={!guess.trim()}>{t('sketchSubmit')}</button>
   </form>;
 }

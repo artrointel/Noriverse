@@ -1,4 +1,4 @@
-import { defaultAvatar, isAvatarId, isTouchEffect, profileIdPattern, readAvatarBackground, readName } from '../../../../packages/protocol/profile.ts';
+import { defaultAvatar, isAvatarId, isTouchEffect, profileGames, profileIdPattern, readAvatarBackground, readName } from '../../../../packages/protocol/profile.ts';
 import type { AvatarLayers, GameStats, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import { badgeCatalog } from '../../../../packages/protocol/badges.ts';
 import type { EarnedBadge } from '../../../../packages/protocol/badges.ts';
@@ -59,7 +59,7 @@ function browserProfile(id: string, name: string, appearance: AvatarLayers): Pub
   const earnedAt = browserReactions(id).earnedAt;
   return {
     id, name, ...appearance, favorites: [], touchEffect: readBrowserTouchEffect(id) ?? readBrowserTouchEffect() ?? 'soft', level: 1, xp: 0, totalSeconds: 0,
-    games: { omok: emptyStats(), physics: emptyStats(), othello: emptyStats(), chess: emptyStats(), sichuan: emptyStats(), sketch: emptyStats(), liar: emptyStats() }, recent: [],
+    games: Object.fromEntries(profileGames.map(game => [game, emptyStats()])) as PublicProfile['games'], recent: [],
     badges: earnedAt ? [{ id: 'goodSport', earnedAt }] : [],
   };
 }

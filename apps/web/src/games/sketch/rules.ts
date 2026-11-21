@@ -1,5 +1,6 @@
 import { isRoomRole } from '../../../../../packages/protocol/rooms.ts';
 import type { Role } from '../../../../../packages/protocol/rooms.ts';
+import { readReactionText } from '../../../../../packages/protocol/reactions.ts';
 import { editInk, inkBatch, inkLimit, integer, readInk, unpackInk } from './ink.ts';
 import type { BoardEdit, Ink } from './ink.ts';
 
@@ -112,6 +113,13 @@ export function nextSketchEvent(round: SketchRound, settings: SketchSettings) {
     ? Math.min(round.deadline, round.opensAt + (round.hints.length + 1) * settings.hintSeconds * 1000) : round.deadline;
 }
 
+export function readSketchGuess(round: SketchRound, actor: Role, raw: unknown, now: number) {
+  if (round.phase !== 'draw' || !round.opensAt || now < round.opensAt || now >= round.deadline
+    || actor === round.artist || !round.players.includes(actor) || round.retired.includes(actor)
+    || !raw || typeof raw !== 'object' || !('kind' in raw) || raw.kind !== 'guess' || !('text' in raw)) return;
+  return readReactionText(raw.text);
+}
+
 export function applySketchAction(round: SketchRound, actor: Role, raw: unknown, now: number): SketchRound | undefined {
   if (!raw || typeof raw !== 'object' || !('kind' in raw) || !round.players.includes(actor)
     || round.retired.includes(actor) || !round.opensAt || round.phase === 'done' || now < round.opensAt) return;
@@ -128,8 +136,10 @@ export function applySketchAction(round: SketchRound, actor: Role, raw: unknown,
       const history = editInk({ board: round.board, redo: round.redo ?? [] }, edit);
       if (history) return { ...next, ...history, redoCount: history.redo.length };
     }
-  } else if (raw.kind === 'guess' && 'text' in raw && typeof raw.text === 'string' && raw.text.length <= 64
-    && round.answer && normalizeGuess(raw.text) === normalizeGuess(round.answer)) {
+    return;
+  }
+  const guess = readSketchGuess(round, actor, raw, now);
+  if (guess && round.answer && normalizeGuess(guess) === normalizeGuess(round.answer)) {
     const elapsed = now - round.opensAt;
     const points = 100 + Math.round(200 * (round.deadline - now) / (round.deadline - round.opensAt));
     const i = round.players.indexOf(actor);

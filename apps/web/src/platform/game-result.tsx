@@ -60,7 +60,7 @@ export function GameResult({ report, winner, title, surrendered, timedOut, score
       {room?.notice && <p role="status">{t(room.notice === 'incoming' ? 'rematchIncoming' : 'rematchSent')}</p>}
       <div className="panel-actions">
         {(!room || room.canRematch) && <button type="button" className="button button-primary" onClick={rematch}>
-          {t(report.game === 'sichuan' ? 'sichuanNew' : 'rematch')}
+          {t(report.game === 'sichuan' || report.game === 'memory' ? 'sichuanNew' : 'rematch')}
         </button>}
         {room?.request && <button type="button" className="button button-primary" disabled={room.notice === 'sent'} onClick={room.request}>{t('requestRematch')}</button>}
         {room?.reconnect && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}

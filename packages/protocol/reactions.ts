@@ -25,10 +25,17 @@ export const defaultEmojiIds = Object.keys(defaultEmojiChoices) as DefaultEmoji[
 export const reactionCorners = ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const;
 export type ReactionCorner = typeof reactionCorners[number];
 export type ReactionSender = { name: string; avatar: AvatarId };
-export type Reaction = { id: string; emoji: Emoji; corner: ReactionCorner; role?: Role; sender?: ReactionSender };
+export type ReactionContent = { emoji: Emoji; text?: never } | { text: string; emoji?: never };
+export type Reaction = ReactionContent & { id: string; corner: ReactionCorner; role?: Role; sender?: ReactionSender };
 export type TimedReaction = Reaction & { expiresAt: number };
 export const reactionDuration = 3_000;
 export const recentEmojiLimit = 5;
+export const reactionTextLimit = 64;
+
+export function readReactionText(value: unknown) {
+  if (typeof value !== 'string' || value.length > reactionTextLimit || /[\p{Cc}\p{Zl}\p{Zp}]/u.test(value)) return;
+  return value.trim() || undefined;
+}
 
 export function isEmoji(value: unknown): value is Emoji {
   return typeof value === 'string' && Object.hasOwn(emojiChoices, value);
@@ -48,11 +55,16 @@ export function showReaction(previous: readonly TimedReaction[], reaction: React
 
 export function readRoomReaction(value: unknown): Reaction | undefined {
   if (!value || typeof value !== 'object') return;
-  const { id, emoji, corner, role, sender } = value as Partial<Reaction>;
-  if (typeof id !== 'string' || !profileIdPattern.test(id) || !isEmoji(emoji) || !reactionCorners.includes(corner as ReactionCorner)
+  const { id, emoji, text, corner, role, sender } = value as Partial<Reaction>;
+  if (typeof id !== 'string' || !profileIdPattern.test(id) || !reactionCorners.includes(corner as ReactionCorner)
     || !isRoomRole(role)) return;
-  if (sender === undefined) return { id, emoji, corner: corner as ReactionCorner, role };
+  const message = readReactionText(text);
+  const content = text === undefined && isEmoji(emoji) ? { emoji }
+    : emoji === undefined && message ? { text: message } : undefined;
+  if (!content) return;
+  const reaction = { ...content, id, corner: corner as ReactionCorner, role };
+  if (sender === undefined) return reaction;
   if (!sender || typeof sender !== 'object' || !isAvatarId(sender.avatar)) return;
   const name = readName(sender.name);
-  if (name) return { id, emoji, corner: corner as ReactionCorner, role, sender: { name, avatar: sender.avatar } };
+  if (name) return { ...reaction, sender: { name, avatar: sender.avatar } };
 }

@@ -75,6 +75,17 @@ test('room reactions require a known emoji, corner, seat and valid public profil
   assert.equal(readRoomReaction({ ...reaction, sender: { ...reaction.sender, avatar: '../not-an-avatar' } }), undefined);
 });
 
+test('text and emoji share the same slot without accepting mixed or invalid content', () => {
+  const draft = { ...reaction, emoji: undefined, text: '  붕어빵  ' };
+  const parsed = readRoomReaction(draft);
+  assert.equal(parsed?.text, '붕어빵');
+  assert.equal(parsed?.emoji, undefined);
+  assert.equal(readRoomReaction({ ...draft, emoji: 'smile' }), undefined);
+  assert.equal(readRoomReaction({ ...draft, text: 'x'.repeat(65) }), undefined);
+  assert.equal(readRoomReaction({ ...draft, text: 'a\nb' }), undefined);
+  assert.equal(showReaction(showReaction([], reaction, 100), parsed!, 200).length, 1);
+});
+
 test('emoji search finds additions by Korean or English keywords and the glyph itself', () => {
   assert.deepEqual(searchEmojis('  트로피  '), ['trophy']);
   assert.deepEqual(searchEmojis('GOLD MEDAL'), ['medal']);

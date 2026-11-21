@@ -27,8 +27,10 @@ const gameTracks: Record<ProfileGame, readonly MusicTrack[]> = {
   chess: ['chess', 'rainAtMidnight', 'paperConstellation', 'highlandParade', 'pocketDetective', 'winterChorale'],
   physics: ['physics', 'midnightCourier', 'lemonSprint', 'highlandParade', 'melonSurf', 'skyRelay', 'prismDrive'],
   sichuan: ['islandPostcard', 'velvetCarousel', 'neonAvenue', 'paperConstellation', 'bambooClock', 'rooftopStatic'],
+  memory: ['velvetCarousel', 'islandPostcard', 'meadowTrail'],
   sketch: ['paperConstellation', 'melonSurf', 'velvetCarousel', 'islandPostcard', 'bambooClock'],
   liar: ['midnightCourier', 'velvetCarousel', 'paperConstellation', 'rooftopStatic'],
+  slime: ['orbit', 'skyRelay', 'prismDrive', 'paperComet'],
 };
 
 function randomTrack<T extends MusicTrack>(tracks: readonly T[], previous?: string | null, lastMatchTrack?: MusicTrack): T {

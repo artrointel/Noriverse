@@ -1,4 +1,5 @@
 import { isRoomGame, isRoomRole, roomCapacity, roomRoles } from '../../../../packages/protocol/rooms.ts';
+import { isTilePuzzle } from '../../../../packages/protocol/games.ts';
 import { minimumRoomPlayers } from '../../../../packages/protocol/games.ts';
 import type { MatchOutcome } from '../../../../packages/protocol/profile.ts';
 import type { Participant, Role, RoomGame } from '../../../../packages/protocol/rooms.ts';
@@ -20,6 +21,8 @@ import { readSketchRound, readSketchSettings, sketchOutcome } from '../games/ske
 import type { SketchRound, SketchSettings } from '../games/sketch/rules.ts';
 import { liarOutcome, readLiarSettings, readLiarView } from '../games/liar/rules.ts';
 import type { LiarSettings, LiarView, LiarRound } from '../games/liar/rules.ts';
+import { orbitOutcome, readOrbitRound } from '../games/slime/rules.ts';
+import type { OrbitRound } from '../games/slime/rules.ts';
 
 export type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: number; finishedAt: number; allowDoubleThree: boolean; overline: OmokOverline;
   history: number[]; physics?: FlickRound; physicsSeats?: Role[]; flickSettings?: FlickSettings; power?: FlickPower;
@@ -27,16 +30,17 @@ export type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: n
   puzzleConfig?: SichuanRoomSettings; puzzle?: PuzzleRound;
   sketchConfig?: SketchSettings; sketch?: SketchRound;
   liarConfig?: LiarSettings; liar?: LiarView | LiarRound;
+  slime?: OrbitRound;
   mockSeats?: Role[];
   turnLimit: TurnLimit; deadline: number; beginsAt?: number; clockOffset?: number };
 export const blankMatch: Match = { id: '', game: 'omok', hostColor: 1, startedAt: 0, finishedAt: 0, allowDoubleThree: true,
   overline: defaultOmokOverline, history: [], turnLimit: 0, deadline: 0 };
 export function lobbyMatch(game: RoomGame, settings: MatchSettings): Match {
-  const { allowDoubleThree, overline, power, turnLimit, flick, puzzle, sketch, liar } = settings;
+  const { allowDoubleThree, overline, power, turnLimit, flick, puzzle, memory, sketch, liar } = settings;
   return { ...blankMatch, id: crypto.randomUUID(), game, allowDoubleThree, overline, power,
     turnLimit: isTurnBasedGame(game) ? turnLimit : 0, sketchConfig: game === 'sketch' ? sketch : undefined,
     liarConfig: game === 'liar' ? liar : undefined,
-    puzzleConfig: game === 'sichuan' ? puzzle : undefined, flickSettings: game === 'physics' ? flick : undefined,
+    puzzleConfig: game === 'memory' ? memory : game === 'sichuan' ? puzzle : undefined, flickSettings: game === 'physics' ? flick : undefined,
     physics: game === 'physics' ? createFlickRound(flick) : undefined };
 }
 
@@ -47,7 +51,8 @@ export function matchColor(match: Match, role: Role): FlickPlayer | undefined {
 
 export function inRound(match: Match, role: Role) {
   return !match.mockSeats?.includes(role) && (!match.puzzle || match.puzzle.players.includes(role)) && (!match.physicsSeats || match.physicsSeats.includes(role))
-    && (!match.sketch || match.sketch.players.includes(role)) && (!match.liar || match.liar.players.includes(role));
+    && (!match.sketch || match.sketch.players.includes(role)) && (!match.liar || match.liar.players.includes(role))
+    && (!match.slime || match.slime.players.includes(role));
 }
 
 export function mockSeatsFor(game: RoomGame, participants: readonly Participant[], count: number) {
@@ -75,6 +80,7 @@ export function matchWinner(match: Match) {
 
 export function matchOutcome(match: Match, role: Role): Exclude<MatchOutcome, 'practice'> | undefined {
   if (!match.finishedAt) return;
+  if (match.slime) return orbitOutcome(match.slime, role);
   if (match.liar) return liarOutcome(match.liar, role);
   if (match.sketch) return sketchOutcome(match.sketch, role);
   if (match.puzzle?.result) return puzzleOutcome(match.puzzle.result, role);
@@ -93,7 +99,7 @@ export function matchInProgress(match: Match, now: number) {
 }
 
 function matchRevision(match: Match) {
-  return match.liar?.revision ?? match.sketch?.revision ?? match.puzzle?.revision ?? match.physics?.revision ?? match.history.length;
+  return match.slime?.revision ?? match.liar?.revision ?? match.sketch?.revision ?? match.puzzle?.revision ?? match.physics?.revision ?? match.history.length;
 }
 
 function followsSnapshot(current: Match, next: Match) {
@@ -120,9 +126,9 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
   const mockSeats = 'mockSeats' in raw ? raw.mockSeats : undefined;
   if (mockSeats !== undefined && (!Array.isArray(mockSeats) || mockSeats.length >= roomCapacity[game]
     || !mockSeats.every(role => isRoomRole(role) && role !== 'host') || new Set(mockSeats).size !== mockSeats.length)) return;
-  const puzzleConfig = game === 'sichuan' && 'puzzleConfig' in raw ? readSichuanRoomSettings(raw.puzzleConfig) : undefined;
-  if (game === 'sichuan' && !puzzleConfig) return;
-  const puzzle = puzzleConfig && 'puzzle' in raw ? readPuzzleRound(raw.puzzle, puzzleConfig) : undefined;
+  const puzzleConfig = isTilePuzzle(game) && 'puzzleConfig' in raw ? readSichuanRoomSettings(raw.puzzleConfig, game === 'memory') : undefined;
+  if (isTilePuzzle(game) && !puzzleConfig) return;
+  const puzzle = puzzleConfig && 'puzzle' in raw ? readPuzzleRound(raw.puzzle, puzzleConfig, game === 'memory') : undefined;
   if (puzzleConfig && (Boolean(raw.startedAt) !== Boolean(puzzle) || Boolean(raw.finishedAt) !== Boolean(puzzle?.result))) return;
   const sketchConfig = game === 'sketch' && 'sketchConfig' in raw ? readSketchSettings(raw.sketchConfig) : undefined;
   if (game === 'sketch' && !sketchConfig) return;
@@ -132,6 +138,9 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
   if (game === 'liar' && !liarConfig) return;
   const liar = liarConfig && 'liar' in raw ? readLiarView(raw.liar) : undefined;
   if (liarConfig && (Boolean(raw.startedAt) !== Boolean(liar) || Boolean(raw.finishedAt) !== Boolean(liar?.result))) return;
+  const slime = game === 'slime' && 'slime' in raw ? readOrbitRound(raw.slime) : undefined;
+  if (game === 'slime' && (Boolean(raw.startedAt) !== Boolean(slime) || Boolean(raw.finishedAt) !== Boolean(slime?.winner)
+    || mockSeats?.some(role => slime && !slime.players.includes(role)))) return;
   const power = 'power' in raw ? raw.power : 1;
   if (power !== 1 && power !== 1.35) return;
   const physics = game === 'physics' && 'physics' in raw ? readFlickRound(raw.physics, power) : undefined;
@@ -156,6 +165,8 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
   if (beginsAt !== undefined && (typeof beginsAt !== 'number' || !Number.isSafeInteger(beginsAt) || beginsAt < 0
     || (beginsAt > 0 && (!raw.startedAt || beginsAt < raw.startedAt)))) return;
   const playStart = beginsAt ?? raw.startedAt;
+  if (slime && (slime.winner ? !playStart
+    : playStart ? slime.tickAt < playStart : slime.tickAt !== 0)) return;
   if (!isTurnLimit(nextLimit) || typeof nextDeadlineAt !== 'number' || !Number.isSafeInteger(nextDeadlineAt)
     || (nextLimit && playStart && !raw.finishedAt && !physics?.shot && !pending ? nextDeadlineAt < playStart + nextLimit * 1000 : nextDeadlineAt !== 0)) return;
   const nextOverline = 'overline' in raw ? raw.overline : 'freestyle';
@@ -169,7 +180,7 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
     ? current.clockOffset ?? measuredOffset : measuredOffset;
   const next: Match = { id: raw.id, game, hostColor: nextHostColor, startedAt: raw.startedAt, finishedAt: raw.finishedAt, allowDoubleThree: raw.allowDoubleThree,
     overline: nextOverline, history, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, timeoutPending: pending,
-    turnLimit: nextLimit, deadline: nextDeadlineAt, beginsAt, clockOffset, puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, flickSettings, physicsSeats, mockSeats };
+    turnLimit: nextLimit, deadline: nextDeadlineAt, beginsAt, clockOffset, puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, slime, flickSettings, physicsSeats, mockSeats };
   if (pending && (!nextLimit || pending.color !== matchTurn(next))) return;
   if (followsSnapshot(current, next)) return next;
 }

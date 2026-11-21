@@ -2,8 +2,8 @@ export const sichuanSceneHeight = 640;
 export const sichuanThemes = ['pixel', 'food', 'animals', 'electronics', 'flags', 'school', 'numbers'] as const;
 export type SichuanTheme = typeof sichuanThemes[number];
 export const sichuanSizes = [6, 8, 10, 12] as const;
-export type SichuanSize = typeof sichuanSizes[number];
-export const sichuanTimeLimits: Record<SichuanSize, number> = { 6: 30, 8: 60, 10: 105, 12: 165 };
+export type SichuanSize = 4 | typeof sichuanSizes[number];
+export const sichuanTimeLimits: Record<SichuanSize, number> = { 4: 90, 6: 30, 8: 60, 10: 105, 12: 165 };
 export const motifCount = (theme: SichuanTheme) => theme === 'numbers' ? 10 : 14;
 
 export type SichuanSettings = {
@@ -37,12 +37,14 @@ export function sichuanObstacleCount(size: SichuanSize, density: number, obstacl
   return Math.round(size ** 2 * Math.min(obstacleDensity, maxSichuanObstacleDensity(size, density)) / 100);
 }
 
-export function readSichuanRoomSettings(value: unknown): SichuanRoomSettings | undefined {
+export function readSichuanRoomSettings(value: unknown, memory = false): SichuanRoomSettings | undefined {
   if (!value || typeof value !== 'object') return;
   const { mode, settings } = value as Partial<SichuanRoomSettings>;
   if ((mode !== 'race' && mode !== 'coop') || !settings || typeof settings !== 'object') return;
   const { size, theme, density, obstacles, obstacleDensity, shuffles, hints, timeLimit } = settings;
-  if (!sichuanSizes.includes(size) || (theme !== 'random' && !sichuanThemes.includes(theme))
+  if (!(memory ? size === 4 || size === 6 : (sichuanSizes as readonly number[]).includes(size))
+    || (memory && (mode !== 'race' || density !== 100 || obstacles || shuffles !== 0 || hints !== 0))
+    || (theme !== 'random' && !sichuanThemes.includes(theme))
     || (density !== 'random' && (!Number.isInteger(density) || density < minSichuanTileDensity || density > maxSichuanTileDensity))
     || typeof obstacles !== 'boolean' || !Number.isInteger(shuffles) || shuffles < 0 || shuffles > 5
     || (hints !== undefined && (!Number.isInteger(hints) || hints < 0 || hints > 5))

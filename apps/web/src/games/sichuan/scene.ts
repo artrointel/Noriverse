@@ -17,12 +17,14 @@ type RenderedTile = {
   container: Phaser.GameObjects.Container;
   art: Phaser.GameObjects.Image;
   tile: number;
+  faceUp: boolean;
   veil?: Phaser.GameObjects.Graphics;
   rejection?: { progress: number };
 };
 
 export function sichuanScene(view: () => GameView) {
   const start = view().sichuan;
+  const memory = Boolean(start?.memory);
   const size = start?.size ?? 8;
   const theme = start?.theme ?? 'animals';
   const blockFrame = 14;
@@ -40,7 +42,7 @@ export function sichuanScene(view: () => GameView) {
   const pieces = new Map<number, RenderedTile>();
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
 
-  function syncTiles(scene: Phaser.Scene, board: readonly Tile[], combo?: number) {
+  function syncTiles(scene: Phaser.Scene, board: readonly Tile[], combo?: number, visible?: readonly number[]) {
     for (let index = 0; index < board.length; index++) {
       const tile = board[index];
       if (tile === previous?.sichuan?.board[index]) continue;
@@ -59,9 +61,32 @@ export function sichuanScene(view: () => GameView) {
       const shadow = scene.add.image(0, 3, cardFaceKey, theme).setDisplaySize(46, 46).setTint(0x251627).setAlpha(.56);
       const plate = scene.add.image(0, 0, cardFaceKey, theme).setDisplaySize(46, 46);
       if (block) plate.setTint(0x988a9e);
-      const art = scene.add.image(0, 0, motifKey, frameName(tile)).setDisplaySize(36, 36);
+      const faceUp = !visible || visible.includes(index);
+      const art = scene.add.image(0, 0, motifKey, frameName(faceUp ? tile : backFrame)).setDisplaySize(36, 36);
       const container = scene.add.container(x, y, [shadow, plate, art]).setDepth(1).setScale(pitch / 50);
-      pieces.set(index, { art, tile, container });
+      pieces.set(index, { art, tile, container, faceUp });
+    }
+  }
+
+  function revealCards(scene: Phaser.Scene, visible?: readonly number[]) {
+    const normal = pitch / 50;
+    for (const [index, piece] of pieces) {
+      const faceUp = !visible || visible.includes(index);
+      if (piece.faceUp === faceUp) continue;
+      piece.faceUp = faceUp;
+      const { container, art, tile } = piece;
+      const changeFace = () => art.setFrame(frameName(faceUp ? tile : backFrame));
+      scene.tweens.killTweensOf(container);
+      if (motion.matches) {
+        changeFace();
+        container.setScale(normal);
+        continue;
+      }
+      scene.tweens.add({ targets: container, scaleX: normal * .12, duration: 75, ease: 'Sine.In',
+        onComplete: () => {
+          changeFace();
+          scene.tweens.add({ targets: container, scaleX: normal, duration: 100, ease: 'Sine.Out' });
+        } });
     }
   }
 
@@ -141,7 +166,7 @@ export function sichuanScene(view: () => GameView) {
       hints = this.add.graphics().setDepth(2);
       effects = createSichuanEffects(this, theme, pitch);
       comboBanner = createComboBanner(this);
-      hud = createSichuanHud(this);
+      hud = createSichuanHud(this, memory);
       this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
         const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
         hud.setHover(hud.hitTest(point.x, point.y));
@@ -164,7 +189,8 @@ export function sichuanScene(view: () => GameView) {
       if (!data) return;
       const before = previous?.sichuan;
       const match = data.match !== before?.match ? data.match : undefined;
-      if (data.board !== before?.board) syncTiles(this, data.board, match?.combo);
+      if (data.board !== before?.board) syncTiles(this, data.board, match?.combo, data.visibleCards);
+      if (memory && data.visibleCards !== before?.visibleCards) revealCards(this, data.visibleCards);
       if (data.flip && data.flip !== before?.flip) flipTiles(this, data.flip);
       if (data.selected !== before?.selected || data.hint !== before?.hint || current.cursor !== previous?.cursor) paintHints(current);
       if (data.selected !== before?.selected) {

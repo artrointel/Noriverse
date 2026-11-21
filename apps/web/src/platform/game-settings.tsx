@@ -5,7 +5,9 @@ import type { GameId } from '../../../../packages/protocol/games.ts';
 import type { MatchSettings } from '../games/match-settings.ts';
 import { isTurnLimit, maxTurnLimit, turnLimits } from '../games/turn-clock.ts';
 import { omokOverlineRules } from '../games/omok/rules.ts';
-import { defaultHints, defaultObstacleDensity, maxSichuanObstacleDensity, sichuanTimeLimits } from '../games/sichuan/options.ts';
+import { defaultHints, defaultObstacleDensity, maxSichuanObstacleDensity, sichuanThemes, sichuanTimeLimits } from '../games/sichuan/options.ts';
+import { memoryPreviewMs, memorySizes, memoryTimeLimits } from '../games/memory/rules.ts';
+import { orbitHeight, orbitMatchSize, orbitWidth } from '../games/slime/rules.ts';
 import { FlickSettingsFields } from './flick-settings.tsx';
 import { SichuanModePicker, SichuanSettingsFields } from './sichuan-settings.tsx';
 import { games } from './game-catalog.ts';
@@ -113,6 +115,9 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
   online: boolean; onValidity: (valid: boolean) => void;
 }) {
   const { t } = useTranslation();
+  if (game === 'slime') return <SettingsSection title={t('setupBoardRules')}>
+    <p className="setup-help">{t('slimeRules')}</p>
+  </SettingsSection>;
   if (game === 'liar') {
     const liar = settings.liar;
     return <SettingsSection title={t('setupBoardRules')}>
@@ -128,6 +133,24 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
   }
   if (game === 'sketch') return <SketchSettingsFields value={settings.sketch} online={online} onValidity={onValidity}
     change={sketch => change({ ...settings, sketch })} />;
+  if (game === 'memory') {
+    const options = settings.memory.settings;
+    return <SettingsSection title={t('setupBoard')}>
+      <SettingsSelect label={t('sichuanGrid')} value={options.size} change={value => {
+        const size = memorySizes.find(size => size === Number(value));
+        if (size) change({ ...settings, memory: { ...settings.memory, settings: { ...options, size, timeLimit: memoryTimeLimits[size] } } });
+      }}>
+        {memorySizes.map(size => <option key={size} value={size}>{size} × {size}</option>)}
+      </SettingsSelect>
+      <SettingsSelect label={t('sichuanArt')} value={options.theme} change={value => {
+        const theme = value === 'random' ? 'random' : sichuanThemes.find(theme => theme === value);
+        if (theme) change({ ...settings, memory: { ...settings.memory, settings: { ...options, theme } } });
+      }}>
+        <option value="random">{t('sichuanRandom')}</option>
+        {sichuanThemes.map(theme => <option key={theme} value={theme}>{t('sichuanTheme_' + theme)}</option>)}
+      </SettingsSelect>
+    </SettingsSection>;
+  }
   if (game === 'sichuan') return <>
     {online && <SichuanModePicker value={settings.puzzle.mode} change={mode => change({ ...settings, puzzle: { ...settings.puzzle, mode } })} />}
     <SichuanSettingsFields value={settings.puzzle.settings} onValidity={onValidity}
@@ -154,7 +177,10 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
 export function GameRulesSummary({ game, settings }: { game: GameId; settings: MatchSettings }) {
   const { t } = useTranslation();
   const entries: [string, string][] = [];
-  if (game === 'liar') {
+  if (game === 'slime') {
+    entries.push([t('gameMode'), t('slimeVersus')], [t('sichuanGrid'), `${orbitWidth} × ${orbitHeight}`],
+      [t('slimeBoardLimit'), t('slimeMatchSize', { count: orbitMatchSize })]);
+  } else if (game === 'liar') {
     entries.push([t('sketchLanguage'), settings.liar.language === 'ko' ? '한국어' : 'English'],
       [t('liarHintTime'), formatPlayTime(settings.liar.seconds)], [t('liarVoteTime'), formatPlayTime(liarVoteSeconds)],
       [t('liarGuessTime'), formatPlayTime(liarGuessSeconds)]);
@@ -162,6 +188,12 @@ export function GameRulesSummary({ game, settings }: { game: GameId; settings: M
     entries.push([t('sketchLanguage'), settings.sketch.language === 'ko' ? '한국어' : 'English'],
       [t('sketchTime'), formatPlayTime(settings.sketch.seconds)], [t('sketchCycles'), String(settings.sketch.cycles)],
       [t('sketchMap'), t('sketchMap_' + settings.sketch.map)], [t('sketchHintInterval'), formatPlayTime(settings.sketch.hintSeconds)]);
+  } else if (game === 'memory') {
+    const { settings: memory } = settings.memory;
+    entries.push([t('gameMode'), t('sichuanMode_race')], [t('sichuanGrid'), `${memory.size} × ${memory.size}`],
+      [t('sichuanArt'), t(memory.theme === 'random' ? 'sichuanRandom' : 'sichuanTheme_' + memory.theme)],
+      [t('memoryPreview'), t('turnSeconds', { count: memoryPreviewMs / 1000 })],
+      [t('matchTimeLimit'), formatPlayTime(memory.timeLimit ?? 90)]);
   } else if (game === 'sichuan') {
     const { mode, settings: puzzle } = settings.puzzle;
     const obstacleDensity = Math.min(puzzle.obstacleDensity ?? defaultObstacleDensity, maxSichuanObstacleDensity(puzzle.size, puzzle.density));

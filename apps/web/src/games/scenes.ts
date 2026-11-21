@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import type { GameId } from '../../../../packages/protocol/games.ts';
+import { isTilePuzzle } from '../../../../packages/protocol/games.ts';
 import type { GameView } from './game-view.ts';
 import type { RenderSize } from './render-resolution.ts';
 import type { SceneFactory } from './scene-loader.ts';
@@ -39,7 +40,7 @@ export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, i
     width: initialSize.width,
     height: initialSize.height,
     render: { antialias, antialiasGL: antialias, transparent: id === 'sketch',
-      mipmapFilter: id === 'sichuan' && antialias ? 'LINEAR_MIPMAP_LINEAR' : undefined },
+      mipmapFilter: isTilePuzzle(id) && antialias ? 'LINEAR_MIPMAP_LINEAR' : undefined },
     backgroundColor: current().dark ? '#272132' : '#e8ddd1',
     scale: { mode: Phaser.Scale.NONE },
     physics: id === 'physics' ? { default: 'arcade', arcade: { fps: 90 } } : undefined,

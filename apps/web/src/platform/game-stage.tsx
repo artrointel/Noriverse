@@ -7,12 +7,15 @@ import type { TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import type { TouchEffect, TouchParticle } from '../../../../packages/protocol/profile.ts';
 import type { ReactionSender } from '../../../../packages/protocol/reactions.ts';
 import type { GameId } from '../../../../packages/protocol/games.ts';
+import { isTilePuzzle } from '../../../../packages/protocol/games.ts';
 import type { GameView } from '../games/game-view.ts';
 import type { mountGame } from '../games/scenes.ts';
 import { sceneLoaders } from '../games/scene-loader.ts';
 import { availableStageHeight, centeredStageScroll, fixedResolutions, readResolution, renderBufferSize, renderFrameSize } from '../games/render-resolution.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 import { tableSize } from '../games/table.ts';
+import { orbitSceneHeight } from '../games/slime/rules.ts';
+import { orbitKeys } from '../games/slime/controls.ts';
 import { sichuanSceneHeight } from '../games/sichuan/options.ts';
 import { liarSceneHeight } from '../games/liar/rules.ts';
 import { sketchSceneHeight } from '../games/sketch/hud.ts';
@@ -26,6 +29,7 @@ import { GameReactions } from './game-reactions.tsx';
 import type { RoomReactions } from './game-reactions.tsx';
 import { setMatchMusic } from './audio.ts';
 import type { RoundAnnouncement } from '../games/round-announcement.ts';
+
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
   showTouches, onTouchDisplay, touchStyle, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction,
@@ -47,7 +51,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const mount = useRef<HTMLDivElement>(null);
   const engine = useRef<ReturnType<typeof mountGame>>(null);
   const centered = useRef(false);
-  const sceneHeight = id === 'sichuan' ? sichuanSceneHeight : id === 'liar' ? liarSceneHeight : id === 'sketch' ? sketchSceneHeight : tableSize;
+  const sceneHeight = isTilePuzzle(id) ? sichuanSceneHeight : id === 'liar' ? liarSceneHeight : id === 'sketch' ? sketchSceneHeight
+    : id === 'slime' ? orbitSceneHeight : tableSize;
   const requestedSize = useRef({ frame: { width: tableSize, height: sceneHeight }, buffer: { width: tableSize, height: sceneHeight } });
   const [actualSize, setActualSize] = useState(requestedSize.current);
   const resultButton = useRef<HTMLButtonElement>(null);
@@ -71,7 +76,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const boardSize = view.sichuan?.size ?? (id === 'othello' ? othelloSize : id === 'chess' ? chessSize : omokSize);
   const notifyReady = useEffectEvent(() => onReady?.());
   const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : id === 'sichuan' ? 'sichuanBoard'
-    : id === 'sketch' ? 'sketchCanvas' : id === 'liar' ? 'liarTable' : 'board';
+    : id === 'memory' ? 'memoryBoard' : id === 'sketch' ? 'sketchCanvas' : id === 'liar' ? 'liarTable' : id === 'slime' ? 'slimeBoard' : 'board';
 
   useLayoutEffect(() => { current.current = view; announcement.current = announcements; });
   useEffect(() => { setMatchMusic(id, matchId); }, [id, matchId]);
@@ -176,8 +181,10 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   useEffect(() => { setBursts([]); }, [showTouches, matchId]);
 
   function handleTouch(event: PointerEvent<HTMLDivElement>) {
-    if (touchStyle === 'none' || status !== 'ready' || view.finished || (beginsAt && Date.now() < beginsAt) || !event.isPrimary || event.button !== 0
+    if (status !== 'ready' || view.finished || !event.isPrimary || event.button !== 0
       || !(event.target instanceof HTMLCanvasElement)) return;
+    if (view.slime && event.pointerType !== 'touch') event.currentTarget.focus({ preventScroll: true });
+    if (touchStyle === 'none' || (beginsAt && Date.now() < beginsAt)) return;
     const bounds = event.target.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
     const coordinate = (value: number) => Math.max(0, Math.min(touchResolution, Math.round(value * touchResolution)));
@@ -258,6 +265,13 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (view.slime) {
+      const input = orbitKeys.get(event.key);
+      if (event.target !== event.currentTarget || !input || event.altKey || event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+      if (view.canMove && (!event.repeat || input === 'left' || input === 'right')) view.slime.control(input);
+      return;
+    }
     const hud = view.sichuan?.hud;
     if (hud && !event.ctrlKey && !event.metaKey && !event.altKey && /^[hs]$/i.test(event.key)) {
       event.preventDefault();
@@ -273,7 +287,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       if (view.canMove || view.canInspect) {
-        if (id === 'sichuan') setCursor(index);
+        if (isTilePuzzle(id)) setCursor(index);
         view.move(index);
       }
     } else if (moves[event.key]) {
@@ -289,7 +303,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   });
   const focusTile = view.cursor === null ? undefined : view.sichuan?.board[view.cursor];
   const focusLabel = !position || !view.sichuan ? position : position + ' · ' + (focusTile == null ? t('sichuanEmptyTile')
-    : focusTile === obstacle ? t('sichuanObstacle') : t('sichuanMotifs_' + view.sichuan.theme).split('|')[focusTile]);
+    : focusTile === obstacle ? t('sichuanObstacle') : view.sichuan.visibleCards && !view.sichuan.visibleCards.includes(view.cursor!)
+      ? t('memoryFaceDown') : t('sichuanMotifs_' + view.sichuan.theme).split('|')[focusTile]);
 
   return (
     <section className={expanded === 'page' ? 'stage stage-expanded' : 'stage'} ref={shell}>
@@ -387,7 +402,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
           <button className="settings-close" type="button" aria-label={t('close')} onClick={() => gameHelp.current?.close()}><span aria-hidden="true" /></button>
         </header>
         <p id={helpId + '-body'}>{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp'
-          : id === 'sketch' ? 'sketchHelp' : id === 'liar' ? 'liarHelp' : 'boardHelp')}
+          : id === 'memory' ? 'memoryHelp' : id === 'sketch' ? 'sketchHelp' : id === 'liar' ? 'liarHelp' : id === 'slime' ? 'slimeHelp' : 'boardHelp')}
           {(id === 'omok' || id === 'chess') && <> {t('previewMoveHelp')}</>}
           {id === 'othello' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
         </p>

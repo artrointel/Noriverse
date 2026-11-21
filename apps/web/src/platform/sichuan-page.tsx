@@ -21,11 +21,12 @@ import { MatchStage } from './match-stage.tsx';
 import { Avatar } from './avatar.tsx';
 import { useRoundEnd, useRoundStart } from './use-round-cues.ts';
 import { EndRoundAction } from './end-round-action.tsx';
+import { createMemoryBoard, memoryPair, memoryPreviewMs, memoryRevealMs } from '../games/memory/rules.ts';
 
-const setup = gamePath('sichuan', 'setup');
-function newRound(settings: SichuanSettings) {
+function newRound(settings: SichuanSettings, memory: boolean) {
   const options = resolveSichuanSettings(settings);
-  return { id: crypto.randomUUID(), startedAt: 0, board: createSichuanBoard(options), options, shufflesLeft: options.shuffles, hintsLeft: options.hints };
+  const board = memory ? createMemoryBoard(options.size, options.theme) : createSichuanBoard(options);
+  return { id: crypto.randomUUID(), startedAt: 0, board, options, shufflesLeft: options.shuffles, hintsLeft: options.hints };
 }
 
 function PuzzleClock({ deadline }: { deadline: number }) {
@@ -68,7 +69,8 @@ function RaceProgress({ room }: { room: PuzzleRoom }) {
   </ul>;
 }
 
-export function SichuanPage({ settings, room, ownProfile, dark, antialias, resolution, onResolution, onAntialias, navigate, record, showTouches, onTouchDisplay, touchStyle }: {
+export function SichuanPage({ game, settings, room, ownProfile, dark, antialias, resolution, onResolution, onAntialias, navigate, record, showTouches, onTouchDisplay, touchStyle }: {
+  game: 'sichuan' | 'memory';
   settings: SichuanSettings;
   room?: PuzzleRoom; ownProfile?: ProfileSummary;
   dark: boolean; antialias: boolean; resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
@@ -76,8 +78,10 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
   showTouches: boolean; onTouchDisplay: (active: boolean) => void; touchStyle: TouchEffect;
 }) {
   const { t } = useTranslation();
-  const [local, setRound] = useState(() => room ? undefined : newRound(settings));
+  const memory = game === 'memory';
+  const [local, setRound] = useState(() => room ? undefined : newRound(settings, memory));
   const [selected, setSelected] = useState<number>();
+  const [openPair, setOpenPair] = useState<readonly [number, number]>();
   const [localHint, setHint] = useState<readonly [number, number]>();
   const [cursor, setCursor] = useState<number | null>(null);
   const [match, setMatch] = useState<{ path: readonly TilePoint[]; combo: number }>();
@@ -97,17 +101,20 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
   const resigned = Boolean(room?.puzzle.resigned?.includes(room.role));
   const hint = room ? onlineBoard?.hint : localHint;
   const remaining = round.board.filter(isMatchTile).length;
-  const { pair, pairs } = useMemo(() => availableTileMatches(round.board), [round.board]);
-  const deadline = round.startedAt ? round.startedAt + round.options.timeLimit * 1000 : 0;
+  const { pair, pairs } = useMemo(() => memory ? { pair: undefined, pairs: 0 } : availableTileMatches(round.board), [round.board, memory]);
+  const previewEnd = memory && round.startedAt ? round.startedAt + memoryPreviewMs : 0;
+  const previewSeconds = useCountdown(previewEnd);
+  const deadline = round.startedAt ? (previewEnd || round.startedAt) + round.options.timeLimit * 1000 : 0;
   const onlineResult = room?.puzzle.result;
   const finished = Boolean(resultState || onlineResult);
-  const canMove = Boolean(roundStart.started && deadline && !finished && !resigned && !flip && (!room || room.state === 'connected'));
+  const previewing = Boolean(!finished && roundStart.started && previewSeconds);
+  const canMove = Boolean(roundStart.started && deadline && !previewing && !openPair && !finished && !resigned && !flip && (!room || room.state === 'connected'));
   const recordStart = room ? room.playStartedAt : round.startedAt;
   const end = room ? room.finishedAt : resultState?.at;
   const outcome = room && onlineResult ? puzzleOutcome(onlineResult, room.role)
     : resultState ? resultState.reason === 'clear' ? 'win' : resultState.reason === 'stopped' ? 'draw' : 'loss' : undefined;
-  const report = useMemo<MatchReport | undefined>(() => outcome && end ? { id: round.id, game: 'sichuan', mode: room ? 'online' : 'local',
-    outcome, seconds: elapsedPlaySeconds(recordStart, end) } : undefined, [round.id, end, outcome, recordStart, Boolean(room)]);
+  const report = useMemo<MatchReport | undefined>(() => outcome && end ? { id: round.id, game, mode: room ? 'online' : 'local',
+    outcome, seconds: elapsedPlaySeconds(recordStart, end) } : undefined, [round.id, end, outcome, recordStart, game, Boolean(room)]);
   const { ending, pending: resultPending } = useRoundEnd(round.id, outcome && (outcome === 'draw' ? 'finished'
     : outcome === 'loss' ? 'defeat' : !room || onlineResult === 'team' ? 'success' : 'victory'));
   const resultVisible = Boolean(report && closedResult !== round.id && !resultPending);
@@ -158,8 +165,8 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
 
   const loseStuck = useEffectEvent(() => finish('stuck'));
   useEffect(() => {
-    if (!room && canMove && !pair && remaining && round.shufflesLeft === 0) loseStuck();
-  }, [Boolean(room), canMove, pair, remaining, round.shufflesLeft]);
+    if (!memory && !room && canMove && !pair && remaining && round.shufflesLeft === 0) loseStuck();
+  }, [memory, Boolean(room), canMove, pair, remaining, round.shufflesLeft]);
 
   useEffect(() => {
     if (!flip) return;
@@ -178,8 +185,22 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
     return () => window.clearTimeout(timer);
   }, [combo]);
 
+  const settlePair = useEffectEvent((first: number, second: number) => {
+    setOpenPair(undefined);
+    setSelected(undefined);
+    if (finished || resigned || Date.now() >= deadline || (room && room.state !== 'connected')) return;
+    const path = memoryPair(round.board, first, second);
+    if (path) commitPair(first, second, path);
+  });
+  useEffect(() => {
+    if (!openPair) return;
+    const timer = window.setTimeout(() => settlePair(...openPair), memoryRevealMs);
+    return () => window.clearTimeout(timer);
+  }, [openPair, round.id]);
+
   function pick(index: number) {
     if (!canMove) return;
+    if (memory && Date.now() < previewEnd) return;
     if (Date.now() >= deadline) { if (!room) finish('timeout', deadline); return; }
     const tile = round.board[index];
     if (tile === obstacle) {
@@ -191,6 +212,13 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
     setHint(undefined);
     setFeedback(undefined);
     if (selected !== index) playSound('paper');
+    if (memory) {
+      if (selected === index) return;
+      if (selected === undefined || !isMatchTile(round.board[selected])) { setSelected(index); return; }
+      setOpenPair([selected, index]);
+      if (round.board[selected] !== tile) setFeedback('sichuanDifferent');
+      return;
+    }
     if (selected === undefined || selected === index || !isMatchTile(round.board[selected])) {
       setSelected(selected === index ? undefined : index); return;
     }
@@ -200,9 +228,13 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
       setSelected(index);
       return;
     }
+    commitPair(selected, index, route);
+  }
+
+  function commitPair(first: number, second: number, route: readonly TilePoint[]) {
     setSelected(undefined);
-    if (room) { room.puzzleAction({ kind: 'pair', first: selected, second: index, generation: round.shufflesLeft }); return; }
-    setRound(current => current && ({ ...current, board: current.board.map((tile, cell) => cell === selected || cell === index ? null : tile) }));
+    if (room) { room.puzzleAction({ kind: 'pair', first, second, generation: round.shufflesLeft }); return; }
+    setRound(current => current && ({ ...current, board: current.board.map((tile, cell) => cell === first || cell === second ? null : tile) }));
     const chain = nextSichuanCombo(combo, performance.now());
     setLocalMax(old => Math.max(old, chain.count));
     setLocalRemoved(old => old + 2);
@@ -231,11 +263,12 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
 
   function reset() {
     if (room) { room.rematch(); return; }
-    setRound(newRound(settings));
+    setRound(newRound(settings, memory));
   }
 
   function resetInteraction() {
     setSelected(undefined);
+    setOpenPair(undefined);
     setHint(undefined);
     setCursor(null);
     setMatch(undefined);
@@ -259,12 +292,12 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
 
   const status = onlineResult ? t(onlineResult === 'timeout' ? 'sichuanTimedOut' : onlineResult === 'abandoned' ? 'sichuanAbandoned'
     : onlineResult === 'team' ? 'sichuanTeamWin' : outcome === 'win' ? 'sichuanRaceWin' : 'sichuanRaceLoss')
-    : resultState ? t(resultState.reason === 'clear' ? 'sichuanClear' : resultState.reason === 'timeout' ? 'sichuanTimedOut'
+    : resultState ? t(resultState.reason === 'clear' ? memory ? 'memoryClear' : 'sichuanClear' : resultState.reason === 'timeout' ? 'sichuanTimedOut'
       : resultState.reason === 'stopped' ? 'gameFinished' : 'sichuanStuck')
-    : resigned ? t('roundResigned') : !roundStart.started ? t('roundWaiting') : t('sichuanRemaining', { count: remaining / 2 });
-  const back = room ? '/room' : setup;
-  const description = t('sichuanTheme_' + round.options.theme) + ` · ${round.options.size} × ${round.options.size} · ${round.options.density}%`;
-  const feedbackText = flip ? t('sichuanShuffling') : feedback ? t(feedback) : !finished && canMove && !pair ? t('sichuanNoPairs') : undefined;
+    : resigned ? t('roundResigned') : !roundStart.started ? t('roundWaiting') : previewing ? t('memoryMemorize', { count: previewSeconds }) : t('sichuanRemaining', { count: remaining / 2 });
+  const back = room ? '/room' : gamePath(game, 'setup');
+  const description = t('sichuanTheme_' + round.options.theme) + ` · ${round.options.size} × ${round.options.size}` + (memory ? '' : ` · ${round.options.density}%`);
+  const feedbackText = flip ? t('sichuanShuffling') : feedback ? t(feedback) : !memory && !finished && canMove && !pair ? t('sichuanNoPairs') : undefined;
   const stats = room ? room.puzzle.players.map(role => ({ role, ...room.puzzle.stats[role]!,
     profile: (role === room.role ? ownProfile : undefined) ?? room.participants.find(player => player.role === role)?.profile,
     outcome: onlineResult && puzzleOutcome(onlineResult, role) }))
@@ -278,9 +311,9 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
   const info = <>
     <strong>{status}</strong>
     <small>{description}</small>
-    <p className="match-time"><span>{t('sichuanRemovable')}</span><strong>{pairs}</strong></p>
+    {!memory && <><p className="match-time"><span>{t('sichuanRemovable')}</span><strong>{pairs}</strong></p>
     <p className="match-time"><span>{t('sichuanShufflesLeft')}</span><strong>{round.shufflesLeft}</strong></p>
-    <p className="match-time"><span>{t('sichuanHintsLeft')}</span><strong>{round.hintsLeft}</strong></p>
+    <p className="match-time"><span>{t('sichuanHintsLeft')}</span><strong>{round.hintsLeft}</strong></p></>}
     {roundStart.started && !finished && <PlayTime key={round.id} startedAt={round.startedAt} />}
     {room && <><p className="connection" role="status">{t(room.state ?? 'joining')}</p>{results}
       {room.needsReconnect && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}</>}
@@ -292,9 +325,9 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
 
   return <div className="site-width subpage play-page">
     <BackLink fallback={back} fallbackLabel={room ? 'goToRoom' : 'settings'} navigate={navigate} />
-    <div className="play-heading"><h1 tabIndex={-1}>{t('sichuan')}</h1></div>
+    <div className="play-heading"><h1 tabIndex={-1}>{t(game)}</h1></div>
     <div className="play-layout">
-      <MatchStage id="sichuan" matchId={round.id} antialias={antialias} resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
+      <MatchStage id={game} matchId={round.id} antialias={antialias} resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
         progress={room?.puzzleConfig.mode === 'race' ? <RaceProgress room={room} /> : undefined}
         onReady={roundStart.ready} beginsAt={roundStart.beginsAt} ending={ending}
         stageContext={{ mode: t(room ? 'sichuanMode_' + room.puzzleConfig.mode : 'practice'),
@@ -302,13 +335,14 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
         endAction={!finished && !resigned && <EndRoundAction key={round.id} online={Boolean(room)}
           disabled={!roundStart.started || Boolean(room && room.state !== 'connected')}
           end={() => { if (room) room.surrender(); else finish('stopped'); }} />}
-        timer={deadline > 0 && !finished && roundStart.started && <PuzzleClock deadline={deadline} />}
+        timer={deadline > 0 && !finished && roundStart.started && <PuzzleClock deadline={previewing ? previewEnd : deadline} />}
         setCursor={setCursor} info={info} infoStatus={status} yourTurn={false} result={result} resultVisible={resultVisible}
         resultPending={resultPending} onShowResult={() => setClosedResult('')} showTouches={showTouches} onTouchDisplay={onTouchDisplay}
         remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch} reactions={room?.reactions} ownProfile={ownProfile}
         touchStyle={touchStyle} view={{ history: [], cursor, chessTargets: new Map(), dark, allowDoubleThree: true, force: 1,
-          canMove, deadline, finished, move: pick, onAlkkagi: () => {},
+          canMove, deadline: previewing ? previewEnd : deadline, finished, move: pick, onAlkkagi: () => {},
           sichuan: { board: flip?.phase === 'backs' && flip.previous ? flip.previous : round.board, size: round.options.size, theme: round.options.theme,
+            memory, visibleCards: memory && !previewing ? openPair ?? (selected === undefined ? [] : [selected]) : undefined,
             selected, hint, match: room ? onlineMatch : match, rejected, flip: flip?.phase,
             hud: { status, description, feedback: feedbackText, startedAt: roundStart.started ? round.startedAt : 0,
               endedAt: end ? end + round.startedAt - recordStart : undefined,

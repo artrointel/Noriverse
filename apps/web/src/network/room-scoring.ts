@@ -49,9 +49,15 @@ function losingProgress(match: Match, role: Role, liarPoints: number): number {
       const place = match.physics.eliminated?.indexOf(color) ?? -1;
       return place >= 0 ? place / Math.max(1, remaining.length - 2) : (remaining[color - 1] ?? 0) / stones;
     }
+    case 'memory':
     case 'sichuan': return match.puzzle ? puzzleProgress(match.puzzle, role) / 100 : 0;
     case 'sketch': return match.sketch ? (match.sketch.scores[match.sketch.players.indexOf(role)] ?? 0) / Math.max(1, ...match.sketch.scores) : 0;
     case 'liar': return liarPoints / 40;
+    case 'slime': {
+      const board = match.slime?.boards[role];
+      const best = Math.max(0, ...Object.values(match.slime?.boards ?? {}).map(board => board.cleared));
+      return (board?.cleared ?? 0) / Math.max(1, best);
+    }
   }
 }
 

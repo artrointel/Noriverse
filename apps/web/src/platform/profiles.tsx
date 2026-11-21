@@ -245,6 +245,13 @@ function TouchEffectDialog({ selected, save, close }: { selected: TouchEffect; s
   </dialog>;
 }
 
+function DeleteIcon() {
+  return <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7"
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v6m4-6v6" />
+  </svg>;
+}
+
 function DeleteProfileDialog({ confirm, close }: { confirm: () => Promise<void>; close: () => void }) {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -264,14 +271,23 @@ function DeleteProfileDialog({ confirm, close }: { confirm: () => Promise<void>;
     catch { setFailed(true); setBusy(false); }
   }
 
-  return <dialog className="surface profile-dialog" ref={dialog} aria-labelledby="delete-profile-title"
-    aria-describedby="delete-profile-help" onCancel={event => { event.preventDefault(); if (!busy) close(); }}>
+  function dismiss() {
+    if (busy) return;
+    dialog.current?.close();
+    close();
+  }
+
+  return <dialog className="surface profile-dialog profile-delete-dialog" ref={dialog} aria-labelledby="delete-profile-title"
+    aria-describedby="delete-profile-help" onCancel={event => { event.preventDefault(); dismiss(); }}>
     <form onSubmit={event => { event.preventDefault(); void submit(); }}>
-      <h2 id="delete-profile-title">{t('deleteProfile')}</h2>
+      <header className="profile-delete-heading">
+        <span className="profile-delete-icon"><DeleteIcon /></span>
+        <h2 id="delete-profile-title">{t('deleteProfile')}</h2>
+      </header>
       <p id="delete-profile-help">{t(apiAvailable ? 'deleteProfileHelp' : 'deleteBrowserProfileHelp')}</p>
-      {failed && <p role="alert">{t('deleteProfileError')}</p>}
-      <div className="panel-actions">
-        <button type="button" className="button button-secondary" onClick={close} disabled={busy} autoFocus>{t('cancel')}</button>
+      {failed && <p role="alert" className="profile-delete-error">{t('deleteProfileError')}</p>}
+      <div className="panel-actions profile-delete-dialog-actions">
+        <button type="button" className="button button-secondary" onClick={dismiss} disabled={busy} autoFocus>{t('cancel')}</button>
         <button type="submit" className="button profile-delete-confirm" disabled={busy}>{t(busy ? 'deletingProfile' : 'deleteProfile')}</button>
       </div>
     </form>
@@ -372,9 +388,17 @@ export function ProfilePage({ own, id, model, friends, navigate, edit, onDeleted
           <GameHistory profile={profile} />
         </>
       )}
-      {own && profile && <div className="profile-delete-actions">
-        <button type="button" className="button button-secondary" onClick={() => setDeleteOpen(true)}>{t('deleteProfile')}</button>
-      </div>}
+      {own && profile && <section className="surface profile-delete-panel" aria-labelledby="profile-management-title">
+        <div className="profile-delete-heading">
+          <span className="profile-delete-icon"><DeleteIcon /></span>
+          <div>
+            <h2 id="profile-management-title">{t('profileManagement')}</h2>
+            <p id="profile-removal-note">{t('profileRemovalNote')}</p>
+          </div>
+        </div>
+        <button type="button" className="button profile-delete-trigger" aria-describedby="profile-removal-note"
+          aria-haspopup="dialog" onClick={() => setDeleteOpen(true)}>{t('deleteProfile')}</button>
+      </section>}
       {own && profile && deleteOpen && <DeleteProfileDialog confirm={async () => {
         await model.deleteProfile();
         setCopied(false);
