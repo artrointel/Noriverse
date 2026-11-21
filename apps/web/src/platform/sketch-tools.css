@@ -9,7 +9,7 @@
 .sketch-word-intro {
   z-index: 2;
   position: absolute;
-  inset: 5.8% 0 27.7%;
+  inset: 0 0 19.2%;
   display: grid;
   place-items: center;
   padding: 12%;
@@ -81,7 +81,7 @@
 }
 .sketch-width-preview i { border-radius: 50%; border: 1px solid #8c7c9680; }
 .sketch-width-preview i[data-eraser="true"] { border-style: dashed; }
-.sketch-hud-guess { position: absolute; z-index: 2; inset-inline: 10%; top: 83.8%; display: flex; justify-content: center; transform: translateY(-50%); }
+.sketch-hud-guess { position: absolute; z-index: 2; inset-inline: 10%; top: 88.4%; display: flex; justify-content: center; transform: translateY(-50%); }
 .sketch-hud-guess :is(.button, input) { min-height: 30px; font-size: clamp(.71rem, 2.6vw, .85rem); padding-block: 4px; }
 .sketch-native-color { position: absolute; bottom: 7%; right: 8%; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .sketch-keyboard-tools:not(:focus-within) { position: absolute; width: 1px; height: 1px; padding: 0; clip-path: inset(50%); overflow: hidden; }

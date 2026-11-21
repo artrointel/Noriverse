@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../apps/web/src/games/turn-clock.ts';
-import { readResolution, renderBufferSize, renderFrameSize } from '../apps/web/src/games/render-resolution.ts';
+import { availableStageHeight, centeredStageScroll, readResolution, renderBufferSize, renderFrameSize } from '../apps/web/src/games/render-resolution.ts';
 import { readProfilePreferences } from '../packages/protocol/profile.ts';
 import { readInvite, readRelayData, readTouch } from '../packages/protocol/rooms.ts';
 
@@ -41,6 +41,14 @@ test('graphics resolution matches the available display area and preserves the s
   assert.deepEqual(renderFrameSize(720, 425, Infinity, 480), { width: 425, height: 425 });
   assert.deepEqual(renderFrameSize(720, 900, 640, 640), { width: 480, height: 640 });
   assert.deepEqual(renderFrameSize(720, 900, Infinity, 640), { width: 720, height: 960 });
+});
+
+test('fit and centering account for the sticky header and game card chrome', () => {
+  assert.equal(availableStageHeight(844, 90, 695, 576), 627);
+  assert.equal(availableStageHeight(844, 90, 400, 281), 627);
+  assert.equal(centeredStageScroll(0, 230, 744, 844, 90), 135);
+  assert.equal(centeredStageScroll(85, 145, 744, 844, 90), 135);
+  assert.equal(centeredStageScroll(0, 90, 280, 844, 90), 0);
 });
 
 test('turn timeouts wait for a decision and extensions resume the same turn clock', () => {

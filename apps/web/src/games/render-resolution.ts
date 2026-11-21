@@ -4,6 +4,18 @@ export const fixedResolutions = [480, 720, 960, 1440, 1920] as const;
 export type RenderResolution = 'auto' | typeof fixedResolutions[number];
 export type RenderSize = { width: number; height: number };
 
+const stageMargin = 8;
+
+export function availableStageHeight(viewportHeight: number, headerHeight: number, stageHeight: number, canvasHeight: number) {
+  const chrome = Math.max(0, stageHeight - canvasHeight);
+  return Math.max(1, viewportHeight - headerHeight - chrome - stageMargin);
+}
+
+export function centeredStageScroll(scrollY: number, stageTop: number, stageHeight: number, viewportHeight: number, headerHeight: number) {
+  const usable = Math.max(1, viewportHeight - headerHeight);
+  return Math.max(0, scrollY + stageTop - headerHeight - Math.max(0, (usable - stageHeight) / 2));
+}
+
 export function readResolution(value: string | null): RenderResolution {
   return fixedResolutions.find(size => String(size) === value) ?? 'auto';
 }

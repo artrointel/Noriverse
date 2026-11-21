@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { advanceSketch, applySketchAction, chooseSketchMap, defaultSketchSettings, drawer, makeSketchRound, nextSketchEvent,
   readSketchRound, readSketchSettings, sketchDeck, sketchOutcome, startSketchTurn, visibleSketch, wordIntroDuration } from '../apps/web/src/games/sketch/rules.ts';
 import type { Prompt } from '../apps/web/src/games/sketch/rules.ts';
-import { editInk, emptyInk, eraserBrush, inkLimit, maxEraserWidth, readInk } from '../apps/web/src/games/sketch/ink.ts';
+import { brushWidth, editInk, emptyInk, eraserBrush, inkLimit, maxEraserWidth, packInk, readInk, unpackInk } from '../apps/web/src/games/sketch/ink.ts';
 import type { Ink } from '../apps/web/src/games/sketch/ink.ts';
 import { maxRelayMessageLength } from '../packages/protocol/rooms.ts';
 import type { Role } from '../packages/protocol/rooms.ts';
@@ -99,10 +99,11 @@ test('eraser widths travel in ink history and undo and redo preserve the eraser 
 test('snapshots fit the relay limit and restore board and redo availability without private data', () => {
   const initialLobby = lobbyMatch('sketch', defaultMatchSettings);
   const round = initial();
-  const worst: Ink = [1000, 1000, 1000, 1000, 16777215, 36, 3, 999999];
+  const worst: Ink = [1000, 1000, 1000, 1000, 16777215, 36, 3, 65535];
   const board = Array<Ink>(inkLimit).fill(worst);
   const current = { ...round, board, revision: 2, redo: [[line]], redoCount: 1 };
-  const snapshot = { type: 'snapshot', ...initialLobby, startedAt: 1000, beginsAt: 1000, sketch: visibleSketch(current, 'guest') };
+  const snapshot = { type: 'snapshot', ...initialLobby, startedAt: 1000, beginsAt: 1000,
+    sketch: { ...visibleSketch(current, 'guest'), board: packInk(board) } };
   assert(JSON.stringify({ type: 'relay-data', peer: 'guest', data: snapshot }).length <= maxRelayMessageLength);
   const recovered = readMatchSnapshot(snapshot, blankMatch, 2000)!;
   assert.deepEqual(recovered.sketch?.board, board);
@@ -113,4 +114,19 @@ test('snapshots fit the relay limit and restore board and redo availability with
   const end = applySketchAction(round, 'host', { kind: 'resign' }, round.opensAt + 20)!;
   assert.equal(readSketchRound(end, settings)?.phase, 'done');
   assert.equal(sketchOutcome(end, 'guest'), 'win');
+});
+
+test('long sketches continue beyond the old limit and pack variable-width brush strokes exactly', () => {
+  const slow = brushWidth(32, .12, 25);
+  const fast = brushWidth(32, 2.8, 25);
+  assert(slow > fast);
+  assert(fast > 0);
+  const base = Array<Ink>(1100).fill(line);
+  const thin: Ink = [999, 512, 17, 333, 0xfe8a23, fast, 1, 4];
+  const thick: Ink = [17, 333, 812, 6, 0xfe8a23, slow, 1, 4];
+  const updated = editInk({ board: base, redo: [] }, [thin, thick])!;
+  assert.equal(updated.board.length, 1102);
+  assert.deepEqual(unpackInk(packInk(updated.board), inkLimit), updated.board);
+  assert.equal(unpackInk(packInk(updated.board), 1100), undefined);
+  assert.equal(unpackInk(' not base64!!!! ', inkLimit), undefined);
 });

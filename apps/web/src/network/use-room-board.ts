@@ -28,7 +28,7 @@ import type { Match } from './room-match.ts';
 import { countdownDuration } from '../games/round-cues.ts';
 import { advanceSketch, applySketchAction, chooseSketchMap, defaultSketchSettings, makeSketchRound, nextSketchEvent, sketchDeck, startSketchTurn, visibleSketch } from '../games/sketch/rules.ts';
 import type { Prompt, SketchAction, SketchRound } from '../games/sketch/rules.ts';
-import { inkBatch, inkLimit, readInk } from '../games/sketch/ink.ts';
+import { inkBatch, inkLimit, packInk, readInk } from '../games/sketch/ink.ts';
 import { advanceLiar, applyLiarAction, defaultLiarSettings, isLiarRound, makeLiarRound, visibleLiar } from '../games/liar/rules.ts';
 import type { LiarAction, LiarRound } from '../games/liar/rules.ts';
 
@@ -136,8 +136,9 @@ export function useRoomBoard(profile?: ProfileSummary) {
     if (current.sketch || current.liar) {
       const sketch = current.sketch;
       const liar = current.liar;
+      const ink = sketch && (sketch.board.length >= 900 ? packInk(sketch.board) : sketch.board);
       for (const peer of target ? [target] : link.current?.connectedPeers() ?? []) {
-        link.current?.send({ type: 'snapshot', ...current, sketch: sketch && visibleSketch(sketch, peer),
+        link.current?.send({ type: 'snapshot', ...current, sketch: sketch && { ...visibleSketch(sketch, peer), board: ink },
           liar: liar && isLiarRound(liar) ? visibleLiar(liar, peer) : undefined, sentAt }, peer);
       }
     } else link.current?.send({ type: 'snapshot', ...current, sentAt }, target);

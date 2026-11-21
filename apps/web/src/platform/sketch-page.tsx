@@ -7,7 +7,7 @@ import type { Role } from '../../../../packages/protocol/rooms.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 import { chooseSketchMap, drawer, sketchDeck, sketchOutcome, sketchRanking, wordIntroDuration } from '../games/sketch/rules.ts';
 import type { Prompt, SketchMap, SketchRound, SketchSettings } from '../games/sketch/rules.ts';
-import { editInk, emptyInk, eraserBrush, inkLimit } from '../games/sketch/ink.ts';
+import { editInk, emptyInk, eraserBrush, inkLimit, practiceInkLimit } from '../games/sketch/ink.ts';
 import type { BoardEdit, Ink, InkHistory } from '../games/sketch/ink.ts';
 import type { SketchHudView } from '../games/sketch/hud.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
@@ -95,6 +95,7 @@ export function SketchPage({ room, settings, ownProfile, navigate, dark, antiali
   const elapsed = useElapsedPlayTime(!room && !intro && roundStart.started ? opensAt : 0, finishedAt);
   const seconds = deadline ? remaining : room && round?.phase === 'draw' ? room.sketchConfig?.seconds ?? settings.seconds : elapsed;
   const board = round?.board ?? practice.board;
+  const limit = room ? inkLimit : practiceInkLimit;
   const answer = round ? drawing || round.phase !== 'draw' ? round.answer : undefined : practice.deck[turn].word;
   const outcome = finishedAt ? room ? sketchOutcome(room.sketch, room.role) : 'draw' : undefined;
   const report = useMemo<MatchReport | undefined>(() => outcome && finishedAt ? {
@@ -121,7 +122,7 @@ export function SketchPage({ room, settings, ownProfile, navigate, dark, antiali
     if (!canDraw) return;
     if (lines[0] && lines[0][6] !== eraserBrush) recents.remember(lines[0][4]);
     if (room) room.sketchAction({ kind: 'ink', lines });
-    else setPractice(previous => ({ ...previous, ...editInk(previous, lines) }));
+    else setPractice(previous => ({ ...previous, ...editInk(previous, lines, practiceInkLimit) }));
   }
 
   function edit(kind: BoardEdit) {
@@ -163,18 +164,18 @@ export function SketchPage({ room, settings, ownProfile, navigate, dark, antiali
   const wordLabel = round && round.phase !== 'draw' ? 'sketchAnswer' : 'sketchPrompt';
   const hintLabels = canGuess ? round?.hints.map(hint => hint.kind === 'length' ? t('sketchHintLength', { count: hint.value })
     : t(hint.kind === 'category' ? 'sketchHintCategory' : 'sketchHintColor', { value: t('sketchClue_' + hint.value) })) ?? [] : [];
-  const hudStatus = canDraw && board.length >= inkLimit ? t('sketchInkFull') : correct ? t('sketchEarned', { points: round?.points })
+  const hudStatus = canDraw && board.length >= limit ? t('sketchInkFull') : correct ? t('sketchEarned', { points: round?.points })
     : canGuess && feedback?.epoch === epoch ? t(room?.sketchWrongGuess ? 'sketchTryAgain' : feedback.label) : status;
   const hud: SketchHudView = {
     clock: formatPlayTime(seconds), low: Boolean(deadline && remaining <= 10),
     word: shownWord ?? '•••', wordLabel: t(wordLabel), status: hudStatus, hints: hintLabels,
-    notice: canDraw && board.length >= inkLimit ? t('sketchInkFull') : undefined,
+    notice: canDraw && board.length >= limit ? t('sketchInkFull') : undefined,
     scores: ranked.map(player => ({ ...player, drawing: player === currentDrawer && !finishedAt })),
     tools: canDraw ? {
       labels: { palette: t('sketchPalette'), custom: t('sketchCustomColor'), recent: t('sketchRecentColors'),
         width: t('sketchHudWidth'), pen: t('sketchBrush_pen'), brush: t('sketchBrush_brush'),
         chalk: t('sketchBrush_chalk'), marker: t('sketchBrush_marker'), eraser: t('sketchEraser'), undo: t('sketchUndo'),
-        redo: t('sketchRedo'), clear: t('sketchClear'), next: t('sketchNext') },
+        redo: t('sketchRedo'), clear: t('sketchHudClear'), next: t('sketchHudNext') },
       color, brush: erasing ? eraserBrush : brush, width: shownWidth, recent: recents.colors, canUndo, canRedo,
       setColor: chooseColor, setBrush: chooseBrush, setWidth: resizeBrush, edit, next,
       custom: () => {
@@ -211,9 +212,9 @@ export function SketchPage({ room, settings, ownProfile, navigate, dark, antiali
         beginsAt={roundStart.beginsAt} ending={ending} onReady={roundStart.ready}
         playfieldContent={field}
         stageContext={{ mode: t(room ? 'sketchParty' : 'practice'), map: t('sketchMap_' + map) }}
-        view={{ history: [], cursor: null, chessTargets: new Map(), dark, force: 1, allowDoubleThree: true, canMove: canDraw && board.length < inkLimit,
+        view={{ history: [], cursor: null, chessTargets: new Map(), dark, force: 1, allowDoubleThree: true, canMove: canDraw && board.length < limit,
           deadline: 0, finished: Boolean(finishedAt), move() {}, onAlkkagi() {}, sketch: {
-            board, color, width: shownWidth, brush: erasing ? eraserBrush : brush, map, epoch: epoch + ':' + wipe, send, hud } }}
+            board, color, width: shownWidth, brush: erasing ? eraserBrush : brush, map, epoch: epoch + ':' + wipe, send, hud, online: Boolean(room) } }}
         setCursor={() => {}} yourTurn={Boolean(canDraw && room)} infoStatus={status}
         info={<>{room && <p role="status">{t(room.state ?? 'joining')}</p>}
           {room?.needsReconnect && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}

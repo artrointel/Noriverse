@@ -25,7 +25,7 @@ export interface GameView {
   localFlick?: FlickRound;
   onlineFlick?: FlickRound & { host: boolean; send: (shot: Flick) => void; settle: (layout: StonePosition[], revision: number) => void };
   sketch?: { board: readonly Ink[]; color: number; width: number; brush: number; map: SketchMap; epoch: string;
-    send: (lines: Ink[]) => void; hud: SketchHudView };
+    send: (lines: Ink[]) => void; hud: SketchHudView; online: boolean };
   sichuan?: { board: readonly Tile[]; size: SichuanSize; theme: SichuanTheme; selected?: number;
     hint?: readonly [number, number]; match?: { path: readonly TilePoint[]; combo: number }; rejected?: { index: number };
     flip?: 'backs' | 'faces'; hud: SichuanHudView };

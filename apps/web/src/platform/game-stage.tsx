@@ -9,7 +9,7 @@ import type { GameId } from '../../../../packages/protocol/games.ts';
 import type { GameView } from '../games/game-view.ts';
 import type { mountGame } from '../games/scenes.ts';
 import { sceneLoaders } from '../games/scene-loader.ts';
-import { fixedResolutions, readResolution, renderBufferSize, renderFrameSize } from '../games/render-resolution.ts';
+import { availableStageHeight, centeredStageScroll, fixedResolutions, readResolution, renderBufferSize, renderFrameSize } from '../games/render-resolution.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 import { tableSize } from '../games/table.ts';
 import { sichuanSceneHeight } from '../games/sichuan/options.ts';
@@ -45,6 +45,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const field = useRef<HTMLDivElement>(null);
   const mount = useRef<HTMLDivElement>(null);
   const engine = useRef<ReturnType<typeof mountGame>>(null);
+  const centered = useRef(false);
   const sceneHeight = id === 'sichuan' ? sichuanSceneHeight : id === 'liar' ? liarSceneHeight : id === 'sketch' ? sketchSceneHeight : tableSize;
   const requestedSize = useRef({ frame: { width: tableSize, height: sceneHeight }, buffer: { width: tableSize, height: sceneHeight } });
   const [actualSize, setActualSize] = useState(requestedSize.current);
@@ -77,22 +78,19 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     const stage = shell.current;
     const layout = stage?.parentElement;
     if (!element || !stage || !layout) return;
-    const page = stage.closest('.play-page') ?? stage;
+    const canvas = mount.current;
     const footerControls = element.querySelector<HTMLElement>('.stage-footer-controls');
+    const header = document.querySelector<HTMLElement>('.site-header');
     const viewport = window.visualViewport;
     function measure() {
       if (!element || !stage || !layout) return;
       const fitWindow = resolution === 'auto' || matchMedia('(pointer: coarse)').matches;
       let availableHeight = Infinity;
-      if (expanded) availableHeight = element.clientHeight;
+      if (expanded) availableHeight = Math.max(1, element.clientHeight - (footerControls?.offsetHeight ?? 0));
       else if (fitWindow) {
         const visibleHeight = viewport?.scale === 1 ? viewport.height : window.innerHeight;
-        const fieldBounds = element.getBoundingClientRect();
-        const trailingHeight = Math.max(0, page.getBoundingClientRect().bottom - fieldBounds.bottom);
-        const documentTop = window.scrollY + fieldBounds.top;
-        availableHeight = Math.max(Math.min(96, visibleHeight), visibleHeight - documentTop - trailingHeight - 8);
+        availableHeight = availableStageHeight(visibleHeight, header?.offsetHeight ?? 0, stage.offsetHeight, canvas?.offsetHeight ?? 0);
       }
-      availableHeight = Math.max(1, availableHeight - (footerControls?.offsetHeight ?? 0));
       const style = getComputedStyle(stage);
       const inset = (property: string) => Number.parseFloat(style.getPropertyValue(property)) || 0;
       const availableWidth = expanded ? element.clientWidth
@@ -117,11 +115,11 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     observer.observe(layout);
-    observer.observe(page);
+    observer.observe(stage);
     if (mount.current && 'devicePixelContentBoxSize' in ResizeObserverEntry.prototype) {
       observer.observe(mount.current, { box: 'device-pixel-content-box' });
     }
-    for (const chrome of [stage.querySelector('.stage-bar'), stage.querySelector('.stage-help'), footerControls, document.querySelector('.site-header')]) {
+    for (const chrome of [stage.querySelector('.stage-bar'), stage.querySelector('.stage-help'), footerControls, header]) {
       if (chrome) observer.observe(chrome);
     }
     window.addEventListener('resize', measure);
@@ -133,6 +131,23 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
       viewport?.removeEventListener('resize', measure);
     };
   }, [resolution, expanded, sceneHeight]);
+
+  useEffect(() => {
+    if (status !== 'ready' || expanded || resolution !== 'auto' || centered.current) return;
+    const timer = requestAnimationFrame(() => {
+      const stage = shell.current;
+      const viewport = window.visualViewport;
+      if (!stage || !stage.isConnected || (viewport && viewport.scale !== 1)) return;
+      const { top, height } = stage.getBoundingClientRect();
+      const header = document.querySelector<HTMLElement>('.site-header');
+      centered.current = true;
+      window.scrollTo({
+        top: centeredStageScroll(window.scrollY, top, height, viewport?.height ?? window.innerHeight, header?.offsetHeight ?? 0),
+        behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+      });
+    });
+    return () => cancelAnimationFrame(timer);
+  }, [status, expanded, resolution, actualSize.frame.width]);
 
   useLayoutEffect(() => { engine.current?.refreshInputBounds(); }, [actualSize, expanded]);
 

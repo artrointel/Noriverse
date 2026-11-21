@@ -2,12 +2,16 @@ import type Phaser from 'phaser';
 import { tableSize } from '../table.ts';
 import { brushStyles, eraserBrush, inkColors, maxEraserWidth, maxInkWidth } from './ink.ts';
 import type { BoardEdit } from './ink.ts';
-import hudArt from '../../assets/sketch-hud.webp';
+import hudToolArt from '../../assets/sketch-hud-tools.webp';
+import hudPlateArt from '../../assets/sketch-hud-plates.webp';
 
-export const sketchMapTop = 42;
+export const sketchMapTop = 0;
 export const sketchMapBottom = sketchMapTop + tableSize;
-export const sketchSceneHeight = 722;
-const texture = 'sketch-hud';
+export const sketchSceneHeight = 594;
+const toolsTexture = 'sketch-hud-tools';
+const platesTexture = 'sketch-hud-plates';
+const toolOrder = ['palette', ...brushStyles, 'eraser', 'undo', 'redo', 'clear', 'next', 'custom', 'clock'] as const;
+const plateOrder = ['clock', 'word', 'panel', 'action'] as const;
 type HudLabel = 'palette' | 'custom' | 'recent' | 'width' | 'eraser' | 'undo' | 'redo' | 'clear' | 'next' | typeof brushStyles[number];
 export type SketchHudView = {
   clock: string; low: boolean; word: string; wordLabel: string; status: string; notice?: string; hints: string[];
@@ -20,61 +24,87 @@ export type SketchHudView = {
   };
 };
 
-export function loadSketchHud(scene: Phaser.Scene) { scene.load.image(texture, hudArt); }
+export function loadSketchHud(scene: Phaser.Scene) {
+  const atlas = (names: readonly string[], cols: number, w: number, h: number) => ({
+    frames: Object.fromEntries(names.map((name, index) => [name, { frame: { x: index % cols * w, y: Math.floor(index / cols) * h, w, h } }])),
+  });
+  scene.load.atlas(toolsTexture, hudToolArt, atlas(toolOrder, 4, 128, 128));
+  scene.load.atlas(platesTexture, hudPlateArt, atlas(plateOrder, 2, 384, 112));
+}
 
 export function createSketchHud(scene: Phaser.Scene) {
-  const text = (x: number, y: number, size: number) => scene.add.text(x, y, '', {
-    fontFamily: 'system-ui, "Malgun Gothic", sans-serif', fontSize: size, fontStyle: 'bold', color: '#fff8ee',
-    stroke: '#21142f', strokeThickness: 2,
-  }).setOrigin(.5).setResolution(2);
-  const rail = (x: number, y: number, width: number, height: number) => scene.add.image(x, y, texture).setDisplaySize(width, height);
-  rail(240, 21, 132, 39);
-  rail(240, 620, 475, 194);
-  const clock = text(240, 21, 24);
-  const word = text(240, 544, 20);
-  const status = text(240, 571, 15);
-  const hints = text(240, 644, 15);
-  const notice = text(240, 673, 13);
-  const score = Array.from({ length: 4 }, (_, index) => text(63 + index * 117, 699, 15));
+  const textLabels: Phaser.GameObjects.Text[] = [];
+  const text = (x: number, y: number, size: number) => {
+    const label = scene.add.text(x, y, '', {
+      fontFamily: '"Sketch Jua", "Malgun Gothic", sans-serif', fontSize: size, color: '#fff8ee',
+      stroke: '#21142f', strokeThickness: 2,
+    }).setOrigin(.5).setResolution(2);
+    textLabels.push(label);
+    return label;
+  };
+  const rail = (key: typeof plateOrder[number], x: number, y: number, width: number, height: number) =>
+    scene.add.image(x, y, platesTexture, key).setDisplaySize(width, height);
+  const icon = (key: typeof toolOrder[number], x: number, y: number, size: number) =>
+    scene.add.image(x, y, toolsTexture, key).setDisplaySize(size, size);
+  rail('panel', 240, 537, 480, 114);
+  rail('clock', 240, 22, 108, 36);
+  icon('clock', 206, 22, 23);
+  const clock = text(248, 22, 24);
+  const wordPlate = rail('word', 240, 455, 224, 39);
+  const word = text(240, 455, 22).setShadow(0, 1, '#13091e', 5, false, true);
+  const status = text(240, 497, 15);
+  const hints = text(240, 554, 15);
+  const notice = text(240, 577, 13);
+  const score = Array.from({ length: 4 }, (_, index) => text(63 + index * 117, 578, 15));
   const controls = scene.add.container();
-  const widthLabel = text(32, 613, 13);
-  const widthNumber = text(197, 613, 15);
-  const recent = text(42, 648, 13);
-  const track = scene.add.rectangle(108, 613, 84, 4, 0x9584a6).setOrigin(.5);
-  const thumb = scene.add.circle(66, 613, 7, 0xffde9a);
-  const sample = scene.add.circle(174, 613, 7, 0xffffff);
+  const widthLabel = text(32, 548, 13);
+  const widthNumber = text(196, 548, 15);
+  const recent = text(242, 548, 13);
+  const track = scene.add.rectangle(108, 548, 84, 4, 0xaf9fd0).setOrigin(.5);
+  const thumb = scene.add.circle(66, 548, 6, 0xffde9a);
+  const sample = scene.add.circle(174, 548, 7, 0xffffff);
   controls.add([widthLabel, widthNumber, recent, track, thumb, sample]);
 
   function fit(label: Phaser.GameObjects.Text, value: string, width: number) {
     label.setText(value).setScale(Math.min(1, width / Math.max(1, label.width)), 1);
   }
 
-  const button = (x: number, y: number, width: number, height = 32) => {
-    const plate = rail(x, y, width, height).setAlpha(.77);
-    const label = text(x, y, 15);
+  const button = (key: typeof toolOrder[number], i: number) => {
+    const x = 24 + 48 * i;
+    const plate = icon(key, x, 499, 33);
+    const label = text(x, 520, 13);
     controls.add([plate, label]);
-    return { x, y, width, height, plate, label };
+    return { key, x, y: 505, width: 45, height: 47, plate, label };
   };
-  const buttons = (['palette', ...brushStyles, 'eraser'] as const).map((key, i) => ({ key, ...button(45 + 78 * i, 576, 74) }));
-  const edits = (['undo', 'redo', 'clear', 'next'] as const).map((key, i) => ({ key, ...button(242 + 65 * i, 613, 62) }));
-  const custom = button(418, 673, 91, 29);
+  const buttons = (['palette', ...brushStyles, 'eraser'] as const).map((key, i) => ({ ...button(key, i), key }));
+  const edits = (['undo', 'redo', 'clear', 'next'] as const).map((key, i) => ({ ...button(key, i + 6), key }));
+  const custom = { x: 411, y: 575, width: 110, height: 29, plate: rail('action', 411, 575, 110, 28),
+    icon: icon('custom', 367, 575, 21), label: text(421, 575, 13) };
+  controls.add([custom.plate, custom.icon, custom.label]);
   const swatch = (x: number, y: number) => {
-    const tile = scene.add.circle(x, y, 12, 0xffffff).setStrokeStyle(1.5, 0xe5c9e8);
+    const tile = scene.add.circle(x, y, 9, 0xffffff).setStrokeStyle(1.5, 0xe5c9e8);
     controls.add(tile);
     return tile;
   };
-  const recentColors = Array.from({ length: 7 }, (_, index) => swatch(92 + index * 43, 648));
-  const palette = inkColors.map((_, index) => swatch(43 + index * 41, 673));
+  const recentColors = Array.from({ length: 7 }, (_, index) => swatch(289 + index * 27, 548));
+  const palette = inkColors.map((_, index) => swatch(28 + index * 40, 575));
   let view: SketchHudView | undefined;
   let paletteOpen = false;
   let slider: number | undefined;
+
+  void document.fonts.load('16px "Sketch Jua"').then(() => {
+    if (!scene.sys.isActive()) return;
+    for (const label of textLabels) label.updateText();
+    if (view) { const next = view; view = undefined; update(next); }
+  }).catch(() => undefined);
 
   function update(next: SketchHudView) {
     if (view === next) return;
     view = next;
     const tool = next.tools;
     clock.setText(next.clock).setColor(next.low ? '#ffb777' : '#fff8ee');
-    fit(word, next.wordLabel + '  ·  ' + next.word, 419);
+    fit(word, next.wordLabel + '  ·  ' + next.word, 382);
+    wordPlate.setDisplaySize(Math.max(136, Math.min(430, word.width + 48)), 39);
     fit(status, tool ? '' : next.status, 416);
     fit(hints, tool ? '' : next.hints.join('  ·  '), 421);
     fit(notice, tool && !paletteOpen ? next.notice ?? '' : '', 421);
@@ -82,7 +112,7 @@ export function createSketchHud(scene: Phaser.Scene) {
       const player = next.scores[i];
       const width = 448 / Math.max(1, next.scores.length);
       label.setX(16 + width * (i + .5));
-      fit(label, player ? player.name + '  ' + player.score : '', width - 8);
+      fit(label, player && !(tool && (paletteOpen || next.notice)) ? player.name + '  ' + player.score : '', width - 8);
       label.setColor(player?.drawing ? '#ffe3a6' : '#fff8ee');
     });
     controls.setVisible(Boolean(tool));
@@ -114,7 +144,8 @@ export function createSketchHud(scene: Phaser.Scene) {
     palette.forEach((tile, i) => tile.setVisible(paletteOpen).setFillStyle(inkColors[i])
       .setStrokeStyle(inkColors[i] === tool.color && !erasing ? 3 : 1.5, 0xe5c9e8));
     custom.plate.setVisible(paletteOpen);
-    fit(custom.label, paletteOpen ? tool.labels.custom : '', 83);
+    custom.icon.setVisible(paletteOpen);
+    fit(custom.label, paletteOpen ? tool.labels.custom : '', 81);
   }
 
   const matches = (hit: { x: number; y: number; width: number; height: number }, x: number, y: number) =>
@@ -133,7 +164,7 @@ export function createSketchHud(scene: Phaser.Scene) {
       const tool = view?.tools;
       const { worldX: x, worldY: y } = pointer;
       if (!tool || y < sketchMapBottom) return false;
-      if (x >= 59 && x <= 157 && Math.abs(y - 613) <= 17) {
+      if (x >= 59 && x <= 157 && Math.abs(y - 548) <= 13) {
         slider = pointer.id;
         changeWidth(x);
         return true;
@@ -144,10 +175,10 @@ export function createSketchHud(scene: Phaser.Scene) {
       const apply = edits.find(item => matches(item, x, y))?.key;
       if (apply === 'next') tool.next?.();
       else if (apply && (apply === 'redo' ? tool.canRedo : tool.canUndo)) tool.edit(apply);
-      const last = recentColors.findIndex(tile => tile.visible && Math.hypot(tile.x - x, tile.y - y) <= 17);
+      const last = recentColors.findIndex(tile => tile.visible && Math.hypot(tile.x - x, tile.y - y) <= 13);
       if (last >= 0) tool.setColor(tool.recent[last]);
       if (paletteOpen) {
-        const tone = palette.findIndex(tile => Math.hypot(tile.x - x, tile.y - y) <= 17);
+        const tone = palette.findIndex(tile => Math.hypot(tile.x - x, tile.y - y) <= 15);
         if (tone >= 0) tool.setColor(inkColors[tone]);
         if (matches(custom, x, y)) tool.custom();
       }
@@ -155,5 +186,6 @@ export function createSketchHud(scene: Phaser.Scene) {
     },
     move(pointer: Phaser.Input.Pointer) { if (slider === pointer.id && pointer.isDown) changeWidth(pointer.worldX); },
     up(pointer: Phaser.Input.Pointer) { if (slider === pointer.id) slider = undefined; },
+    cancel() { slider = undefined; },
   };
 }

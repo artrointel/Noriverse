@@ -1,6 +1,6 @@
 import { isRoomRole } from '../../../../../packages/protocol/rooms.ts';
 import type { Role } from '../../../../../packages/protocol/rooms.ts';
-import { editInk, inkBatch, inkLimit, integer, readInk } from './ink.ts';
+import { editInk, inkBatch, inkLimit, integer, readInk, unpackInk } from './ink.ts';
 import type { BoardEdit, Ink } from './ink.ts';
 
 export const sketchTimes = [60, 120, 180] as const;
@@ -163,7 +163,7 @@ export function advanceSketch(round: SketchRound, settings: SketchSettings, deck
 export function readSketchRound(raw: unknown, settings: SketchSettings): SketchRound | undefined {
   if (!raw || typeof raw !== 'object') return;
   const { players, scores, responseMs, draws, tieOrder, artist, retired, solvedBy, points, phase, opensAt, deadline, turn, revision,
-    answer, board, redoCount, map, hints } = raw as SketchRound;
+    answer, board, redoCount, map, hints } = raw as Omit<SketchRound, 'board'> & { board?: unknown };
   if (!Array.isArray(players) || players.length < 2 || players.length > 4 || players[0] !== 'host'
     || !players.every(isRoomRole) || new Set(players).size !== players.length) return;
   const subset = (list: unknown): list is Role[] => Array.isArray(list) && list.length <= players.length && list.every(role => players.includes(role))
@@ -180,6 +180,7 @@ export function readSketchRound(raw: unknown, settings: SketchSettings): SketchR
     || !integer(redoCount, 0, inkLimit) || !sketchMaps.includes(map) || !Array.isArray(hints) || hints.length > 3) return;
   const validHints = hints.every((hint, index) => hint && (index === 0 ? hint.kind === 'length' && integer(hint.value, 1, 64)
     : index === 1 ? hint.kind === 'category' && topics.includes(hint.value) : hint.kind === 'color' && colors.includes(hint.value)));
-  if (validHints && readInk(board, inkLimit)) return { players, scores, responseMs, draws, tieOrder, artist, retired, solvedBy, points, phase, opensAt,
-    deadline, turn, revision, answer, board, redoCount, map, hints };
+  const visibleBoard = Array.isArray(board) ? readInk(board, inkLimit) : unpackInk(board, inkLimit);
+  if (validHints && visibleBoard) return { players, scores, responseMs, draws, tieOrder, artist, retired, solvedBy, points, phase, opensAt,
+    deadline, turn, revision, answer, board: visibleBoard, redoCount, map, hints };
 }

@@ -1,7 +1,7 @@
 import type Phaser from 'phaser';
 import type { SceneFactory } from '../scene-loader.ts';
 import { tableSize } from '../table.ts';
-import { eraserBrush, inkBatch } from './ink.ts';
+import { brushWidth, eraserBrush, inkBatch } from './ink.ts';
 import type { Ink } from './ink.ts';
 import type { SketchMap } from './rules.ts';
 import { createSketchHud, loadSketchHud, sketchMapTop } from './hud.ts';
@@ -12,8 +12,7 @@ import easel from '../../assets/sketch-maps/easel.webp';
 import postcard from '../../assets/sketch-maps/postcard.webp';
 
 const maps = { laptop, notebook, chalkboard, easel, postcard };
-const inset = 62;
-const unit = (tableSize - inset * 2) / 1000;
+const unit = tableSize / 1000;
 const mapTexture = (map: SketchMap) => 'sketch-map-' + map;
 const inkTexture = 'sketch-ink-layer';
 const rasterScale = 2;
@@ -26,7 +25,7 @@ function dab(context: CanvasRenderingContext2D, x: number, y: number, radius: nu
 }
 
 function lineOn(context: CanvasRenderingContext2D, [x, y, endX, endY, color, width, brush]: Ink) {
-  const startX = inset + x * unit, startY = inset + y * unit, stopX = inset + endX * unit, stopY = inset + endY * unit;
+  const startX = x * unit, startY = y * unit, stopX = endX * unit, stopY = endY * unit;
   const length = Math.hypot(stopX - startX, stopY - startY);
   const ink = '#' + color.toString(16).padStart(6, '0');
   context.globalCompositeOperation = brush === eraserBrush ? 'destination-out' : 'source-over';
@@ -45,13 +44,12 @@ function lineOn(context: CanvasRenderingContext2D, [x, y, endX, endY, color, wid
     }
     return;
   }
-  const lineWidth = brush === 1 ? width * Math.max(.48, 1 - length / 90) : width;
   context.globalAlpha = brush === 3 ? .34 : 1;
   if (length === 0) {
-    dab(context, stopX, stopY, lineWidth / 2);
+    dab(context, stopX, stopY, width / 2);
     return;
   }
-  context.lineWidth = lineWidth;
+  context.lineWidth = width;
   context.lineCap = 'round';
   context.beginPath();
   context.moveTo(startX, startY);
@@ -68,7 +66,10 @@ export const sketchScene: SceneFactory = current => {
   const committed = ink.getContext('2d')!;
   committed.scale(rasterScale, rasterScale);
   let last: [number, number] | undefined;
-  let pointerId: number | undefined;
+  let drawingPointer: Phaser.Input.Pointer | undefined;
+  let sampleAt = 0;
+  let sampledSegments = 0;
+  let sampledWidth = 1;
   let queued: Ink[] = [];
   let displayed: readonly Ink[] = [];
   let previewInk: { line: Ink; expires: number }[] = [];
@@ -87,19 +88,36 @@ export const sketchScene: SceneFactory = current => {
   }
 
   function point(pointer: Phaser.Input.Pointer): [number, number] {
-    const bound = (position: number) => Math.max(0, Math.min(1000, Math.round((position - inset) / unit)));
+    const bound = (position: number) => Math.max(0, Math.min(1000, Math.round(position / unit)));
     return [bound(pointer.worldX), bound(pointer.worldY - sketchMapTop)];
   }
 
-  function add(position: [number, number]) {
+  function add(position: [number, number], now: number) {
     const view = current().sketch;
     if (!view || !current().canMove || !last) return;
-    const line: Ink = [...last, ...position, view.brush === eraserBrush ? 0 : view.color, view.width, view.brush, stroke];
+    const speed = Math.hypot(position[0] - last[0], position[1] - last[1]) * unit / Math.max(4, now - sampleAt);
+    sampledWidth = view.brush === 1 ? brushWidth(view.width, speed, sampledWidth) : view.width;
+    const line: Ink = [...last, ...position, view.brush === eraserBrush ? 0 : view.color, sampledWidth, view.brush, stroke];
     queued.push(line);
-    previewInk.push({ line, expires: performance.now() + 230 });
+    previewInk.push({ line, expires: now + 230 });
     redraw = true;
     last = position;
-    if (queued.length >= inkBatch) flush(performance.now());
+    sampleAt = now;
+    sampledSegments++;
+    if (queued.length >= inkBatch) flush(now);
+  }
+
+  function samplingInterval() {
+    const view = current().sketch;
+    const count = view?.online ? Math.max(view.board.length + queued.length, sampledSegments) : 0;
+    return count >= 2100 ? 150 : count >= 1100 ? 82 : 0;
+  }
+
+  function finishStroke() {
+    drawingPointer = undefined;
+    last = undefined;
+    if (current().canMove) flush(performance.now());
+    else queued = [];
   }
 
   return {
@@ -118,28 +136,40 @@ export const sketchScene: SceneFactory = current => {
       this.add.image(0, sketchMapTop, inkTexture).setOrigin(0).setDisplaySize(tableSize, tableSize);
       hud = createSketchHud(this);
       this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-        if (!pointer.leftButtonDown() || hud.down(pointer) || !current().canMove || pointerId !== undefined) return;
-        if ([pointer.worldX, pointer.worldY - sketchMapTop].some(coordinate => coordinate < inset || coordinate > tableSize - inset)) return;
+        if (!pointer.leftButtonDown() || hud.down(pointer) || !current().canMove || drawingPointer) return;
+        if ([pointer.worldX, pointer.worldY - sketchMapTop].some(coordinate => coordinate < 0 || coordinate > tableSize)) return;
         stroke = Math.max(stroke, current().sketch?.board.at(-1)?.[7] ?? 0) + 1;
         last = point(pointer);
-        pointerId = pointer.id;
-        add(last);
+        drawingPointer = pointer;
+        sampledWidth = current().sketch?.width ?? 1;
+        const now = performance.now();
+        if (now - sampleAt >= samplingInterval()) add(last, now);
       });
       this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
         hud.move(pointer);
-        if (pointer.id !== pointerId || !pointer.isDown || !last) return;
+        if (pointer !== drawingPointer || !pointer.isDown || !last) return;
         const position = point(pointer);
-        if (Math.hypot(position[0] - last[0], position[1] - last[1]) >= 3) add(position);
+        const now = performance.now();
+        if (Math.hypot(position[0] - last[0], position[1] - last[1]) >= 3 && now - sampleAt >= samplingInterval()) add(position, now);
       });
       const up = (pointer: Phaser.Input.Pointer) => {
         hud.up(pointer);
-        if (pointer.id !== pointerId) return;
-        pointerId = undefined;
-        last = undefined;
-        flush(performance.now());
+        if (pointer === drawingPointer) finishStroke();
       };
       this.input.on('pointerup', up);
       this.input.on('pointerupoutside', up);
+      const release = () => {
+        if (drawingPointer) finishStroke();
+        hud.cancel();
+      };
+      window.addEventListener('pointerup', release);
+      window.addEventListener('pointercancel', release);
+      window.addEventListener('blur', release);
+      this.events.once('shutdown', () => {
+        window.removeEventListener('pointerup', release);
+        window.removeEventListener('pointercancel', release);
+        window.removeEventListener('blur', release);
+      });
     },
     update() {
       const view = current().sketch;
@@ -160,9 +190,12 @@ export const sketchScene: SceneFactory = current => {
         queued = [];
         previewInk = [];
         redraw = true;
-        pointerId = undefined;
+        drawingPointer = undefined;
         last = undefined;
+        sampleAt = 0;
+        sampledSegments = view.board.length;
       }
+      if (drawingPointer && (!drawingPointer.isDown || !current().canMove)) finishStroke();
       const board = view.board;
       if (board !== displayed) {
         let start = displayed.length;
