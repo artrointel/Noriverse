@@ -1,4 +1,4 @@
-import { isRoomGame, isRoomRole, roomCapacity } from '../../../../packages/protocol/rooms.ts';
+import { isRoomGame, isRoomRole, roomCapacity, roomRoles } from '../../../../packages/protocol/rooms.ts';
 import { minimumRoomPlayers } from '../../../../packages/protocol/games.ts';
 import type { MatchOutcome } from '../../../../packages/protocol/profile.ts';
 import type { Participant, Role, RoomGame } from '../../../../packages/protocol/rooms.ts';
@@ -27,6 +27,7 @@ export type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: n
   puzzleConfig?: SichuanRoomSettings; puzzle?: PuzzleRound;
   sketchConfig?: SketchSettings; sketch?: SketchRound;
   liarConfig?: LiarSettings; liar?: LiarView | LiarRound;
+  mockSeats?: Role[];
   turnLimit: TurnLimit; deadline: number; beginsAt?: number; clockOffset?: number };
 export const blankMatch: Match = { id: '', game: 'omok', hostColor: 1, startedAt: 0, finishedAt: 0, allowDoubleThree: true,
   overline: defaultOmokOverline, history: [], turnLimit: 0, deadline: 0 };
@@ -45,8 +46,13 @@ export function matchColor(match: Match, role: Role): FlickPlayer | undefined {
 }
 
 export function inRound(match: Match, role: Role) {
-  return (!match.puzzle || match.puzzle.players.includes(role)) && (!match.physicsSeats || match.physicsSeats.includes(role))
+  return !match.mockSeats?.includes(role) && (!match.puzzle || match.puzzle.players.includes(role)) && (!match.physicsSeats || match.physicsSeats.includes(role))
     && (!match.sketch || match.sketch.players.includes(role)) && (!match.liar || match.liar.players.includes(role));
+}
+
+export function mockSeatsFor(game: RoomGame, participants: readonly Participant[], count: number) {
+  const taken = new Set<Role>(['host', ...participants.map(player => player.role)]);
+  return roomRoles.filter(role => !taken.has(role)).slice(0, Math.max(0, Math.min(count, roomCapacity[game] - taken.size)));
 }
 
 export function roundSeats(game: RoomGame, peers: Role[], participants: Participant[]): Role[] | undefined {
@@ -111,6 +117,9 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
     && 'allowDoubleThree' in raw && typeof raw.allowDoubleThree === 'boolean')) return;
   const game = 'game' in raw ? raw.game : 'omok';
   if (!isRoomGame(game)) return;
+  const mockSeats = 'mockSeats' in raw ? raw.mockSeats : undefined;
+  if (mockSeats !== undefined && (!Array.isArray(mockSeats) || mockSeats.length >= roomCapacity[game]
+    || !mockSeats.every(role => isRoomRole(role) && role !== 'host') || new Set(mockSeats).size !== mockSeats.length)) return;
   const puzzleConfig = game === 'sichuan' && 'puzzleConfig' in raw ? readSichuanRoomSettings(raw.puzzleConfig) : undefined;
   if (game === 'sichuan' && !puzzleConfig) return;
   const puzzle = puzzleConfig && 'puzzle' in raw ? readPuzzleRound(raw.puzzle, puzzleConfig) : undefined;
@@ -160,7 +169,7 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
     ? current.clockOffset ?? measuredOffset : measuredOffset;
   const next: Match = { id: raw.id, game, hostColor: nextHostColor, startedAt: raw.startedAt, finishedAt: raw.finishedAt, allowDoubleThree: raw.allowDoubleThree,
     overline: nextOverline, history, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, timeoutPending: pending,
-    turnLimit: nextLimit, deadline: nextDeadlineAt, beginsAt, clockOffset, puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, flickSettings, physicsSeats };
+    turnLimit: nextLimit, deadline: nextDeadlineAt, beginsAt, clockOffset, puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, flickSettings, physicsSeats, mockSeats };
   if (pending && (!nextLimit || pending.color !== matchTurn(next))) return;
   if (followsSnapshot(current, next)) return next;
 }

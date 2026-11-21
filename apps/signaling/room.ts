@@ -5,7 +5,8 @@ import type { ProfileSummary } from '../../packages/protocol/profile.ts';
 import type { Env } from './bindings.ts';
 import { notifyFriends } from './profiles.ts';
 
-interface Reservation { host: string; hostJoined?: boolean; guest?: string; guest2?: string; guest3?: string; game?: RoomGame; expires: number; profiles?: Partial<Record<Role, ProfileSummary>> }
+interface Reservation { host: string; hostJoined?: boolean; guest?: string; guest2?: string; guest3?: string; game?: RoomGame; expires: number;
+  profiles?: Partial<Record<Role, ProfileSummary>>; memberIds?: Partial<Record<Role, string>> }
 type AttachedSeat = { role: Role; token?: string; relay?: boolean };
 const roomLifetime = 30 * 60 * 1000;
 const guests = roomRoles.filter(role => role !== 'host');
@@ -23,7 +24,7 @@ export class Room extends DurableObject<Env> {
       if (previous && previous.expires > Date.now()) return null;
       this.closeRoomSockets();
       const reservation: Reservation = { host: crypto.randomUUID(), hostJoined: false, game, expires: Date.now() + roomLifetime,
-        profiles: profile ? { host: profile } : undefined };
+        profiles: profile ? { host: profile } : undefined, memberIds: { host: crypto.randomUUID() } };
       await this.ctx.storage.put('reservation', reservation);
       await this.ctx.storage.setAlarm(reservation.expires);
       return reservation.host;
@@ -35,10 +36,11 @@ export class Room extends DurableObject<Env> {
       const reservation = await this.ctx.storage.get<Reservation>('reservation');
       if (!reservation || reservation.host !== seat || reservation.expires <= Date.now() || !this.socketFor('host')) return false;
       if (roomRoles.filter(role => this.socketFor(role)).length > roomCapacity[game]) return false;
-      const next = { ...reservation, game, profiles: { ...reservation.profiles } };
+      const next = { ...reservation, game, profiles: { ...reservation.profiles }, memberIds: { ...reservation.memberIds } };
       for (const role of guests) if (!this.socketFor(role)) {
         delete next[role];
         delete next.profiles[role];
+        delete next.memberIds[role];
       }
       await this.ctx.storage.put('reservation', next);
       this.notifyRoomChange(reservation);
@@ -104,9 +106,10 @@ export class Room extends DurableObject<Env> {
         return new Response(null, { status: 101, webSocket: client });
       }
       const seat = token ?? crypto.randomUUID();
-      if (!token || (role === 'host' && !reservation.hostJoined)) {
+      if (!token || (role === 'host' && !reservation.hostJoined) || !reservation.memberIds?.[role]) {
         if (role === 'host') reservation.hostJoined = true;
         else reservation[role] = seat;
+        reservation.memberIds = { ...reservation.memberIds, [role]: reservation.memberIds?.[role] ?? crypto.randomUUID() };
         await this.ctx.storage.put('reservation', reservation);
       }
       this.socketFor(role, server)?.close(1000, 'Seat replaced');
@@ -130,9 +133,10 @@ export class Room extends DurableObject<Env> {
         await this.ctx.blockConcurrencyWhile(async () => {
           const reservation = await this.ctx.storage.get<Reservation>('reservation');
           if (!reservation || reservation[role] !== this.attachedSeat(socket)?.token || this.socketFor(role) !== socket) return;
-          const next = { ...reservation, profiles: { ...reservation.profiles } };
+          const next = { ...reservation, profiles: { ...reservation.profiles }, memberIds: { ...reservation.memberIds } };
           delete next[role];
           delete next.profiles[role];
+          delete next.memberIds[role];
           await this.ctx.storage.put('reservation', next);
           this.notifyRoomChange(reservation);
         });
@@ -259,7 +263,7 @@ export class Room extends DurableObject<Env> {
       const socket = this.socketFor(role, excluded);
       if (!socket) continue;
       sockets.push(socket);
-      participants.push({ role, profile: reservation.profiles?.[role] });
+      participants.push({ role, profile: reservation.profiles?.[role], memberId: reservation.memberIds?.[role] });
     }
     for (const socket of sockets) send(socket, { type: 'roster', participants });
   }

@@ -612,6 +612,7 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .lobby-feature-rules .match-rule-list { grid-template-columns: repeat(auto-fit, minmax(min(100%, 143px), 1fr)); }
 .lobby-feature-rules .match-rule-list:has(> :nth-child(8)) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .lobby-toolbar { margin-block: 13px; padding: 10px 13px; flex-wrap: wrap; }
+.lobby-toolbar:not(:has(button, p)) { display: none; }
 .lobby-toolbar .panel-actions { margin-inline-start: auto; }
 .lobby-toolbar .settings-gear { width: 18px; height: 18px; }
 .lobby-connection::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-inline-end: 7px; border-radius: 50%; background: var(--primary); }
@@ -634,6 +635,22 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .room-history-list ul li { display: inline-flex; gap: 5px; align-items: center; font-size: .77rem; overflow-wrap: anywhere; }
 .room-history-list [data-outcome] { flex: none; border-radius: 14px; padding: 2px 6px; background: var(--surface); color: var(--muted); font-weight: 750; }
 .room-history-list [data-outcome="win"] { background: #dff0d9; color: #265c37; }
+.ranking-rows { display: grid; gap: 6px; padding: 0; margin: 0; list-style: none; }
+.ranking-rows li { display: grid; grid-template-columns: 1.7rem minmax(0, 1fr) auto auto; gap: 8px; align-items: center;
+  border: 1px solid var(--line); padding: 7px 9px; border-radius: 10px; background: var(--raised); }
+.ranking-rows li[data-leading="true"] { border-color: var(--primary); }
+.ranking-rows strong { overflow-wrap: anywhere; }
+.ranking-rows small { color: var(--muted); font-size: .72rem; }
+.ranking-rows b, .ranking-award { color: var(--primary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ranking-position { display: grid; place-items: center; width: 1.65rem; height: 1.65rem; border-radius: 50%; background: var(--surface); font-weight: 750; }
+.profile-dialog.room-ranking-dialog { width: min(525px, calc(100% - 28px)); max-height: min(670px, calc(100dvh - 32px)); overflow-y: auto; }
+.room-ranking-dialog .room-panel-heading { margin-bottom: 12px; }
+.room-ranking-dialog > .button { margin-top: 12px; }
+@media (max-width: 390px) {
+  .ranking-rows li { grid-template-columns: 1.7rem minmax(0, 1fr) auto; row-gap: 2px; }
+  .ranking-rows small { grid-row: 2; grid-column: 2; }
+  .ranking-rows b { grid-row: 1 / span 2; grid-column: 3; }
+}
 .profile-dialog.room-rules-dialog { width: min(710px, calc(100% - 24px)); max-height: min(760px, calc(100dvh - 32px)); padding: 0; overflow: hidden; }
 .room-rules-dialog[open] { display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .room-rules-dialog > header { padding: 14px clamp(16px, 4vw, 24px); border-bottom: 1px solid var(--line); }
@@ -715,16 +732,11 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .profile-presence h2 small { display: inline-flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--muted); }
 .profile-presence .settings-hint { margin: 0; }
 .profile-friend-count { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.liar-playfield { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; pointer-events: none; }
-.liar-card { display: grid; place-content: center; gap: 4px; width: min(69%, 268px); min-height: min(72%, 125px); padding: 9px 12px;
-  border: 1px solid #f4c4969c; border-radius: 13px; color: #fff2db; text-align: center; cursor: pointer; pointer-events: auto;
-  background: radial-gradient(ellipse at 50% 0%, #7b4b67, #412447 70%); box-shadow: 0 9px 28px #170e22ad, inset 0 0 0 4px #ffddaa15;
-  transition: transform .2s var(--ease), background-color .2s var(--ease); }
-.liar-card:not(:disabled):hover { transform: translateY(-2px); }
-.liar-card[data-side="citizens"] { background: radial-gradient(ellipse at 50% 0%, #47666d, #233c4a 75%); }
-.liar-card[data-side="liar"] { background: radial-gradient(ellipse at 50% 0%, #ae5d56, #6e3048 80%); }
-.liar-card span, .liar-card small { font-size: .74rem; color: #fff1dfd9; }
-.liar-card strong { overflow-wrap: anywhere; font-size: clamp(1rem, 5vw, 1.55rem); line-height: 1.17; }
+.liar-playfield { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.liar-card { position: absolute; inset: 22.4% 22.5% 28%; border: 0; border-radius: 12px; background: transparent;
+  pointer-events: auto; cursor: pointer; }
+.liar-card:disabled { pointer-events: none; }
+.liar-card:focus-visible { outline: 2px solid #ffe1a5; outline-offset: 2px; }
 .liar-page .stage-turn { max-width: min(31vw, 165px); overflow: hidden; text-overflow: ellipsis; }
 .liar-interaction { width: min(100%, 680px); margin: 7px auto 0; }
 .liar-desk { display: grid; gap: 8px; padding: 10px 12px; min-width: 0; }

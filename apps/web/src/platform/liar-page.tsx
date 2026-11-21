@@ -2,11 +2,13 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, ProfileSummary, TouchEffect } from '../../../../packages/protocol/profile.ts';
+import { roomRoles } from '../../../../packages/protocol/rooms.ts';
 import type { Role } from '../../../../packages/protocol/rooms.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 import { liarHintLimit, liarSpeaker } from '../games/liar/rules.ts';
 import type { LiarView } from '../games/liar/rules.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
+import { roomStandings } from '../network/room-history.ts';
 import { Avatar } from './avatar.tsx';
 import { MatchStage } from './match-stage.tsx';
 import { EndRoundAction } from './end-round-action.tsx';
@@ -19,11 +21,6 @@ import { playSound } from './audio.ts';
 
 type Room = ReturnType<typeof useRoomBoard> & { liar: LiarView; role: Role };
 const away = () => {};
-
-function LiarTimer({ deadline }: { deadline: number }) {
-  const seconds = useCountdown(deadline, left => { if (left >= 1 && left <= 3) playSound('tick'); });
-  return <time className="stage-clock" dateTime={'PT' + seconds + 'S'} data-low={seconds <= 3}>{formatPlayTime(seconds)}</time>;
-}
 
 function LiarInput({ label, sendLabel, limit, disabled, send }: {
   label: string; sendLabel: string; limit: number; disabled: boolean; send: (text: string) => void;
@@ -52,6 +49,8 @@ export function LiarPage({ room, ownProfile, dark, antialias, resolution, onReso
   const [opened, setOpened] = useState('');
   const [closedResult, setClosedResult] = useState('');
   const roundStart = useRoundStart(id, room, room.displayStart, away);
+  const clockActive = roundStart.started && room.liarDisplayDeadline > 0;
+  const seconds = useCountdown(clockActive ? room.liarDisplayDeadline : 0, left => { if (left >= 1 && left <= 3) playSound('tick'); });
   const outcome = room.roundOutcome;
   const report = useMemo<MatchReport | undefined>(() => outcome && room.finishedAt ? {
     id, game: 'liar', mode: 'online', outcome, seconds: elapsedPlaySeconds(room.playStartedAt, room.finishedAt),
@@ -64,9 +63,12 @@ export function LiarPage({ room, ownProfile, dark, antialias, resolution, onReso
   const active = connected && roundStart.started && !retired && !outcome;
   const yours = active && (speaker === role || round.phase === 'guess' && round.accused === role);
   const voted = round.voted.includes(role);
+  const standings = useMemo(() => roomStandings(room.roomHistory, room.participants, 'liar'), [room.roomHistory, room.participants]);
   const players = round.players.map((player, index) => {
-    const profile = (player === role ? ownProfile : undefined) ?? room.participants.find(person => person.role === player)?.profile;
-    return { player, profile, name: profile?.name ?? t('sketchGuest', { number: index + 1 }) };
+    const participant = room.participants.find(person => person.role === player);
+    const profile = (player === role ? ownProfile : undefined) ?? participant?.profile;
+    return { player, profile, total: standings.find(row => row.current && row.role === player)?.points ?? 0,
+      name: profile?.name ?? (participant?.mock ? t('mockPlayer') + ' ' + roomRoles.indexOf(player) : t('sketchGuest', { number: index + 1 })) };
   });
   const name = (player?: Role) => players.find(entry => entry.player === player)?.name ?? t('anonymousPlayer');
   const topic = t('liarTopic_' + round.topic);
@@ -76,23 +78,30 @@ export function LiarPage({ room, ownProfile, dark, antialias, resolution, onReso
   const compactStatus = !roundStart.started || outcome || retired ? status : t(yours ? 'yourTurn'
     : round.phase === 'hint' ? 'liarClueStep' : round.phase === 'vote' ? 'liarVoteStep' : 'liarGuessStep');
   const card = opened === id ? round.card : undefined;
+  const cardTitle = card ? card.side === 'citizens' ? card.word : t('liarRole') : t('liarRevealCard');
+  const cardSubtitle = card ? t(card.side === 'citizens' ? 'liarCitizenCard' : 'liarNoWord') : t('liarPrivateCard');
   const cardPanel = <div className="liar-playfield">
-    <button type="button" className="liar-card" data-side={card?.side} aria-pressed={opened === id}
+    <button type="button" className="liar-card" aria-pressed={opened === id}
       disabled={!roundStart.started || !round.card} onClick={() => setOpened(opened === id ? '' : id)}>
-      <span>{topic}</span>
-      <strong>{card ? card.side === 'citizens' ? card.word : t('liarRole') : t('liarRevealCard')}</strong>
-      <small>{card ? t(card.side === 'citizens' ? 'liarCitizenCard' : 'liarNoWord') : t('liarPrivateCard')}</small>
+      <span className="visually-hidden">{topic} · {cardTitle} · {cardSubtitle}</span>
     </button>
   </div>;
   const ballot = round.tally && <ul className="liar-tally" aria-label={t('liarTally')}>
     {round.tally.map(entry => <li key={entry.player}><span>{name(entry.player)}</span><b>{entry.votes}</b></li>)}
   </ul>;
-  const details = round.result && <div className="liar-reveal">
-    <p><span>{t('liarTopic')}</span><strong>{topic}</strong></p>
+  const roundScores = room.roomHistory.find(entry => entry.id === id)?.players;
+  const details = <div className="liar-reveal">
+    {round.result && <><p><span>{t('liarTopic')}</span><strong>{topic}</strong></p>
     <p><span>{t('liarWho')}</span><strong>{name(round.result.liar)}</strong></p>
     <p><span>{t('liarWord')}</span><strong>{round.result.word}</strong></p>
     {round.result.guess && <p><span>{t('liarFinalGuess')}</span><strong>{round.result.guess}</strong></p>}
-    {ballot}
+    {ballot}</>}
+    {roundScores && <section aria-label={t('liarSeriesPoints')}>
+      <strong>{t('liarSeriesPoints')}</strong>
+      <ul className="liar-tally">{players.map(entry => <li key={entry.player}><span>{entry.name}</span>
+        <b>+{roundScores.find(score => score.role === entry.player)?.liarPoints ?? 0} · {t('rankingPoints', { points: entry.total })}</b>
+      </li>)}</ul>
+    </section>}
   </div>;
   const controls = <div className="liar-interaction">
     <section className="surface liar-desk" aria-label={t('liarPhase')}>
@@ -132,15 +141,19 @@ export function LiarPage({ room, ownProfile, dark, antialias, resolution, onReso
       <MatchStage id="liar" matchId={id} antialias={antialias} resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
         beginsAt={roundStart.beginsAt} ending={ending} onReady={roundStart.ready} playfieldContent={cardPanel} interaction={controls}
         stageContext={{ mode: t('liarTopic'), map: topic }} infoStatus={compactStatus} yourTurn={yours}
-        timer={roundStart.started && room.liarDisplayDeadline > 0 && <LiarTimer deadline={room.liarDisplayDeadline} />}
         info={<><p role="status">{t(room.state ?? 'joining')}</p>
+          {clockActive && <time dateTime={'PT' + seconds + 'S'}>{formatPlayTime(seconds)}</time>}
           {room.needsReconnect && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}
           {roundStart.started && !outcome && <PlayTime startedAt={roundStart.beginsAt} />}
           <ul className="liar-tally">{players.map(entry => <li key={entry.player}><span>{entry.name}</span>
-            {(speaker === entry.player || round.retired.includes(entry.player)) && <small>{t(speaker === entry.player ? 'liarSpeaking' : 'roundResigned')}</small>}
+            <small>{t('rankingPoints', { points: entry.total })}{(speaker === entry.player || round.retired.includes(entry.player))
+              && ' · ' + t(speaker === entry.player ? 'liarSpeaking' : 'roundResigned')}</small>
           </li>)}</ul></>}
         view={{ history: [], cursor: null, chessTargets: new Map(), dark, force: 1, allowDoubleThree: true, canMove: false,
-          deadline: 0, finished: Boolean(outcome), move: away, onAlkkagi: away }} setCursor={away}
+          deadline: 0, finished: Boolean(outcome), move: away, onAlkkagi: away,
+          liar: { phase: status, clock: clockActive ? formatPlayTime(seconds) : undefined, lowTime: clockActive && seconds <= 3,
+            card: { open: Boolean(card), topic, title: cardTitle, subtitle: cardSubtitle }, scoreLabel: t('liarSeriesPoints'),
+            players: players.map(entry => ({ name: entry.name, score: t('rankingPoints', { points: entry.total }) })) } }} setCursor={away}
         endAction={!outcome && !retired && <EndRoundAction key={id} online disabled={!active} end={room.surrender} />}
         result={report && <GameResult key={id} report={report} winner="draw"
           title={t(round.result?.winner === 'liar' ? 'liarWins' : 'liarCitizensWin')} visible={visible} onClose={() => setClosedResult(id)}

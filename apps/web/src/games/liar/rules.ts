@@ -98,6 +98,15 @@ export function liarOutcome(round: LiarView, player: Role) {
   return !round.retired.includes(player) && side === round.result.winner ? 'win' : 'loss';
 }
 
+export function liarParticipationPoints(round: LiarRound, role: Role) {
+  const hint = round.hints.some(entry => entry.player === role && Boolean(entry.text));
+  const vote = round.secret.votes[role];
+  const solved = role === round.secret.liar
+    ? Boolean(round.result?.guess && normalize(round.result.guess) === normalize(round.secret.word))
+    : vote === round.secret.liar;
+  return Number(hint) * 10 + Number(Boolean(vote)) * 10 + Number(solved) * 20;
+}
+
 export function advanceLiar(round: LiarRound, settings: LiarSettings, now: number): LiarRound | undefined {
   if (round.phase === 'done' || !round.deadline || now < round.deadline) return;
   const next = { ...round, revision: round.revision + 1 };

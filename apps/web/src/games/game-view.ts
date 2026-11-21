@@ -6,6 +6,7 @@ import type { SichuanHudView } from './sichuan/hud.ts';
 import type { Ink } from './sketch/ink.ts';
 import type { SketchMap } from './sketch/rules.ts';
 import type { SketchHudView } from './sketch/hud.ts';
+import type { LiarHudView } from './liar/hud.ts';
 
 export interface GameView {
   history: number[];
@@ -24,6 +25,7 @@ export interface GameView {
   onAlkkagi: (status: AlkkagiStatus) => void;
   localFlick?: FlickRound;
   onlineFlick?: FlickRound & { host: boolean; send: (shot: Flick) => void; settle: (layout: StonePosition[], revision: number) => void };
+  liar?: LiarHudView;
   sketch?: { board: readonly Ink[]; color: number; width: number; brush: number; map: SketchMap; epoch: string;
     send: (lines: Ink[]) => void; hud: SketchHudView; online: boolean };
   sichuan?: { board: readonly Tile[]; size: SichuanSize; theme: SichuanTheme; selected?: number;

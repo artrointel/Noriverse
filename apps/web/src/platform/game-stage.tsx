@@ -1,3 +1,4 @@
+import { RoomRankingControl } from './room-ranking.tsx';
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -312,6 +313,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
           <button className="button button-secondary stage-control" type="button" onClick={() => void toggleFullscreen()}>
             {t(expanded ? 'restore' : 'fullscreen')}
           </button>
+          <RoomRankingControl />
           <details className="stage-settings" ref={gameSettings} onKeyDown={event => {
             if (event.key === 'Escape' && event.currentTarget.open) {
               event.preventDefault();

@@ -1,3 +1,4 @@
+import { RoomRankingContext } from './platform/room-ranking.tsx';
 import { lazy, StrictMode, Suspense, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useTranslation } from 'react-i18next';
@@ -81,7 +82,7 @@ function App() {
   useEffect(() => { if (!playGame) setLobbyMusic(); }, [playGame]);
 
   useEffect(() => {
-    if (!profile.profile || !room.inMatch || !room.playerColor || !room.finishedAt || !room.matchId || lastAwayResult.current === room.matchId
+    if (!profile.profile || room.testMatch || !room.inMatch || !room.playerColor || !room.finishedAt || !room.matchId || lastAwayResult.current === room.matchId
       || (route.page === 'play' && route.id === room.game && route.online)) return;
     const outcome = room.roundOutcome;
     if (!outcome) return;
@@ -91,7 +92,7 @@ function App() {
       id: matchId, game: room.game, mode: 'online', outcome,
       seconds: elapsedPlaySeconds(room.playStartedAt, room.finishedAt),
     }).then(saved => { if (!saved && lastAwayResult.current === matchId) lastAwayResult.current = ''; });
-  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.roundOutcome, room.playStartedAt, room.inMatch, route]);
+  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.roundOutcome, room.playStartedAt, room.inMatch, room.testMatch, route]);
 
   useEffect(() => {
     const view = route.id ? t(route.id) : route.page === 'room' ? t('room') : route.page === 'createRoom' ? t('newRoom')
@@ -240,7 +241,7 @@ function App() {
             dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
             onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias}
             showTouches={preferences.showTouches} onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
-            record={apiAvailable && profile.profile ? profile.record : undefined} />
+            record={apiAvailable && profile.profile && !room.testMatch ? profile.record : undefined} />
           </Suspense>;
         }
         if (id === 'sketch') {
@@ -250,7 +251,7 @@ function App() {
             dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
             onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
             onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
-            record={online && apiAvailable && profile.profile ? profile.record : undefined} />;
+            record={online && apiAvailable && profile.profile && !room.testMatch ? profile.record : undefined} />;
         }
         if (id === 'sichuan') {
           const puzzleRoom = online && room.puzzle && room.puzzleConfig && room.role
@@ -260,7 +261,7 @@ function App() {
             dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
             onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
             onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'} navigate={navigate}
-            record={online && apiAvailable && profile.profile ? profile.record : undefined} />;
+            record={online && apiAvailable && profile.profile && !room.testMatch ? profile.record : undefined} />;
         }
         return <PlayPage id={id} dark={preferences.dark} antialias={preferences.antialias} power={power} flickSettings={flickSettings} turnLimit={turnLimit} navigate={navigate}
           resolution={preferences.resolution} onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias}
@@ -268,7 +269,7 @@ function App() {
           room={online ? room : undefined} ownProfile={profile.profile} history={online ? room.history : local?.history ?? []}
           boardRound={online ? undefined : local}
           allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true}
-          overline={online ? room.overline : local?.overline ?? defaultMatchSettings.overline} record={online && apiAvailable && profile.profile ? profile.record : undefined}
+          overline={online ? room.overline : local?.overline ?? defaultMatchSettings.overline} record={online && apiAvailable && profile.profile && !room.testMatch ? profile.record : undefined}
           move={online ? room.move : index => { if (board) updateLocalBoard(board, (current, now) => moveLocalBoard(board, current, index, now)); }}
           reset={online ? room.rematch : () => { if (board) updateLocalBoard(board, (current, now) => rematchLocalBoard(board, current, now)); }}
           startLocal={(matchId, at) => { if (board) updateLocalBoard(board, current => setLocalStart(current, matchId, at)); }}
@@ -322,7 +323,7 @@ function App() {
       </header>
       <main id="main" tabIndex={-1} className="route-frame"><BackNavigation.Provider value={backNavigation}><div className="route-content" key={path} data-play-game={backdropGame}>
         {backdropGame && <div className="game-backdrop" aria-hidden="true" key={backdropGame}><img src={games[backdropGame].art} alt="" decoding="async" /></div>}
-        {page}
+        <RoomRankingContext.Provider value={route.page === 'play' && route.online && playGame ? { entries: room.roomHistory, participants: room.participants } : undefined}>{page}</RoomRankingContext.Provider>
       </div></BackNavigation.Provider></main>
       <footer className="site-footer">
         <div className="site-width footer-row">

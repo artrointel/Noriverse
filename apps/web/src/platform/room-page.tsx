@@ -1,8 +1,8 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 import { isRoomGame, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
-import type { RoomGame } from '../../../../packages/protocol/rooms.ts';
+import type { Participant, RoomGame } from '../../../../packages/protocol/rooms.ts';
 import { oppositeStone, sideLabel } from '../games/table.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import { apiAvailable, apiFetch, fetchPublicProfile } from '../network/api.ts';
@@ -18,7 +18,7 @@ import { BackLink, gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { GameSelectionGrid } from './catalog-pages.tsx';
 import { GameFeature, GameRulesEditor, GameRulesSummary } from './game-settings.tsx';
-import { formatPlayTime } from './game-time.tsx';
+import { RoomRankingBoard } from './room-ranking.tsx';
 import { GearIcon } from './gear-icon.tsx';
 import { ReactionLayer, ReactionPicker } from './game-reactions.tsx';
 
@@ -74,27 +74,6 @@ function RoomSettingsDialog({ room, close }: { room: Room; close: () => void }) 
       </footer>
     </form>
   </dialog>;
-}
-
-function RoomHistory({ entries }: { entries: Room['roomHistory'] }) {
-  const { t, i18n } = useTranslation();
-  const clock = new Intl.DateTimeFormat(i18n.resolvedLanguage, { hour: 'numeric', minute: '2-digit' });
-  return <section className="surface lobby-panel" aria-labelledby="room-history-title">
-    <header className="room-panel-heading"><h2 id="room-history-title">{t('roomHistory')}</h2>
-      <span className="lobby-count">{entries.length}</span></header>
-    {entries.length ? <ol className="room-history-list">
-      {entries.map(entry => <li key={entry.id}>
-        <img src={games[entry.game].art} alt="" width="56" height="42" loading="lazy" />
-        <div className="room-history-match"><strong>{t(entry.game)}</strong>
-          <small><time dateTime={new Date(entry.endedAt).toISOString()}>{clock.format(entry.endedAt)}</time> · {formatPlayTime(entry.seconds)}</small>
-          <ul>{entry.players.map((player, index) => <li key={player.role}>
-            {player.name ?? (player.role === 'host' ? t('host') : t('anonymousSeat', { number: index + 1 }))}
-            <span data-outcome={player.outcome}>{t('outcome_' + player.outcome)}</span>
-          </li>)}</ul>
-        </div>
-      </li>)}
-    </ol> : <p className="lobby-empty">{t('roomHistoryEmpty')}</p>}
-  </section>;
 }
 
 function RoomGamesDialog({ room, choices, participants, close }: { room: Room; choices: RoomGame[]; participants: number; close: () => void }) {
@@ -172,7 +151,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
   const connected = room.state === 'connected';
   const hasRoom = room.active;
-  const participants = room.role && !room.participants.some(person => person.role === room.role)
+  const participants: Participant[] = room.role && !room.participants.some(person => person.role === room.role)
     ? [...room.participants, { role: room.role, profile: undefined }] : room.participants;
   const capacity = roomCapacity[activeGame];
   const gameChoices = roomGames.filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
@@ -253,10 +232,11 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
       <div className="lobby-feature-rules"><GameRulesSummary game={activeGame} settings={room.settings} /></div>
     </GameFeature>
     <div className="surface lobby-toolbar">
-      {room.state && <p id="lobby-connection" className="connection lobby-connection" role="status">{t(activeGame === 'liar' && !room.started && participants.length < 3 ? 'liarNeedPlayers'
-        : room.role === 'host' && !room.started && connected && !room.canStart ? 'waitingAllConnections' : connected && room.role !== 'host'
-        ? room.started && !room.inMatch ? 'waitingNextRound' : !room.started ? 'waitingStart' : room.state : room.state)}</p>}
       <div className="panel-actions">
+        {room.mockControls && <>
+          <button type="button" className="button button-secondary" disabled={!room.mockControls.canAdd} onClick={room.mockControls.add}>{t('addMockPlayer')}</button>
+          {room.mockControls.canRemove && <button type="button" className="button button-secondary" onClick={room.mockControls.remove}>{t('removeMockPlayer')}</button>}
+        </>}
         {canEdit && <button type="button" className="button button-secondary" disabled={room.changingGame || !room.matchId}
           onClick={() => setSettingsOpen(true)}><GearIcon />{t('settings')}</button>}
         {room.role === 'host' && gameChoices.length > 0 && <button type="button" className="button button-secondary"
@@ -267,12 +247,19 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
       {room.rematchNotice === 'incoming' && <p role="status">{t('rematchIncoming')}</p>}
     </div>
     <div className="lobby-grid">
+      <RoomRankingBoard entries={room.roomHistory} participants={participants}
+        status={room.state && <p id="lobby-connection" className="connection lobby-connection" role="status">
+          {t(activeGame === 'liar' && !room.started && participants.length < 3 ? 'liarNeedPlayers'
+            : room.role === 'host' && !room.started && connected && !room.canStart ? 'waitingAllConnections'
+              : connected && room.role !== 'host' && room.started && !room.inMatch ? 'waitingNextRound'
+                : connected && room.role !== 'host' && !room.started ? 'waitingStart' : room.state)}
+        </p>} />
       <section className="surface lobby-panel room-participants" aria-label={t('participants')}>
         <header className="room-panel-heading"><h2>{t('participants')}</h2><div className="lobby-participant-tools">
           <span className="lobby-count">{participants.length}/{capacity}</span>
           <ReactionPicker lobby scope={room.code ?? ''} enabled={room.lobbyReactions.enabled} send={room.lobbyReactions.send} />
         </div></header>
-        <ul className="people-list">{participants.map(({ role, profile }) => {
+        <ul className="people-list">{participants.map(({ role, profile, mock }) => {
           const color = room.colorFor(role) ?? (role === 'host' ? room.hostColor : oppositeStone(room.hostColor));
           const own = room.role === role;
           const participant = own ? ownProfile ?? profile : profile;
@@ -285,13 +272,13 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                 <Avatar appearance={participant} size={38} />
                 <span><strong>{participant.name}</strong><small>{seatInfo}</small>
                   <ParticipantStats key={participant.id} id={participant.id} game={activeGame} own={own ? ownProfile : undefined}
-                    latest={room.roomHistory.find(entry => entry.game === activeGame && entry.players.some(player => player.role === role))} />
+                    latest={room.roomHistory.find(entry => entry.game === activeGame && entry.players.some(player => player.profileId === participant.id))} />
                 </span>
               </RouteLink>
               {!own && <FriendButton id={participant.id} model={friends} />}
             </> : <div className="person-link">
               <span className={'stone stone-' + (color > 2 ? color : sideLabel(activeGame, color) === 'black' ? 0 : 1)} aria-hidden="true" />
-              <span><strong>{t('anonymousPlayer')}</strong><small>{seatInfo}</small></span>
+              <span><strong>{t(mock ? 'mockPlayer' : 'anonymousPlayer')}</strong><small>{mock ? t('mockIdle') : seatInfo}</small></span>
             </div>}
           </li>;
         })}</ul>
@@ -303,7 +290,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
         {room.role === 'host' && <button className="button button-secondary lobby-invite" type="button"
           disabled={!friends.owner || participants.length >= capacity} onClick={() => setInviteOpen(true)}>{t('inviteFriend')}</button>}
       </section>
-      <RoomHistory entries={room.roomHistory} />
+
     </div>
     {inviteOpen && room.role === 'host' && <InviteDialog owner={friends.owner} navigate={navigate} invite={room.invite} close={() => setInviteOpen(false)} />}
     {gamesOpen && room.role === 'host' && <RoomGamesDialog room={room} choices={gameChoices} participants={participants.length} close={() => setGamesOpen(false)} />}

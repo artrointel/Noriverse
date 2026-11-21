@@ -11,7 +11,7 @@ export { roomCapacity, isGameId as isRoomGame } from './games.ts';
 export const roomRoles = ['host', 'guest', 'guest2', 'guest3'] as const;
 export type Role = (typeof roomRoles)[number];
 export const isRoomRole = (value: unknown): value is Role => roomRoles.some(role => role === value);
-export interface Participant { role: Role; profile?: ProfileSummary }
+export interface Participant { role: Role; profile?: ProfileSummary; memberId?: string; mock?: boolean }
 export type TouchPoint = { x: number; y: number; effect?: TouchParticle };
 export const touchResolution = 1000;
 
