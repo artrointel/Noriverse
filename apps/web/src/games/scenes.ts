@@ -9,6 +9,7 @@ import { sichuanSceneHeight } from './sichuan/options.ts';
 import { createRoundAnnouncement, preloadRoundAnnouncement } from './round-announcement.ts';
 import type { RoundAnnouncement } from './round-announcement.ts';
 import { playSound } from '../platform/audio.ts';
+export { loadRoundAnnouncementFont } from './round-announcement.ts';
 
 export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, initialSize: RenderSize, current: () => GameView, createScene: SceneFactory,
   announcement: () => RoundAnnouncement, onReady: () => void) {

@@ -292,11 +292,13 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
 
   return <div className="site-width subpage play-page">
     <BackLink fallback={back} fallbackLabel={room ? 'goToRoom' : 'settings'} navigate={navigate} />
-    <div className="play-heading"><div><h1 tabIndex={-1}>{t('sichuan')}</h1><p>{t(room ? 'sichuanMode_' + room.puzzleConfig.mode : 'local')}</p></div></div>
+    <div className="play-heading"><h1 tabIndex={-1}>{t('sichuan')}</h1></div>
     <div className="play-layout">
       <MatchStage id="sichuan" matchId={round.id} antialias={antialias} resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
         progress={room?.puzzleConfig.mode === 'race' ? <RaceProgress room={room} /> : undefined}
         onReady={roundStart.ready} beginsAt={roundStart.beginsAt} ending={ending}
+        stageContext={{ mode: t(room ? 'sichuanMode_' + room.puzzleConfig.mode : 'practice'),
+          map: t('sichuanTheme_' + round.options.theme) + ` · ${round.options.size} × ${round.options.size}` }}
         endAction={!finished && !resigned && <EndRoundAction key={round.id} online={Boolean(room)}
           disabled={!roundStart.started || Boolean(room && room.state !== 'connected')}
           end={() => { if (room) room.surrender(); else finish('stopped'); }} />}

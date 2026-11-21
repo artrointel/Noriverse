@@ -24,7 +24,7 @@ import { setMatchMusic } from './audio.ts';
 import type { RoundAnnouncement } from '../games/round-announcement.ts';
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
-  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction }: {
+  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction, stageContext }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
@@ -34,6 +34,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   reactions?: RoomReactions; ownProfile?: ReactionSender;
   onReady?: () => void; progress?: ReactNode;
   beginsAt?: number; ending?: RoundAnnouncement['ending']; endAction?: ReactNode;
+  stageContext?: { mode: string; map: string };
 }) {
   const { t } = useTranslation();
   const shell = useRef<HTMLDivElement>(null);
@@ -173,7 +174,9 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     let canceled = false;
     let instance: ReturnType<typeof mountGame> | undefined;
     setStatus('loading');
-    void Promise.all([import('../games/scenes.ts'), sceneLoaders[id]()]).then(([{ mountGame }, createScene]) => {
+    void Promise.all([import('../games/scenes.ts'), sceneLoaders[id]()]).then(async ([{ mountGame, loadRoundAnnouncementFont }, createScene]) => {
+      if (canceled) return;
+      await loadRoundAnnouncementFont();
       if (canceled) return;
       instance = mountGame(element, id, roundAntialias, requestedSize.current.buffer, () => current.current, createScene, () => announcement.current, () => {
         if (!canceled) { setStatus('ready'); notifyReady(); }
@@ -268,7 +271,9 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   return (
     <section className={expanded === 'page' ? 'stage stage-expanded' : 'stage'} ref={shell}>
       <div className="stage-bar">
-        <span>{t(boardLabel)}</span>
+        {stageContext && <div className="stage-context">
+          <span>{stageContext.mode}</span><strong>{stageContext.map}</strong>
+        </div>}
         <div className="stage-actions">
           {info && <details className="stage-info" ref={gameInfo} onKeyDown={event => {
             if (event.key === 'Escape' && event.currentTarget.open) {
@@ -277,14 +282,14 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
               event.currentTarget.querySelector('summary')?.focus();
             }
           }}>
-            <summary className="button button-secondary" aria-label={t('gameInfo')}>
+            <summary className="button button-secondary stage-control" aria-label={t('gameInfo')}>
               {infoStatus && <span className="stage-turn" data-your-turn={yourTurn} aria-live="polite">{infoStatus}</span>}
               {timer}
             </summary>
             <div className="surface match-panel">{info}</div>
           </details>}
           {resultHidden && <button ref={resultButton} className="button stage-result-trigger" type="button" aria-label={t('viewResult')} onClick={onShowResult}>{t('viewResult')}</button>}
-          <button className="button button-secondary" type="button" onClick={() => void toggleFullscreen()}>
+          <button className="button button-secondary stage-control" type="button" onClick={() => void toggleFullscreen()}>
             {t(expanded ? 'restore' : 'fullscreen')}
           </button>
           <details className="stage-settings" ref={gameSettings} onKeyDown={event => {
@@ -294,7 +299,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
               event.currentTarget.querySelector('summary')?.focus();
             }
           }}>
-            <summary className="button button-secondary" aria-label={t('inGameSettings')} onClick={() => {
+            <summary className="button button-secondary stage-control stage-control-icon" aria-label={t('inGameSettings')} onClick={() => {
               if (gameInfo.current?.open) gameInfo.current.open = false;
             }}><GearIcon /></summary>
             <div className="surface stage-settings-panel">

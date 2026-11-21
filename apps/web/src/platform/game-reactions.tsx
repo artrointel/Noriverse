@@ -149,7 +149,7 @@ export function ReactionPicker({ scope, enabled, send, lobby = false }: {
   return <div className={lobby ? 'stage-reaction-bar lobby-reaction-picker' : 'stage-reaction-bar'} ref={control} onKeyDown={event => {
       if (pickerOpen && event.key === 'Escape') { event.preventDefault(); if (searchVisible) closeSearch(); else close(); }
     }}>
-      <button type="button" className="button button-secondary stage-reaction-toggle" ref={trigger}
+      <button type="button" className={'button button-secondary stage-reaction-toggle' + (lobby ? '' : ' stage-control stage-control-icon')} ref={trigger}
         aria-label={t('gameReactions')} title={t('gameReactions')} disabled={!enabled}
         aria-expanded={pickerOpen} aria-controls={pickerOpen ? uid + '-picker' : undefined} onClick={() => setOpen(value => !value)}>
         <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round">

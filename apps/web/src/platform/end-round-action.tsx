@@ -9,12 +9,12 @@ export function EndRoundAction({ online, disabled, end }: { online: boolean; dis
   return <div className="stage-end-action" onKeyDown={event => {
     if (event.key === 'Escape' && confirm) { event.preventDefault(); setConfirm(false); }
   }}>
-    <button type="button" className="button button-secondary" disabled={disabled} aria-expanded={confirm} onClick={() => setConfirm(!confirm)}>{action}</button>
+    <button type="button" className="button button-secondary stage-control" disabled={disabled} aria-expanded={confirm} onClick={() => setConfirm(!confirm)}>{action}</button>
     {confirm && <BlurredSurface className="stage-end-prompt">
       <p>{t(online ? 'confirmResign' : 'confirmEndPractice')}</p>
       <div className="panel-actions">
-        <button type="button" className="button button-primary" disabled={disabled} onClick={() => { setConfirm(false); end(); }}>{action}</button>
-        <button type="button" className="button button-secondary" onClick={() => setConfirm(false)}>{t('cancel')}</button>
+        <button type="button" className="button button-secondary stage-control" disabled={disabled} onClick={() => { setConfirm(false); end(); }}>{action}</button>
+        <button type="button" className="button button-secondary stage-control" onClick={() => setConfirm(false)}>{t('cancel')}</button>
       </div>
     </BlurredSurface>}
   </div>;

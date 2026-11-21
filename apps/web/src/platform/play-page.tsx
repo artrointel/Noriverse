@@ -102,6 +102,8 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const deadline = room?.displayDeadline ?? boardRound?.deadline ?? localRound.deadline;
   const limit = room?.turnLimit ?? boardRound?.turnLimit ?? localRound.turnLimit;
   const mode = room ? 'online' : 'local';
+  const stageContext = id === 'physics' ? { mode: t(room ? 'online' : 'practice'),
+    map: t('flickArena_' + (room?.settings.flick ?? localFlick?.settings ?? flickSettings).board) } : undefined;
   const firstPlayerColor = boardRound?.firstPlayerColor ?? localRound.firstPlayerColor;
   const playerColor = room?.playerColor ?? firstPlayerColor;
   const multiplayerFlick = Boolean(room?.physics && (room.physics.players ?? 2) > 2);
@@ -295,7 +297,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
       <div className="play-heading">
         <div>
           <h1 tabIndex={-1}>{t(id)}</h1>
-          <p>{t(room ? 'online' : 'local')}</p>
+          {!stageContext && <p>{t(room ? 'online' : 'practice')}</p>}
         </div>
         {room?.rematchNotice === 'incoming' && !resultVisible && <p role="status">{t('rematchIncoming')}</p>}
         {room?.code && <div className="play-room-code"><span>{t('code')}</span><code>{room.code}</code></div>}
@@ -303,7 +305,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
       <div className="play-layout">
         <MatchStage id={id} matchId={matchId} antialias={antialias} setCursor={setCursor} info={info}
           resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
-          beginsAt={roundStart.beginsAt} ending={ending} onReady={roundStart.ready}
+          beginsAt={roundStart.beginsAt} ending={ending} onReady={roundStart.ready} stageContext={stageContext}
           endAction={!outcome && !eliminated && <EndRoundAction key={matchId} online={Boolean(room)} end={surrender}
             disabled={!roundStart.started || waitingSurrender || (multiplayerFlick && busy) || Boolean(room && room.state !== 'connected')} />}
           infoStatus={status} yourTurn={yourTurn} timer={roundStart.started && !outcome && <TurnClock key={deadline} deadline={deadline} enabled={Boolean(limit)} compact />}

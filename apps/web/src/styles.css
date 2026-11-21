@@ -308,13 +308,18 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .stage, .stage-loading { padding: 12px; position: relative; min-width: 0; }
 .stage { width: fit-content; max-width: 100%; min-width: min(100%, 370px); margin-inline: auto; background: transparent; }
 .stage-loading { display: grid; min-height: 320px; place-items: center; color: var(--muted); }
-.stage-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 0 2px 10px; font-weight: 730; }
-.stage-bar .button { min-height: 40px; padding: 7px 11px; font-size: .88rem; }
-.stage-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: end; }
+.stage-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 0 2px 10px; }
+.stage-context { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; color: var(--muted); font-size: .81rem; }
+.stage-context > span { padding: 3px 7px; border-radius: 6px; background: var(--active); color: var(--primary); font-weight: 700; }
+.stage-context > strong { font-weight: 670; overflow-wrap: anywhere; }
+.button.stage-control, .stage-actions .stage-result-trigger { min-height: 44px; padding: 7px 11px; font-size: .86rem; }
+.button.stage-control-icon { width: 44px; padding-inline: 0; }
+.stage-control-icon svg { width: 19px; height: 19px; }
+.stage-control[aria-expanded="true"], details[open] > .stage-control { background: var(--active); border-color: var(--primary); color: var(--primary); }
+.stage-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: end; margin-inline-start: auto; }
 .stage-info > summary { list-style: none; white-space: nowrap; }
 .stage-info > summary::-webkit-details-marker { display: none; }
 .stage-info > summary { gap: 6px; }
-.stage-info[open] > summary { border-color: var(--primary); }
 .stage-turn { padding: 3px 6px; border-radius: 6px; background: var(--active); color: var(--primary); font-size: .76rem; white-space: nowrap; }
 .stage-turn[data-your-turn="true"] { background: #e0f4db; color: #214f37; font-weight: 800; box-shadow: inset 0 0 0 1px #6eaf83; }
 .stage-turn[data-your-turn="true"]::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-inline-end: 5px; border-radius: 50%; background: #2a7650; vertical-align: .04em; }
@@ -324,8 +329,6 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .stage-clock[data-low="true"] { color: var(--primary); }
 .stage-settings summary { list-style: none; }
 .stage-settings summary::-webkit-details-marker { display: none; }
-.stage-settings summary .settings-gear { width: 19px; height: 19px; }
-.stage-settings[open] summary { border-color: var(--primary); }
 .stage-settings-panel { position: absolute; z-index: 5; inset-block-start: 58px; inset-inline-end: 12px; width: min(260px,calc(100% - 24px)); display: grid; gap: 10px; padding: 12px 15px; box-shadow: 0 12px 32px #21142b37; }
 .stage-settings-panel { max-height: 60dvh; overflow: auto; }
 .stage-settings-panel label { display: flex; align-items: center; gap: 8px; }
@@ -356,9 +359,9 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
   .sichuan-race-progress li { padding-inline: 4px; }
 }
 .stage-reaction-bar { position: relative; justify-self: end; padding-top: 5px; }
-.stage-reaction-toggle.button { min-width: 44px; min-height: 44px; padding: 0; border-radius: 100%; color: var(--primary); }
-.stage-reaction-toggle svg { width: 21px; height: 21px; }
-.stage-reaction-toggle[aria-expanded="true"] { background: var(--active); border-color: var(--primary); }
+.lobby-reaction-picker .stage-reaction-toggle.button { min-width: 44px; min-height: 44px; padding: 0; border-radius: 100%; color: var(--primary); }
+.lobby-reaction-picker .stage-reaction-toggle svg { width: 21px; height: 21px; }
+.lobby-reaction-picker .stage-reaction-toggle[aria-expanded="true"] { background: var(--active); border-color: var(--primary); }
 .stage-reaction-picker { position: absolute; z-index: 6; inset-block-end: 100%; inset-inline-end: 0; width: min(350px, calc(100vw - 32px), calc(50vw + var(--reaction-board-width) / 2 - 16px)); padding: 8px; border-radius: 16px; box-shadow: 0 12px 30px #20153245; }
 .reaction-tabs { display: flex; gap: 3px; margin-block-end: 5px; border-bottom: 1px solid var(--line); }
 .reaction-tabs button { padding: 5px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font: inherit; font-size: .8rem; cursor: pointer; }
@@ -441,8 +444,7 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
   .play-page > .play-layout { grid-column: 1 / -1; }
   .stage:not(.stage-expanded, :fullscreen) { --stage-sidebar-width: 200px; display: grid; grid-template-columns: var(--stage-sidebar-width) auto; gap: 5px 12px; }
   .stage:not(.stage-expanded, :fullscreen) .stage-bar { grid-area: 1 / 1; flex-wrap: wrap; align-self: start; }
-  .stage:not(.stage-expanded, :fullscreen) .stage-bar > span { display: none; }
-  .stage:not(.stage-expanded, :fullscreen) .stage-actions { justify-content: start; }
+  .stage:not(.stage-expanded, :fullscreen) .stage-actions { justify-content: start; margin-inline-start: 0; }
   .stage:not(.stage-expanded, :fullscreen) .stage-field { grid-area: 1 / 2 / span 2; }
   .stage:not(.stage-expanded, :fullscreen) .stage-help { grid-area: 2 / 1; align-self: start; }
   .stage:not(.stage-expanded, :fullscreen) :is(.match-panel, .stage-settings-panel) { inset-inline: 12px auto; }
@@ -776,10 +778,10 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
   .subpage { padding-top: 21px; }
   .detail-info { gap: 12px; }
   .detail-art { border-radius: 16px; }
-  .stage-bar > span { display: none; }
   .stage-actions { width: 100%; }
   .stage-turn { max-width: 105px; overflow: hidden; text-overflow: ellipsis; }
-  .stage-bar summary, .stage-bar .button { gap: 4px; padding-inline: 8px; font-size: .79rem; }
+  .button.stage-control, .stage-actions .stage-result-trigger { gap: 4px; padding-inline: 8px; font-size: .79rem; }
+  .button.stage-control-icon { padding-inline: 0; }
   .result-medal { width: 35px; height: 35px; font-size: 1.17rem; }
   .site-footer { margin-top: 43px; }
   .footer-row { align-items: start; flex-direction: column; }
