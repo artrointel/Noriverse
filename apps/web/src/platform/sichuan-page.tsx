@@ -18,7 +18,7 @@ import { BackLink, gamePath } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { formatPlayTime, PlayTime, useCountdown } from './game-time.tsx';
 import { MatchStage } from './match-stage.tsx';
-import { avatars } from './avatars.ts';
+import { Avatar } from './avatar.tsx';
 import { useRoundEnd, useRoundStart } from './use-round-cues.ts';
 import { EndRoundAction } from './end-round-action.tsx';
 
@@ -61,7 +61,7 @@ function RaceProgress({ room }: { room: PuzzleRoom }) {
       const name = profile?.name ?? t('sichuanOpponent', { number: index + 1 });
       const percent = puzzleProgress(puzzle, player);
       return <li key={player} title={name} data-closing={percent >= 75} style={{ '--race-progress': `${percent}%` } as CSSProperties}>
-        {profile && <img src={avatars[profile.avatar]} width="17" height="17" alt="" />}
+        {profile && <Avatar appearance={profile} size={17} />}
         <span>{name}</span><strong>{percent}%</strong>
       </li>;
     })}

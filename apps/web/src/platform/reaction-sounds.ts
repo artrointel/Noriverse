@@ -53,9 +53,13 @@ const cues: Record<DefaultEmoji, Cue> = {
 type Tone = (at: number, start: number, length: number, gain: number, wave: OscillatorType, end: number, attack: number, sustain?: number) => void;
 type Texture = (at: number, length: number, gain: number, center: number) => void;
 
+export function hasReactionCue(emoji: Emoji): emoji is DefaultEmoji {
+  return Object.hasOwn(cues, emoji);
+}
+
 export function playReactionCue(emoji: Emoji, tone: Tone, texture: Texture) {
-  if (!Object.hasOwn(cues, emoji)) return;
-  const cue = cues[emoji as DefaultEmoji];
+  if (!hasReactionCue(emoji)) return;
+  const cue = cues[emoji];
   for (const [at, length, start, end, gain, voice] of cue.notes) {
     tone(at, start, length, gain, 'sine', end, voice === 'coo' ? .02 : .006, voice === 'coo' ? .48 : undefined);
     if (voice === 'coo') {

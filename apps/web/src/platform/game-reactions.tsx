@@ -4,10 +4,11 @@ import { useTranslation } from 'react-i18next';
 import { defaultAvatar } from '../../../../packages/protocol/profile.ts';
 import { defaultEmojiIds, emojiChoices, isEmoji, reactionCorners, reactionDuration, recentEmojis, showReaction } from '../../../../packages/protocol/reactions.ts';
 import type { Emoji, ReactionSender, TimedReaction } from '../../../../packages/protocol/reactions.ts';
-import { avatars } from './avatars.ts';
+import { Avatar } from './avatar.tsx';
 import { BlurredSurface } from './blurred-surface.tsx';
 import { emojiName, searchEmojis } from './emoji-search.ts';
 import { playReactionSound } from './audio.ts';
+import { hasReactionCue } from './reaction-sounds.ts';
 
 const recentCookie = 'noriverse_recent_emojis=';
 const addedCookie = 'noriverse_added_emojis=';
@@ -47,7 +48,9 @@ function ReactionBubble({ event }: { event: TimedReaction }) {
   return <div className="stage-reaction" data-corner={corner} style={{ '--reaction-duration': reactionDuration + 'ms',
     animationDelay: delay + 'ms' } as CSSProperties}>
     <span className="stage-reaction-emoji" role="img" aria-label={emojiName(emoji, i18n.resolvedLanguage)}><EmojiGlyph emoji={emoji} /></span>
-    <span className="stage-reaction-sender"><img src={avatars[sender?.avatar ?? defaultAvatar]} alt="" />{name}</span>
+    <span className="stage-reaction-sender">
+      <Avatar appearance={sender ?? { avatar: defaultAvatar }} size={33} characterOnly /><span>{name}</span>
+    </span>
   </div>;
 }
 
@@ -132,8 +135,15 @@ export function ReactionPicker({ scope, enabled, send, lobby = false }: {
 
   function emojiButton(emoji: Emoji, select: (emoji: Emoji) => void) {
     const name = emojiName(emoji, i18n.resolvedLanguage);
-    return <button type="button" key={emoji} className="reaction-option" aria-label={name} title={name}
-      onClick={() => select(emoji)}><EmojiGlyph emoji={emoji} /></button>;
+    const sound = hasReactionCue(emoji);
+    return <button type="button" key={emoji} className="reaction-option" aria-label={name}
+      aria-describedby={sound ? uid + '-sound' : undefined} title={sound ? name + ' · ' + t('reactionHasSound') : name}
+      onClick={() => select(emoji)}>
+      <EmojiGlyph emoji={emoji} />
+      {sound && <svg className="reaction-sound-badge" aria-hidden="true" viewBox="0 0 12 12">
+        <circle cx="6" cy="6" r="6" fill="currentColor" /><path d="M4.5 3.4 8.5 6l-4 2.6z" fill="white" />
+      </svg>}
+    </button>;
   }
 
   return <div className={lobby ? 'stage-reaction-bar lobby-reaction-picker' : 'stage-reaction-bar'} ref={control} onKeyDown={event => {
@@ -147,6 +157,7 @@ export function ReactionPicker({ scope, enabled, send, lobby = false }: {
         </svg>
       </button>
       {pickerOpen && <BlurredSurface className="stage-reaction-picker" id={uid + '-picker'}>
+        <span className="visually-hidden" id={uid + '-sound'}>{t('reactionHasSound')}</span>
         <div className="reaction-tabs" role="tablist" aria-label={t('gameReactions')} ref={tabs} onKeyDown={event => {
           if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();

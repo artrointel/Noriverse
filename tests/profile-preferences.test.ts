@@ -19,6 +19,16 @@ test('manual presence is an explicit private profile preference', () => {
   assert.equal(readProfilePreferences({ presence: false }), undefined);
 });
 
+test('avatar layers accept an RGB color or explicit transparency and retain old avatar-only updates', () => {
+  assert.deepEqual(readProfilePreferences({ avatar: 'mint' }), { avatar: 'mint' });
+  assert.deepEqual(readProfilePreferences({ avatar: 'pixelFox', avatarBackground: '#AA3355' }),
+    { avatar: 'pixelFox', avatarBackground: '#aa3355' });
+  assert.deepEqual(readProfilePreferences({ avatar: 'pixelFox', avatarBackground: null }),
+    { avatar: 'pixelFox', avatarBackground: null });
+  assert.equal(readProfilePreferences({ avatar: 'mint', avatarBackground: 'url(test)' }), undefined);
+  assert.equal(readProfilePreferences({ avatar: 'mint', avatarBackground: '#123' }), undefined);
+});
+
 test('generated names use the selected language and differ from the preceding roll', () => {
   const korean = randomPlayerName('ko-KR');
   assert.match(korean, /^[가-힣]+ [가-힣]+$/u);

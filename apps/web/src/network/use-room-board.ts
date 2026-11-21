@@ -84,7 +84,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     }
     void identify(0);
     return () => { request.abort(); window.clearTimeout(retry); };
-  }, [assignedSeat, profile?.id, profile?.name, profile?.avatar, profile?.level]);
+  }, [assignedSeat, profile?.id, profile?.name, profile?.avatar, profile?.avatarBackground, profile?.level]);
 
   function rememberGuestRoom(code: string, game?: RoomGame) {
     writeGuestRoom(code, game);

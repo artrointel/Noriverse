@@ -4,13 +4,25 @@ import type { GameId } from './games.ts';
 export const profileIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 export { gameIds as profileGames, isGameId as isProfileGame } from './games.ts';
 export type ProfileGame = GameId;
-export const avatarIds = ['mint', 'amber', 'lunar', 'ink', 'violet'] as const;
+export const avatarIds = ['mint', 'amber', 'lunar', 'ink', 'violet', 'die', 'heart', 'star', 'clover', 'cloud',
+  'pixelCherry', 'pixelAxolotl', 'pixelUfo', 'pixelPotion', 'pixelFox'] as const;
 export type AvatarId = (typeof avatarIds)[number];
 export const defaultAvatar: AvatarId = 'mint';
+export type AvatarLayers = { avatar: AvatarId; avatarBackground?: string | null };
+export const isAvatarId = (value: unknown): value is AvatarId => avatarIds.includes(value as AvatarId);
+
+export function readAvatarBackground(value: unknown) {
+  if (value === null) return null;
+  if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
+}
+
 export const touchEffects = ['soft', 'none'] as const;
 export type TouchEffect = typeof touchEffects[number];
 export type PresenceMode = 'online' | 'offline';
-export const avatarLevel: Record<AvatarId, number> = { mint: 1, amber: 1, lunar: 1, ink: 1, violet: 1 };
+export const avatarLevel: Record<AvatarId, number> = {
+  mint: 1, amber: 1, lunar: 1, ink: 1, violet: 1, die: 1, heart: 1, star: 1, clover: 1, cloud: 1,
+  pixelCherry: 1, pixelAxolotl: 1, pixelUfo: 1, pixelPotion: 1, pixelFox: 1,
+};
 export const secondsPerLevel = 3600;
 
 export function levelFromPlayTime(seconds: number) {
@@ -35,10 +47,9 @@ export interface MatchReport {
   seconds: number;
 }
 export interface GameStats { seconds: number; wins: number; losses: number; draws: number; sessions: number }
-export interface PublicProfile {
+export interface PublicProfile extends AvatarLayers {
   id: string;
   name: string;
-  avatar: AvatarId;
   favorites: ProfileGame[];
   touchEffect?: TouchEffect;
   level: number;
@@ -48,7 +59,7 @@ export interface PublicProfile {
   recent: (MatchReport & { playedAt: number })[];
 }
 
-export type ProfileSummary = Pick<PublicProfile, 'id' | 'name' | 'avatar' | 'level'>;
+export type ProfileSummary = AvatarLayers & Pick<PublicProfile, 'id' | 'name' | 'level'>;
 export type OwnProfile = PublicProfile & { presence?: PresenceMode };
 export type FriendRoom = { code: string; game: ProfileGame; joinable: boolean };
 export type FriendSummary = ProfileSummary & { online?: boolean; room?: FriendRoom };
@@ -62,14 +73,20 @@ export function readFriendUpdate(value: unknown) {
 }
 
 export type ProfilePreferences =
-  | { avatar: AvatarId }
+  | AvatarLayers
   | { touchEffect: TouchEffect }
   | { presence: PresenceMode }
   | { favorite: { game: ProfileGame; selected: boolean } };
 
 export function readProfilePreferences(value: unknown): ProfilePreferences | undefined {
   if (!value || typeof value !== 'object') return;
-  if ('avatar' in value && avatarIds.includes(value.avatar as AvatarId)) return { avatar: value.avatar as AvatarId };
+  if ('avatar' in value) {
+    if (!isAvatarId(value.avatar)) return;
+    if (!('avatarBackground' in value)) return { avatar: value.avatar };
+    const avatarBackground = readAvatarBackground(value.avatarBackground);
+    if (avatarBackground !== undefined) return { avatar: value.avatar, avatarBackground };
+    return;
+  }
   if ('touchEffect' in value && (value.touchEffect === 'soft' || value.touchEffect === 'none')) return { touchEffect: value.touchEffect };
   if ('presence' in value && (value.presence === 'online' || value.presence === 'offline')) return { presence: value.presence };
   if (!('favorite' in value) || !value.favorite || typeof value.favorite !== 'object') return;

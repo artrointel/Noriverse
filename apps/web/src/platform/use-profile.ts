@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { readReport } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, OwnProfile, PresenceMode, ProfilePreferences, PublicProfile } from '../../../../packages/protocol/profile.ts';
 import { apiAvailable, apiFetch } from '../network/api.ts';
-import { readBrowserProfile, readBrowserTouchEffect, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
+import { readBrowserProfile, readBrowserTouchEffect, saveBrowserAvatar, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
 
 const recordCount = (profile: PublicProfile) => Object.values(profile.games).reduce((sum, game) => sum + game.sessions, 0);
 const applyBrowserTouchEffect = (profile: OwnProfile): OwnProfile => ({ ...profile,
@@ -70,6 +70,10 @@ export function useProfile(profileOpen: boolean) {
   }
 
   async function setPreferences(preferences: ProfilePreferences) {
+    if (!apiAvailable && 'avatar' in preferences) {
+      setProfile(saveBrowserAvatar(preferences));
+      return;
+    }
     const touchEffect = 'touchEffect' in preferences ? preferences.touchEffect : undefined;
     const id = profile?.id;
     let next: OwnProfile;
@@ -81,6 +85,8 @@ export function useProfile(profileOpen: boolean) {
       next = await response.json() as OwnProfile;
       if (touchEffect && next.touchEffect !== touchEffect) throw new Error();
       if ('presence' in preferences && next.presence !== preferences.presence) throw new Error();
+      if ('avatar' in preferences && (next.avatar !== preferences.avatar
+        || (preferences.avatarBackground !== undefined && (next.avatarBackground ?? null) !== preferences.avatarBackground))) throw new Error();
     } catch (error) {
       if (!touchEffect || !id || !saveBrowserTouchEffect(id, touchEffect)) throw error;
       setProfile(current => current?.id === id ? { ...current, touchEffect } : current);
@@ -92,7 +98,7 @@ export function useProfile(profileOpen: boolean) {
       if (current?.id !== next.id) return next;
       const presence = 'presence' in preferences ? next.presence : current.presence ?? next.presence;
       return recordCount(current) > recordCount(next)
-        ? { ...current, avatar: next.avatar, favorites: next.favorites, touchEffect: next.touchEffect, presence }
+        ? { ...current, avatar: next.avatar, avatarBackground: next.avatarBackground, favorites: next.favorites, touchEffect: next.touchEffect, presence }
         : { ...next, presence };
     });
   }

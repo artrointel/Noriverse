@@ -1,12 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
 import { avatarLevel, defaultAvatar, levelFromPlayTime, profileGames, profileIdPattern, readFriendUpdate, readName, readProfilePreferences, readReport } from '../../packages/protocol/profile.ts';
-import type { AvatarId, FriendAction, GameStats, MatchReport, OwnProfile, PresenceMode, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
+import type { AvatarLayers, FriendAction, GameStats, MatchReport, OwnProfile, PresenceMode, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
 import type { RoomInvite } from '../../packages/protocol/rooms.ts';
 import type { Env } from './bindings.ts';
 import { readBody } from './http.ts';
 
 const cookieName = 'noriverse_profile';
-type Identity = { id: string; secret: string; name: string; avatar?: AvatarId; favorites?: ProfileGame[]; friends?: string[]; touchEffect?: TouchEffect; presence?: PresenceMode };
+type Identity = Partial<AvatarLayers> & { id: string; secret: string; name: string; favorites?: ProfileGame[]; friends?: string[]; touchEffect?: TouchEffect; presence?: PresenceMode };
+const avatarLayers = (identity: Identity): AvatarLayers => ({ avatar: identity.avatar ?? defaultAvatar, avatarBackground: identity.avatarBackground });
 const presenceLease = 25_000;
 const friendActions = ['request', 'accept', 'decline', 'remove', 'cancel'] as const satisfies readonly FriendAction[];
 const friendGraph = (env: Env) => env.FRIENDS.getByName('relationships');
@@ -165,7 +166,7 @@ export class ProfileStore extends DurableObject<Env> {
 
   private profileSummary(identity: Identity): ProfileSummary {
     const seconds = this.ctx.storage.sql.exec<{ seconds: number }>("SELECT COALESCE(sum(seconds), 0) AS seconds FROM matches WHERE mode = 'online'").one().seconds;
-    return { id: identity.id, name: identity.name, avatar: identity.avatar ?? defaultAvatar, level: levelFromPlayTime(seconds) };
+    return { id: identity.id, name: identity.name, ...avatarLayers(identity), level: levelFromPlayTime(seconds) };
   }
 
   async friendSummary(viewer: string) {
@@ -332,6 +333,7 @@ export class ProfileStore extends DurableObject<Env> {
       if ('avatar' in update) {
         if (this.publicView(identity).level < avatarLevel[update.avatar]) return null;
         next.avatar = update.avatar;
+        if (update.avatarBackground !== undefined) next.avatarBackground = update.avatarBackground;
       } else if ('touchEffect' in update) {
         next.touchEffect = update.touchEffect;
       } else if ('presence' in update) {
@@ -376,7 +378,7 @@ export class ProfileStore extends DurableObject<Env> {
       "SELECT id, game, mode, outcome, seconds, playedAt FROM matches WHERE mode = 'online' AND game = ? ORDER BY playedAt DESC LIMIT 20", game).toArray())
       .sort((left, right) => right.playedAt - left.playedAt);
     return {
-      id: identity.id, name: identity.name, avatar: identity.avatar ?? defaultAvatar,
+      id: identity.id, name: identity.name, ...avatarLayers(identity),
       touchEffect: identity.touchEffect ?? 'soft',
       favorites: identity.favorites ?? [], level: levelFromPlayTime(totalSeconds), xp: totalSeconds, totalSeconds, games, recent,
     };

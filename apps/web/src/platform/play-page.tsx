@@ -27,7 +27,7 @@ import { ChessPromotion } from './chess-promotion.tsx';
 import { ChessLosses } from './chess-losses.tsx';
 import { PlayTime, useCountdown } from './game-time.tsx';
 import { MatchStage } from './match-stage.tsx';
-import { avatars } from './avatars.ts';
+import { Avatar } from './avatar.tsx';
 import { useRoundEnd, useRoundStart } from './use-round-cues.ts';
 import { EndRoundAction } from './end-round-action.tsx';
 
@@ -238,7 +238,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
           const profile = ownSeat ? ownProfile ?? participant?.profile : participant?.profile;
           const side = t(sideLabel(id, stone));
           return <li className="seat" key={stone} data-active={!outcome && !busy && turn === stone}>
-            {profile ? <img className="seat-avatar" src={avatars[profile.avatar]} alt="" width="34" height="34" />
+            {profile ? <Avatar appearance={profile} size={34} />
               : <span className={'stone stone-' + (stone > 2 ? stone : sideLabel(id, stone) === 'black' ? 0 : 1)} aria-hidden="true" />}
             <div>
               <strong title={profile?.name}>{room ? profile?.name ?? t('anonymousPlayer') : side}</strong>

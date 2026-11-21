@@ -11,7 +11,7 @@ import type { GuestRoom } from '../network/guest-seat.ts';
 import { winRate } from '../../../../packages/protocol/profile.ts';
 import type { PublicProfile } from '../../../../packages/protocol/profile.ts';
 import { gameIds, games } from './game-catalog.ts';
-import { avatars } from './avatars.ts';
+import { Avatar } from './avatar.tsx';
 import { FriendButton, InviteDialog } from './friends.tsx';
 import type { Friends } from './friends.tsx';
 import { BackLink, gamePath, routeHref, RouteLink } from './navigation.tsx';
@@ -280,7 +280,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           return <li key={role}>
             {participant ? <>
               <RouteLink className="person-link" href={own ? '/profile' : '/profiles/' + participant.id} navigate={navigate}>
-                <img src={avatars[participant.avatar]} width="38" height="38" alt="" />
+                <Avatar appearance={participant} size={38} />
                 <span><strong>{participant.name}</strong><small>{seatInfo}</small>
                   <ParticipantStats key={participant.id} id={participant.id} game={activeGame} own={own ? ownProfile : undefined}
                     latest={room.roomHistory.find(entry => entry.game === activeGame && entry.players.some(player => player.role === role))} />

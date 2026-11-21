@@ -1,4 +1,4 @@
-import { avatarIds, profileIdPattern, readName } from './profile.ts';
+import { isAvatarId, profileIdPattern, readName } from './profile.ts';
 import type { AvatarId } from './profile.ts';
 import { isRoomRole } from './rooms.ts';
 import type { Role } from './rooms.ts';
@@ -52,7 +52,7 @@ export function readRoomReaction(value: unknown): Reaction | undefined {
   if (typeof id !== 'string' || !profileIdPattern.test(id) || !isEmoji(emoji) || !reactionCorners.includes(corner as ReactionCorner)
     || !isRoomRole(role)) return;
   if (sender === undefined) return { id, emoji, corner: corner as ReactionCorner, role };
-  if (!sender || typeof sender !== 'object' || !avatarIds.includes(sender.avatar)) return;
+  if (!sender || typeof sender !== 'object' || !isAvatarId(sender.avatar)) return;
   const name = readName(sender.name);
   if (name) return { id, emoji, corner: corner as ReactionCorner, role, sender: { name, avatar: sender.avatar } };
 }

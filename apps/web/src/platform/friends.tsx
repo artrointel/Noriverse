@@ -4,7 +4,7 @@ import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import type { FriendAction, FriendList, FriendRoom, FriendSummary } from '../../../../packages/protocol/profile.ts';
 import type { ReactNode } from 'react';
 import { apiAvailable, apiFetch } from '../network/api.ts';
-import { avatars } from './avatars.ts';
+import { Avatar } from './avatar.tsx';
 import { games } from './game-catalog.ts';
 import { socialChangeEvent } from './invitations.tsx';
 import { BackLink, RouteLink } from './navigation.tsx';
@@ -89,7 +89,7 @@ export function FriendRequestToast({ model, navigate, enabled }: { model: Friend
   }, [id]);
   if (!request) return null;
   return <aside className="friend-request-toast surface" aria-label={t('friendRequests')}>
-    <img src={avatars[request.avatar]} width="36" height="36" alt="" />
+    <Avatar appearance={request} size={36} />
     <div>
       <p role="status">{t('friendRequestReceived', { player: request.name })}</p>
       <div className="friend-request-actions">
@@ -111,7 +111,7 @@ function FriendGroups({ friends, navigate, action }: { friends: FriendSummary[];
       <summary><i className="presence-dot" data-online={online} />{t(online ? 'friendOnline' : 'friendOffline')} <small>{group.length}</small></summary>
       {group.length ? <ul className="people-list">{group.map(friend => <li key={friend.id}>
         <RouteLink className="person-link" href={'/profiles/' + friend.id} navigate={navigate}>
-          <img src={avatars[friend.avatar]} width="42" height="42" alt="" />
+          <Avatar appearance={friend} size={42} />
           <span><strong>{friend.name}</strong><small>{t('levelValue', { level: friend.level })}</small></span>
         </RouteLink>
         {action(friend)}
@@ -234,7 +234,7 @@ export function FriendsPage({ model, navigate, openProfile, follow }: { model: F
             <h2>{t(group === 'incoming' ? 'incomingFriends' : 'outgoingFriends')}</h2>
             {model[group].length === 0 ? <p className="muted">{t('emptyIncomingFriends')}</p> : <ul className="people-list">{model[group].map(profile => <li key={profile.id}>
               <RouteLink href={'/profiles/' + profile.id} navigate={navigate} className="person-link">
-                <img src={avatars[profile.avatar]} alt="" width="38" height="38" /><strong>{profile.name}</strong>
+                <Avatar appearance={profile} size={38} /><strong>{profile.name}</strong>
               </RouteLink>
               <div className="panel-actions">{(group === 'incoming' ? ['accept', 'decline'] as const : ['cancel'] as const).map(action => <button
                 key={action} className={'button ' + (action === 'accept' ? 'button-primary' : 'button-secondary')} type="button" disabled={model.busy}

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { avatarIds, avatarLevel, readName, secondsPerLevel, touchEffects, winRate } from '../../../../packages/protocol/profile.ts';
 import type { ProfilePreferences, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import { apiAvailable, fetchPublicProfile } from '../network/api.ts';
-import { avatars } from './avatars.ts';
+import { Avatar } from './avatar.tsx';
 import { readBrowserProfile } from './browser-profile.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { BackLink, gamePath, routeHref, RouteLink } from './navigation.tsx';
@@ -82,7 +82,7 @@ export function ProfileNav({ profile, navigate }: { profile?: PublicProfile; nav
           <strong>{profile.name}</strong>{apiAvailable && <small>{t('levelValue', { level: profile.level })}</small>}
         </span>}
         <span className="profile-link">
-          {profile ? <img className="nav-avatar" src={avatars[profile.avatar]} alt="" width="34" height="34" /> : (
+          {profile ? <Avatar className="nav-avatar" appearance={profile} size={34} /> : (
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">
               <circle cx="12" cy="8" r="3.2" /><path d="M5 20v-2a7 5 0 0 1 14 0v2" />
             </svg>
@@ -91,7 +91,7 @@ export function ProfileNav({ profile, navigate }: { profile?: PublicProfile; nav
       </RouteLink>
       {profile && apiAvailable && <div className="profile-preview">
         <div className="profile-preview-person">
-          <img src={avatars[profile.avatar]} alt="" width="48" height="48" />
+          <Avatar appearance={profile} size={48} />
           <div><strong>{profile.name}</strong><span>{t('levelValue', { level: profile.level })}</span></div>
         </div>
         <div className="profile-preview-time"><span>{t('totalPlayTime')}</span><strong>{formatPlayTime(profile.totalSeconds)}</strong></div>
@@ -105,38 +105,65 @@ function AvatarDialog({ profile, save, close }: {
 }) {
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
+  const [avatar, setAvatar] = useState(profile.avatar);
+  const [transparent, setTransparent] = useState(!profile.avatarBackground);
+  const [color, setColor] = useState(profile.avatarBackground ?? '#7863c4');
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
+  const background = transparent ? null : color;
   useEffect(() => {
     const modal = dialog.current;
     modal?.showModal();
     return () => { modal?.close(); };
   }, []);
 
-  async function select(avatar: PublicProfile['avatar']) {
-    if (avatarLevel[avatar] > profile.level || saving) return;
-    if (avatar === profile.avatar) { close(); return; }
+  async function saveDraft() {
+    if (saving || avatarLevel[avatar] > profile.level) return;
+    if (avatar === profile.avatar && background === (profile.avatarBackground ?? null)) { close(); return; }
     setSaving(true);
     setFailed(false);
-    try { await save({ avatar }); close(); }
+    try { await save({ avatar, avatarBackground: background }); close(); }
     catch { setFailed(true); setSaving(false); }
   }
 
   return <dialog ref={dialog} className="profile-dialog avatar-dialog surface" aria-labelledby="avatar-dialog-title"
     onCancel={event => { event.preventDefault(); if (!saving) close(); }}>
     <h2 id="avatar-dialog-title">{t('chooseAvatar')}</h2>
-    <div className="avatar-options">
-      {avatarIds.map(avatar => {
-        const locked = avatarLevel[avatar] > profile.level;
-        return <button key={avatar} type="button" aria-label={t('avatar_' + avatar)} aria-pressed={profile.avatar === avatar}
-          disabled={saving || locked} onClick={() => void select(avatar)}>
-          <img src={avatars[avatar]} alt="" width="58" height="58" />
-          {locked && <small>{t('levelValue', { level: avatarLevel[avatar] })}</small>}
-        </button>;
-      })}
-    </div>
-    {failed && <p role="alert">{t('profileError')}</p>}
-    <button type="button" className="button button-secondary" onClick={close} disabled={saving}>{t('close')}</button>
+    <form className="avatar-editor" onSubmit={event => { event.preventDefault(); void saveDraft(); }}>
+      <div className="avatar-preview">
+        <div className="avatar-preview-board"><Avatar appearance={{ avatar, avatarBackground: background }} size={88} /></div>
+        <fieldset className="avatar-background">
+          <legend>{t('avatarBackground')}</legend>
+          <div className="avatar-background-controls">
+            <button type="button" className="button button-secondary" aria-pressed={transparent}
+              onClick={() => setTransparent(true)} disabled={saving}>{t('avatarTransparent')}</button>
+            <button type="button" className="button button-secondary" aria-pressed={!transparent} onClick={() => setTransparent(false)}
+              disabled={saving}>{t('avatarSolid')}</button>
+            {!transparent && <input type="color" className="avatar-color" aria-label={t('avatarColor')} value={color}
+              disabled={saving} onChange={event => setColor(event.target.value)} />}
+          </div>
+        </fieldset>
+      </div>
+      <fieldset className="avatar-characters">
+        <legend>{t('avatarCharacter')}</legend>
+        <div className="avatar-options">
+          {avatarIds.map(choice => {
+            const locked = avatarLevel[choice] > profile.level;
+            const name = t('avatar_' + choice);
+            return <button key={choice} type="button" aria-label={name} title={name} aria-pressed={choice === avatar}
+              disabled={saving || locked} onClick={() => setAvatar(choice)}>
+              <Avatar appearance={{ avatar: choice }} size={54} characterOnly />
+              {locked && <small>{t('levelValue', { level: avatarLevel[choice] })}</small>}
+            </button>;
+          })}
+        </div>
+      </fieldset>
+      {failed && <p role="alert">{t('profileError')}</p>}
+      <div className="panel-actions">
+        <button type="submit" className="button button-primary" disabled={saving}>{t('saveSettings')}</button>
+        <button type="button" className="button button-secondary" onClick={close} disabled={saving}>{t('cancel')}</button>
+      </div>
+    </form>
   </dialog>;
 }
 
@@ -255,7 +282,7 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
       <BackLink fallback="/games" fallbackLabel="backToGames" navigate={navigate} />
       <section className="profile-banner surface">
         <div className="profile-identity">
-          {profile && <img className="profile-avatar" src={avatars[profile.avatar]} alt="" width="80" height="80" />}
+          {profile && <Avatar className="profile-avatar" appearance={profile} size={80} />}
           <div>
             <p className="profile-kicker">{t(own ? 'myProfile' : 'publicProfile')}</p>
             <h1 tabIndex={-1}>{profile?.name ?? t(!own && !apiAvailable ? 'userProfilesUnavailable' : loading ? 'profileLoading' : own ? 'profilePrompt' : 'profileMissing')}</h1>
@@ -268,7 +295,7 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
         </div>
         {own && !loading && <div className="panel-actions">
           <button type="button" className="button button-primary" onClick={edit}>{t(profile ? 'editName' : 'saveName')}</button>
-          {profile && apiAvailable && <button type="button" className="button button-secondary" onClick={() => setAvatarOpen(true)}>{t('chooseAvatar')}</button>}
+          {profile && <button type="button" className="button button-secondary" onClick={() => setAvatarOpen(true)}>{t('chooseAvatar')}</button>}
           {profile && <button type="button" className="button button-secondary" onClick={() => setTouchOpen(true)}>{t('touchEffects')}</button>}
           {profile && apiAvailable && <button type="button" className="button button-secondary" onClick={() => void share()}>
             {t(copied ? 'copied' : 'shareProfile')}
@@ -282,9 +309,9 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
       </section>
       {own && profile && touchOpen && <TouchEffectDialog selected={profile.touchEffect ?? 'soft'} save={touchEffect => model.setPreferences({ touchEffect })}
         close={() => setTouchOpen(false)} />}
+      {own && profile && avatarOpen && <AvatarDialog profile={profile} save={model.setPreferences} close={() => setAvatarOpen(false)} />}
       {profile && apiAvailable && (
         <>
-          {own && avatarOpen && <AvatarDialog profile={profile} save={model.setPreferences} close={() => setAvatarOpen(false)} />}
           <section className="surface stat-card profile-favorites">
             <h2>{t('favorites')}</h2>
             {profile.favorites.length === 0 ? <p>{t('emptyFavorites')}</p> : (
