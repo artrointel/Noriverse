@@ -26,6 +26,8 @@ import type { RoomResult } from './room-history.ts';
 import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchTurn, matchWinner, readMatchSnapshot, roundSeats } from './room-match.ts';
 import type { Match } from './room-match.ts';
 import { countdownDuration } from '../games/round-cues.ts';
+import { advanceSketch, applySketchAction, defaultSketchSettings, inkBatch, inkLimit, makeSketchRound, readInk, sketchDeck, sketchOutcome, visibleSketch } from '../games/sketch/rules.ts';
+import type { SketchAction, SketchRound } from '../games/sketch/rules.ts';
 
 type Seat = { code: string; role: Role; token: string };
 const lobbySlots = assignReactionSlots(roomRoles);
@@ -35,10 +37,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const [role, setRole] = useState<Role>();
   const [state, setState] = useState<ConnectionState>();
   const [round, setRound] = useState(blankMatch);
+  const [sketchFeedback, setSketchFeedback] = useState<{ id: string; turn: number; wrong: boolean }>();
   const [roomHistory, setRoomHistory] = useState<RoomResult[]>([]);
   const results = useRef<RoomResult[]>([]);
   const matchRoster = useRef<{ seats: Role[]; names: Map<Role, string>; reactionSlots: ReturnType<typeof assignReactionSlots<Role>> }>(undefined);
   const preparedSeats = useRef(new Set<Role>());
+  const drawingDeck = useRef<string[]>([]);
   const previousMatch = useRef<Match>(undefined);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const roster = useRef<Participant[]>([]);
@@ -105,11 +109,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
       const loser = next.surrendered ?? next.timedOut;
       const winner = loser ? oppositeStone(loser) : matchWinner(next);
       const puzzleResult = next.puzzle?.result;
-      if (winner || puzzleResult) {
+      if (winner || puzzleResult || next.sketch?.phase === 'done') {
         const entry: RoomResult = { id: next.id, game: next.game, endedAt: next.finishedAt,
           seconds: elapsedPlaySeconds(matchBeginsAt(next), next.finishedAt),
           players: matchRoster.current.seats.map(role => ({ role, name: role === 'host' ? ownProfile.current?.name : matchRoster.current?.names.get(role),
-            outcome: puzzleResult ? puzzleOutcome(puzzleResult, role) : winner === 'draw' ? 'draw' : winner === matchColor(next, role) ? 'win' : 'loss' })),
+            outcome: next.sketch ? sketchOutcome(next.sketch, role) : puzzleResult ? puzzleOutcome(puzzleResult, role)
+              : winner === 'draw' ? 'draw' : winner === matchColor(next, role) ? 'win' : 'loss' })),
         };
         results.current = [...results.current, entry];
         setRoomHistory(previous => mergeRoomHistory(previous, [entry]));
@@ -121,7 +126,14 @@ export function useRoomBoard(profile?: ProfileSummary) {
   }
 
   function snapshot(target?: Role) {
-    link.current?.send({ type: 'snapshot', ...match.current, sentAt: Date.now() }, target);
+    const current = match.current;
+    const sentAt = Date.now();
+    if (current.sketch) {
+      const sketch = current.sketch;
+      for (const peer of target ? [target] : link.current?.connectedPeers() ?? []) {
+        link.current?.send({ type: 'snapshot', ...current, sketch: visibleSketch(sketch, peer), sentAt }, peer);
+      }
+    } else link.current?.send({ type: 'snapshot', ...current, sentAt }, target);
   }
 
   function displayReaction(reaction: Reaction, lobby: boolean) {
@@ -187,7 +199,9 @@ export function useRoomBoard(profile?: ProfileSummary) {
     preparedSeats.current.add(actor);
     if (!seats.every(player => preparedSeats.current.has(player))) return;
     const beginsAt = Date.now() + countdownDuration;
-    update({ ...current, beginsAt, deadline: nextDeadline(current.turnLimit, beginsAt) });
+    const sketch = current.sketch && current.sketchConfig
+      ? { ...current.sketch, deadline: beginsAt + current.sketchConfig.seconds * 1000 } : undefined;
+    update({ ...current, beginsAt, deadline: nextDeadline(current.turnLimit, beginsAt), sketch });
     snapshot();
   }
 
@@ -197,6 +211,26 @@ export function useRoomBoard(profile?: ProfileSummary) {
     if (!current.puzzle || !current.puzzleConfig || current.finishedAt || expireTurn(now)) return;
     const next = applyPuzzleAction(current.puzzle, current.puzzleConfig.mode, actor, action, now);
     if (next) syncPuzzle(next, next.result ? now : 0);
+  }
+
+  function syncSketch(sketch: SketchRound, now: number) {
+    update({ ...match.current, sketch, finishedAt: sketch.phase === 'done' ? now : 0 });
+    snapshot();
+  }
+
+  function commitSketch(actor: Role, action: unknown) {
+    const current = match.current;
+    const now = Date.now();
+    if (!current.sketch || !matchInProgress(current, now)) return false;
+    if (expireTurn(now)) return false;
+    const sketch = applySketchAction(current.sketch, actor, action, now);
+    if (!sketch) return false;
+    if (sketch.board.length > current.sketch.board.length) {
+      const lines = sketch.board.slice(current.sketch.board.length);
+      update({ ...current, sketch });
+      link.current?.send({ type: 'sketch-ink', id: current.id, turn: sketch.turn, revision: sketch.revision, lines });
+    } else syncSketch(sketch, now);
+    return true;
   }
 
   function commitMove(history: number[]) {
@@ -242,6 +276,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   function expireTurn(now: number) {
     const current = match.current;
+    if (current.sketch && current.sketchConfig) {
+      const next = advanceSketch(current.sketch, current.sketchConfig, drawingDeck.current, now);
+      if (!next) return false;
+      syncSketch(next, now);
+      return true;
+    }
     if (current.puzzle) {
       const end = puzzleEnd(current.puzzle);
       if (!end || now < end || current.finishedAt) return false;
@@ -267,18 +307,19 @@ export function useRoomBoard(profile?: ProfileSummary) {
     return true;
   }
 
-  const activeDeadline = round.puzzle ? puzzleEnd(round.puzzle) : deadline;
+  const activeDeadline = round.sketch?.deadline ?? (round.puzzle ? puzzleEnd(round.puzzle) : deadline);
   useEffect(() => {
     if (role !== 'host' || !activeDeadline || finishedAt) return;
     const timer = window.setTimeout(() => {
       const current = match.current;
-      if (current.id === matchId && (current.puzzle ? puzzleEnd(current.puzzle) : current.deadline) === activeDeadline) expireTurn(Date.now());
+      if (current.id === matchId && (current.sketch?.deadline ?? (current.puzzle ? puzzleEnd(current.puzzle) : current.deadline)) === activeDeadline) expireTurn(Date.now());
     }, Math.max(0, activeDeadline - Date.now()));
     return () => window.clearTimeout(timer);
   }, [role, matchId, activeDeadline, finishedAt]);
 
   function finishBySurrender(color: FlickPlayer, actor: Role) {
     const current = match.current;
+    if (current.sketch) return commitSketch(actor, { kind: 'resign' });
     const now = Date.now();
     if (!matchInProgress(current, now) || expireTurn(now)) return false;
     if ((current.physics?.players ?? 2) > 2) return eliminateFlick(color, now);
@@ -384,9 +425,17 @@ export function useRoomBoard(profile?: ProfileSummary) {
             return;
           }
           if (!('id' in raw) || raw.id !== current.id || !current.startedAt || current.finishedAt) return;
+          if (raw.type === 'sketch-sync' && current.sketch) { snapshot(peer); return; }
           if (raw.type === 'round-ready' || raw.type === 'puzzle-ready') { markRoundReady(peer); return; }
           if (!matchInProgress(current, Date.now())) return;
           if (raw.type === 'puzzle-action' && 'action' in raw) { commitPuzzle(peer, raw.action); return; }
+          if (raw.type === 'sketch-action' && current.sketch && 'turn' in raw && raw.turn === current.sketch.turn && 'action' in raw) {
+            const accepted = commitSketch(peer, raw.action);
+            if (current.sketch && raw.action && typeof raw.action === 'object' && 'kind' in raw.action && raw.action.kind === 'guess') {
+              link.current?.send({ type: 'sketch-guess-result', id: current.id, turn: current.sketch.turn, wrong: !accepted }, peer);
+            }
+            return;
+          }
           const guestColor = matchColor(current, peer);
           if (!guestColor) return;
           if (raw.type === 'surrender') {
@@ -405,6 +454,17 @@ export function useRoomBoard(profile?: ProfileSummary) {
             || raw.revision !== current.history.length || matchTurn(current) !== guestColor) return;
           const next = boardRules[current.game].place(current.history, raw.index, current.allowDoubleThree, current.overline);
           if (next) commitMove(next);
+        } else if (peer === 'host' && raw.type === 'sketch-guess-result' && current.sketch && 'id' in raw && raw.id === current.id
+          && 'turn' in raw && raw.turn === current.sketch.turn && 'wrong' in raw && typeof raw.wrong === 'boolean') {
+          setSketchFeedback({ id: current.id, turn: current.sketch.turn, wrong: raw.wrong });
+        } else if (peer === 'host' && raw.type === 'sketch-ink' && current.sketch && 'id' in raw && raw.id === current.id && 'turn' in raw
+          && raw.turn === current.sketch.turn && 'revision' in raw && typeof raw.revision === 'number' && Number.isSafeInteger(raw.revision)
+          && raw.revision > current.sketch.revision && 'lines' in raw) {
+          const sketch = current.sketch;
+          const lines = readInk(raw.lines, inkBatch);
+          if (raw.revision === sketch.revision + 1 && sketch.phase === 'draw' && lines?.length && sketch.board.length + lines.length <= inkLimit) {
+            update({ ...current, sketch: { ...sketch, revision: raw.revision, board: [...sketch.board, ...lines] } });
+          } else link.current?.send({ type: 'sketch-sync', id: current.id });
         } else if (raw.type === 'launch') {
           if (!current.physics || current.physics.shot || current.timeoutPending || !current.startedAt || current.finishedAt || !('id' in raw) || current.id !== raw.id
             || !('revision' in raw) || current.physics.revision !== raw.revision || !('shot' in raw)) return;
@@ -543,12 +603,14 @@ export function useRoomBoard(profile?: ProfileSummary) {
     }
     const now = Date.now();
     preparedSeats.current.clear();
+    drawingDeck.current = current.sketchConfig ? sketchDeck(current.sketchConfig.language) : [];
     matchRoster.current = { seats, reactionSlots: assignReactionSlots(seats),
       names: new Map(participants.flatMap(person => person.profile ? [[person.role, person.profile.name]] : [])) };
     previousMatch.current = undefined;
     update({ ...current, id: rematch ? crypto.randomUUID() : current.id, hostColor, startedAt: now, finishedAt: 0,
       history: [], surrendered: undefined, timedOut: undefined, timeoutPending: undefined, deadline: 0, beginsAt: current.puzzleConfig ? undefined : 0,
       puzzle: current.puzzleConfig ? makePuzzleRound(current.puzzleConfig, Math.random, seats) : undefined,
+      sketch: current.sketchConfig ? makeSketchRound(seats, drawingDeck.current[0]) : undefined,
       physicsSeats, physics: physicsSeats ? createFlickRound(current.flickSettings ?? defaultFlickSettings, physicsSeats.length) : undefined });
     snapshot();
     return true;
@@ -561,7 +623,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     inMatch: Boolean(role && inRound(round, role)),
     canStart: Boolean(roundSeats(game, connectedPeers, participants)),
     settings: { allowDoubleThree, overline, power: round.power ?? 1, turnLimit, flick: round.flickSettings ?? defaultFlickSettings,
-      puzzle: round.puzzleConfig ?? defaultSichuanRoomSettings } satisfies MatchSettings,
+      puzzle: round.puzzleConfig ?? defaultSichuanRoomSettings, sketch: round.sketchConfig ?? defaultSketchSettings } satisfies MatchSettings,
     physicsSeats: round.physicsSeats,
     colorFor: (player: Role) => matchColor(round, player),
     guestRoom, changeGame, changingGame, rematchNotice: rematchNotice?.id === matchId ? rematchNotice.kind : undefined,
@@ -569,6 +631,15 @@ export function useRoomBoard(profile?: ProfileSummary) {
     playStartedAt: matchBeginsAt(round),
     displayStart: matchBeginsAt(round) ? matchBeginsAt(round) + (round.clockOffset ?? 0) : 0,
     puzzle: round.puzzle, puzzleConfig: round.puzzleConfig,
+    sketch: round.sketch, sketchConfig: round.sketchConfig,
+    sketchWrongGuess: sketchFeedback?.id === matchId && sketchFeedback.turn === round.sketch?.turn && sketchFeedback.wrong,
+    sketchDisplayDeadline: round.sketch?.deadline ? round.sketch.deadline + (round.clockOffset ?? 0) : 0,
+    sketchAction(action: SketchAction) {
+      const current = match.current, own = seat.current?.role;
+      if (!own || !ready.current || !current.sketch || current.finishedAt) return false;
+      if (own === 'host') return commitSketch(own, action);
+      return Boolean(link.current?.send({ type: 'sketch-action', id: current.id, turn: current.sketch.turn, action }));
+    },
     puzzleDisplayStart: round.puzzle?.beginsAt ? round.puzzle.beginsAt + (round.clockOffset ?? 0) : 0,
     configureMatch(settings: MatchSettings) {
       const current = match.current;

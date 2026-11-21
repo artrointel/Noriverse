@@ -1,4 +1,4 @@
-export const roomCapacity = { omok: 2, physics: 4, othello: 2, chess: 2, sichuan: 4 } as const;
+export const roomCapacity = { omok: 2, physics: 4, othello: 2, chess: 2, sichuan: 4, sketch: 4 } as const;
 export type GameId = keyof typeof roomCapacity;
 export const gameIds = Object.freeze(Object.keys(roomCapacity) as GameId[]);
 

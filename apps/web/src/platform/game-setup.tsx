@@ -46,7 +46,7 @@ export function GameSetup({ id, online, settings, change, onStart, navigate, act
           </fieldset>
           <p className="setup-help" id="setup-mode-help">{useLobby
             ? t(activeGame === id ? 'editRulesInLobby' : 'otherGameRoom', { game: t(activeGame!) })
-            : t(mode === 'online' ? 'onlineCopy' : !apiAvailable ? 'roomUnavailable' : id === 'sichuan' ? 'sichuanSolo' : 'localCopy')}</p>
+            : t(mode === 'online' ? 'onlineCopy' : id === 'sketch' ? 'sketchPractice' : !apiAvailable ? 'roomUnavailable' : id === 'sichuan' ? 'sichuanSolo' : 'localCopy')}</p>
         </SettingsSection>
         {!useLobby && <GameRulesEditor key={mode} game={id} settings={settings} change={change} online={mode === 'online'} onValidity={setValid} />}
       </div>

@@ -25,7 +25,7 @@ import { setMatchMusic } from './audio.ts';
 import type { RoundAnnouncement } from '../games/round-announcement.ts';
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
-  showTouches, onTouchDisplay, touchStyle, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction, stageContext }: {
+  showTouches, onTouchDisplay, touchStyle, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction, stageContext, interaction }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
@@ -33,7 +33,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   showTouches: boolean; onTouchDisplay: (active: boolean) => void; touchStyle: TouchEffect;
   remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
   reactions?: RoomReactions; ownProfile?: ReactionSender;
-  onReady?: () => void; progress?: ReactNode;
+  onReady?: () => void; progress?: ReactNode; interaction?: ReactNode;
   beginsAt?: number; ending?: RoundAnnouncement['ending']; endAction?: ReactNode;
   stageContext?: { mode: string; map: string };
 }) {
@@ -63,7 +63,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const [expanded, setExpanded] = useState<'native' | 'page' | null>(null);
   const boardSize = view.sichuan?.size ?? (id === 'othello' ? othelloSize : id === 'chess' ? chessSize : omokSize);
   const notifyReady = useEffectEvent(() => onReady?.());
-  const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : id === 'sichuan' ? 'sichuanBoard' : 'board';
+  const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : id === 'sichuan' ? 'sichuanBoard'
+    : id === 'sketch' ? 'sketchCanvas' : 'board';
 
   useLayoutEffect(() => { current.current = view; announcement.current = announcements; });
   useEffect(() => { setMatchMusic(id, matchId); }, [id, matchId]);
@@ -333,7 +334,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
             aria-describedby="game-help"
             onBlur={() => setCursor(null)}
             onPointerDownCapture={handleTouch}
-            onKeyDown={id === 'physics' ? undefined : onKeyDown}
+            onKeyDown={id === 'physics' || id === 'sketch' ? undefined : onKeyDown}
           >
             <div className="touch-layer" aria-hidden="true">{bursts.map(burst => <TouchBurst key={burst.id} effect={burst.effect} remote={burst.remote}
               style={{ left: burst.x, top: burst.y }} onEnd={() => setBursts(current => current.filter(item => item.id !== burst.id))} />)}</div>
@@ -342,6 +343,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
           {decision && <div className="result-layer decision-layer">{decision}</div>}
         </GameReactions>
       </div>
+      {interaction}
       {status !== 'ready' && (
         <div className="stage-message">
           <span role="status">{t(status === 'loading' ? 'loading' : 'gameError')}</span>
@@ -349,7 +351,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         </div>
       )}
       <div className="visually-hidden" aria-live="polite">{focusLabel}</div>
-      <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp' : 'boardHelp')}
+      <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp'
+        : id === 'sketch' ? 'sketchHelp' : 'boardHelp')}
         {(id === 'omok' || id === 'chess') && <> {t('previewMoveHelp')}</>}
         {id === 'othello' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
       </p>

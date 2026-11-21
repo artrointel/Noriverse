@@ -5,7 +5,7 @@ import { othelloState, placeOthello, readOthelloHistory } from './othello/rules.
 import type { Stone } from './table.ts';
 import { chessResult, chessTurn, placeChess, readChessHistory } from './chess/rules.ts';
 
-export type BoardGame = Exclude<RoomGame, 'physics' | 'sichuan'>;
+export type BoardGame = Extract<RoomGame, 'omok' | 'othello' | 'chess'>;
 export const isBoardGame = (id: unknown): id is BoardGame => typeof id === 'string' && Object.hasOwn(boardRules, id);
 export const isTurnBasedGame = (id: unknown): id is BoardGame | 'physics' => isBoardGame(id) || id === 'physics';
 

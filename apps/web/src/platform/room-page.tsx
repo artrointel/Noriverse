@@ -275,7 +275,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           const color = room.colorFor(role) ?? (role === 'host' ? room.hostColor : oppositeStone(room.hostColor));
           const own = room.role === role;
           const participant = own ? ownProfile ?? profile : profile;
-          const seatInfo = [t(role === 'host' ? 'host' : 'guest'), activeGame === 'sichuan' || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)),
+          const seatInfo = [t(role === 'host' ? 'host' : 'guest'), activeGame === 'sichuan' || activeGame === 'sketch' || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)),
             own ? t('me') : undefined, participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
           return <li key={role}>
             {participant ? <>

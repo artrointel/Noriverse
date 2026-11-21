@@ -11,6 +11,7 @@ import { SichuanModePicker, SichuanSettingsFields } from './sichuan-settings.tsx
 import { games } from './game-catalog.ts';
 import { formatPlayTime } from './game-time.tsx';
 import { SettingsSection, SettingsSelect } from './settings-fields.tsx';
+import { sketchCycles, sketchTimes } from '../games/sketch/rules.ts';
 
 export function GameFeature({ game, heading, children }: { game: GameId; heading: string; children?: ReactNode }) {
   const { t } = useTranslation();
@@ -68,6 +69,25 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
   online: boolean; onValidity: (valid: boolean) => void;
 }) {
   const { t } = useTranslation();
+  if (game === 'sketch') {
+    const sketch = settings.sketch;
+    return <SettingsSection title={t('setupBoardRules')}>
+      <SettingsSelect label={t('sketchLanguage')} value={sketch.language} change={language =>
+        change({ ...settings, sketch: { ...sketch, language: language === 'en' ? 'en' : 'ko' } })}>
+        <option value="ko">한국어</option><option value="en">English</option>
+      </SettingsSelect>
+      {online && <>
+        <SettingsSelect label={t('sketchTime')} value={sketch.seconds} change={value =>
+          change({ ...settings, sketch: { ...sketch, seconds: sketchTimes.find(seconds => seconds === Number(value)) ?? sketch.seconds } })}>
+          {sketchTimes.map(seconds => <option key={seconds} value={seconds}>{formatPlayTime(seconds)}</option>)}
+        </SettingsSelect>
+        <SettingsSelect label={t('sketchCycles')} value={sketch.cycles} change={value =>
+          change({ ...settings, sketch: { ...sketch, cycles: sketchCycles.find(cycles => cycles === Number(value)) ?? sketch.cycles } })}>
+          {sketchCycles.map(cycles => <option key={cycles} value={cycles}>{cycles}</option>)}
+        </SettingsSelect>
+      </>}
+    </SettingsSection>;
+  }
   if (game === 'sichuan') return <>
     {online && <SichuanModePicker value={settings.puzzle.mode} change={mode => change({ ...settings, puzzle: { ...settings.puzzle, mode } })} />}
     <SichuanSettingsFields value={settings.puzzle.settings} onValidity={onValidity}
@@ -94,7 +114,10 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
 export function GameRulesSummary({ game, settings }: { game: GameId; settings: MatchSettings }) {
   const { t } = useTranslation();
   const entries: [string, string][] = [];
-  if (game === 'sichuan') {
+  if (game === 'sketch') {
+    entries.push([t('sketchLanguage'), settings.sketch.language === 'ko' ? '한국어' : 'English'],
+      [t('sketchTime'), formatPlayTime(settings.sketch.seconds)], [t('sketchCycles'), String(settings.sketch.cycles)]);
+  } else if (game === 'sichuan') {
     const { mode, settings: puzzle } = settings.puzzle;
     const obstacleDensity = Math.min(puzzle.obstacleDensity ?? defaultObstacleDensity, maxSichuanObstacleDensity(puzzle.size, puzzle.density));
     entries.push([t('gameMode'), t('sichuanMode_' + mode)], [t('sichuanArt'), t(puzzle.theme === 'random' ? 'sichuanRandom' : 'sichuanTheme_' + puzzle.theme)],

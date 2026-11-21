@@ -64,7 +64,7 @@ export interface PublicProfile extends AvatarLayers {
 export type ProfileSummary = AvatarLayers & Pick<PublicProfile, 'id' | 'name' | 'level'>;
 export type OwnProfile = PublicProfile & { presence?: PresenceMode };
 export type FriendRoom = { code: string; game: ProfileGame; joinable: boolean };
-export type FriendSummary = ProfileSummary & { online?: boolean; room?: FriendRoom };
+export type FriendSummary = ProfileSummary & { online?: boolean; lastOnlineAt?: number; room?: FriendRoom };
 export type FriendAction = 'request' | 'accept' | 'decline' | 'remove' | 'cancel';
 export type FriendList = { friends: FriendSummary[]; incoming: ProfileSummary[]; outgoing: ProfileSummary[] };
 

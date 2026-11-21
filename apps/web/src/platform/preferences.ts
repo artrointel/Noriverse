@@ -5,6 +5,20 @@ import { readResolution } from '../games/render-resolution.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 
 const ko = {
+  lastOnlineAt: '마지막 접속 {{time}}', lastOnlineUnknown: '마지막 접속 기록 없음',
+  sketch: '스케치 퀴즈', sketchParty: '그림 대전', sketchLanguage: '제시어 언어', sketchTime: '한 차례 제한 시간', sketchCycles: '1인당 출제 횟수',
+  sketchCopy: '돌아가며 그림을 그리고, 친구가 그리는 동안 제시어를 맞히세요.',
+  sketchRules: '2~4명이 돌아가며 제시어를 그립니다. 맞힌 사람은 100점, 출제자는 정답 한 건당 50점을 얻습니다. 가장 높은 점수가 승리합니다.',
+  sketchPractice: '무작위 제시어를 보며 혼자 그림을 연습합니다.',
+  sketchHelp: '마우스나 손가락을 움직여 그리세요. 친구의 차례에는 정답을 입력하세요.',
+  sketchCanvas: '스케치 캔버스', sketchRound: '{{current}} / {{total}} 차례', sketchDrawing: '그릴 차례', sketchGuessing: '{{player}}의 그림',
+  sketchRevealing: '정답 공개', sketchAnswer: '정답', sketchPrompt: '제시어', sketchGuess: '정답 입력', sketchSubmit: '제출',
+  sketchColors: '펜 색상', sketchColor_0: '검정', sketchColor_1: '파랑', sketchColor_2: '분홍', sketchColor_3: '주황',
+  sketchColor_4: '초록', sketchColor_5: '보라', sketchColor_6: '갈색', sketchColor_7: '지우개 색',
+  sketchWidth: '펜 굵기', sketchWidth_0: '가는 펜', sketchWidth_1: '보통 펜', sketchWidth_2: '굵은 펜',
+  sketchClear: '전체 지우기', sketchNext: '다음 제시어', sketchInkFull: '그림을 지우면 계속 그릴 수 있어요.',
+  sketchScores: '참가자 점수', sketchGuest: '참가자 {{number}}', sketchSent: '정답을 제출했어요.', sketchCorrect: '정답이에요!',
+  sketchTryAgain: '다른 정답을 입력해 보세요.',
   home: '홈', games: '게임', joinRoom: '방 참가', goToRoom: '대기실',
   skip: '본문으로 이동', siteSummary: '친구와 바로 즐기는 웹 게임',
   heroKicker: '설치 없이, 친구와 바로',
@@ -209,6 +223,20 @@ const ko = {
 };
 
 const en: Record<keyof typeof ko, string> = {
+  lastOnlineAt: 'Last signed in {{time}}', lastOnlineUnknown: 'No sign-in history yet',
+  sketch: 'Sketch Quiz', sketchParty: 'Drawing party', sketchLanguage: 'Word language', sketchTime: 'Time per turn', sketchCycles: 'Turns per player',
+  sketchCopy: 'Take turns sketching a secret word and guessing what your friends are drawing.',
+  sketchRules: 'Two to four players take turns drawing. A correct guess earns 100 points. The artist earns 50 points per correct guess. The highest score wins.',
+  sketchPractice: 'Practice sketching on your own with random prompts.',
+  sketchHelp: 'Drag with a mouse or finger to draw. Enter a guess when a friend is drawing.',
+  sketchCanvas: 'Drawing canvas', sketchRound: 'Turn {{current}} of {{total}}', sketchDrawing: 'Your turn to draw', sketchGuessing: '{{player}} is drawing',
+  sketchRevealing: 'Word reveal', sketchAnswer: 'Answer', sketchPrompt: 'Secret word', sketchGuess: 'Enter your guess', sketchSubmit: 'Submit',
+  sketchColors: 'Ink colors', sketchColor_0: 'Black', sketchColor_1: 'Blue', sketchColor_2: 'Pink', sketchColor_3: 'Orange',
+  sketchColor_4: 'Green', sketchColor_5: 'Purple', sketchColor_6: 'Brown', sketchColor_7: 'Eraser color',
+  sketchWidth: 'Brush width', sketchWidth_0: 'Fine pen', sketchWidth_1: 'Medium pen', sketchWidth_2: 'Broad pen',
+  sketchClear: 'Clear drawing', sketchNext: 'Next word', sketchInkFull: 'Clear the drawing to keep sketching.',
+  sketchScores: 'Player scores', sketchGuest: 'Player {{number}}', sketchSent: 'Guess submitted.', sketchCorrect: 'Correct!',
+  sketchTryAgain: 'Try another guess.',
   home: 'Home', games: 'Games', joinRoom: 'Join a room', goToRoom: 'Lobby',
   skip: 'Skip to content', siteSummary: 'Browser games to play with friends',
   heroKicker: 'Instant games with friends',

@@ -14,4 +14,5 @@ export const sceneLoaders: Record<GameId, () => Promise<SceneFactory>> = {
   othello: () => import('./othello/scene.ts').then(module => module.othelloScene),
   chess: () => import('./chess/scene.ts').then(module => module.chessScene),
   sichuan: () => import('./sichuan/scene.ts').then(module => module.sichuanScene),
+  sketch: () => import('./sketch/scene.ts').then(module => module.sketchScene),
 };

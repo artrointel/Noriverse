@@ -173,6 +173,7 @@ export class ProfileStore extends DurableObject<Env> {
         this.ctx.storage.sql.exec('DELETE FROM matches; DELETE FROM presence_tickets;');
         this.ctx.storage.kv.delete('currentRoom');
         this.ctx.storage.kv.delete('invites');
+        this.ctx.storage.kv.delete('lastOnlineAt');
         this.ctx.storage.kv.delete('identity');
       });
       await this.ctx.storage.deleteAlarm();
@@ -208,11 +209,12 @@ export class ProfileStore extends DurableObject<Env> {
     const identity = await this.ctx.storage.get<Identity>('identity');
     if (!identity) return null;
     const profile = this.profileSummary(identity);
-    if (identity.presence === 'offline') return { ...profile, online: false };
+    const lastOnlineAt = this.ctx.storage.kv.get<number>('lastOnlineAt');
+    if (identity.presence === 'offline') return { ...profile, online: false, lastOnlineAt };
     const online = Boolean(this.presenceUntil());
     const code = await this.ctx.storage.get<string>('currentRoom');
     const room = code && await this.env.ROOMS.getByName(code).friendRoom(profile.id, viewer);
-    return { ...profile, online, room: room && code ? { code, ...room } : undefined };
+    return { ...profile, online, lastOnlineAt, room: room && code ? { code, ...room } : undefined };
   }
 
   async setCurrentRoom(code: string) {
@@ -239,13 +241,16 @@ export class ProfileStore extends DurableObject<Env> {
     const ticket = new URL(request.url).searchParams.get('ticket');
     if (!ticket || !profileIdPattern.test(ticket) || request.headers.get('Upgrade') !== 'websocket') return new Response(null, { status: 400 });
     const valid = this.ctx.storage.sql.exec('DELETE FROM presence_tickets WHERE id = ? AND expires > ? RETURNING id', ticket, Date.now()).toArray();
-    if (valid.length === 0) return new Response(null, { status: 401 });
+    const identity = this.ctx.storage.kv.get<Identity>('identity');
+    if (valid.length === 0 || !identity) return new Response(null, { status: 401 });
     const wasOnline = Boolean(this.presenceUntil());
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment({ openedAt: Date.now() });
-    const identity = await this.ctx.storage.get<Identity>('identity');
-    const mode = identity?.presence ?? 'online';
+    const mode = identity.presence ?? 'online';
+    if (mode === 'online' && (!wasOnline || !this.ctx.storage.kv.get('lastOnlineAt'))) {
+      this.ctx.storage.kv.put('lastOnlineAt', Date.now());
+    }
     this.sendPresenceMode([server], mode);
     this.sendInvites([server], mode === 'offline' ? [] : await this.pendingInvites());
     if (!wasOnline || !await this.ctx.storage.getAlarm()) await this.ctx.storage.setAlarm(Date.now() + presenceLease);
@@ -382,6 +387,7 @@ export class ProfileStore extends DurableObject<Env> {
       await this.ctx.storage.put('identity', next);
       if ('presence' in update && update.presence !== (identity.presence ?? 'online')) {
         const sockets = this.ctx.getWebSockets();
+        if (update.presence === 'online' && this.presenceUntil()) this.ctx.storage.kv.put('lastOnlineAt', Date.now());
         this.sendPresenceMode(sockets, update.presence);
         this.sendInvites(sockets, update.presence === 'offline' ? [] : await this.pendingInvites());
         this.ctx.waitUntil(notifyFriends(this.env, identity.id).catch(() => {}));

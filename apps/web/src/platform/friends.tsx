@@ -103,8 +103,11 @@ export function FriendRequestToast({ model, navigate, enabled }: { model: Friend
   </aside>;
 }
 
-function FriendGroups({ friends, navigate, action }: { friends: FriendSummary[]; navigate: Navigate; action: (friend: FriendSummary) => ReactNode }) {
-  const { t } = useTranslation();
+function FriendGroups({ friends, navigate, action, showLastOnline = false }: {
+  friends: FriendSummary[]; navigate: Navigate; action: (friend: FriendSummary) => ReactNode; showLastOnline?: boolean;
+}) {
+  const { t, i18n } = useTranslation();
+  const clock = new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: 'medium', timeStyle: 'short' });
   return <div className="friend-groups">{[true, false].map(online => {
     const group = friends.filter(friend => Boolean(friend.online) === online).sort((a, b) => a.name.localeCompare(b.name));
     return <details key={String(online)} className="friend-group" open={online || undefined}>
@@ -112,7 +115,9 @@ function FriendGroups({ friends, navigate, action }: { friends: FriendSummary[];
       {group.length ? <ul className="people-list">{group.map(friend => <li key={friend.id}>
         <RouteLink className="person-link" href={'/profiles/' + friend.id} navigate={navigate}>
           <Avatar appearance={friend} size={42} />
-          <span><strong>{friend.name}</strong><small>{t('levelValue', { level: friend.level })}</small></span>
+          <span><strong>{friend.name}</strong><small>{t('levelValue', { level: friend.level })}</small>
+            {showLastOnline && <small>{friend.lastOnlineAt ? <time dateTime={new Date(friend.lastOnlineAt).toISOString()}>
+              {t('lastOnlineAt', { time: clock.format(friend.lastOnlineAt) })}</time> : t('lastOnlineUnknown')}</small>}</span>
         </RouteLink>
         {action(friend)}
       </li>)}</ul> : <p className="muted">{t(online ? 'emptyOnline' : 'emptyOffline')}</p>}
@@ -246,7 +251,7 @@ export function FriendsPage({ model, navigate, openProfile, follow }: { model: F
         </section>}
         {model.failed ? <p role="alert">{t('friendsUnavailable')}</p> : !model.friends ? <p role="status">{t('profileLoading')}</p>
           : model.friends.length === 0 ? <p>{t('emptyFriends')}</p>
-          : <FriendGroups friends={model.friends} navigate={navigate} action={friend => <div className="friend-actions">
+          : <FriendGroups friends={model.friends} navigate={navigate} showLastOnline action={friend => <div className="friend-actions">
             {friend.room && <div className="friend-room"><span>{t(friend.room.game)}</span>
               <button type="button" className="button button-primary" disabled={!friend.room.joinable} onClick={() => { if (friend.room) follow(friend.room); }}>
                 {t(friend.room.joinable ? 'followFriend' : 'friendRoomFull')}</button></div>}

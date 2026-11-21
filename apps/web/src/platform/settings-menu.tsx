@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { PresenceMode } from '../../../../packages/protocol/profile.ts';
+import { PresenceControl } from './presence-control.tsx';
+import type { PresenceSetting } from './presence-control.tsx';
 import { getMusicTrack, playSound, shuffleMusicTrack, subscribeMusicTrack } from './audio.ts';
 import { musicMoods } from './music-arrangements.ts';
 import type { AudioLevels } from './audio.ts';
@@ -13,14 +14,12 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
   levels: AudioLevels;
   onVolume: (channel: keyof AudioLevels, value: number) => void;
   path: string;
-  presence?: { mode: PresenceMode; change: (mode: PresenceMode) => Promise<void> };
+  presence?: PresenceSetting;
 }) {
   const { t, i18n } = useTranslation();
   const track = useSyncExternalStore(subscribeMusicTrack, getMusicTrack);
   const menu = useRef<HTMLDetailsElement>(null);
   const trigger = useRef<HTMLElement>(null);
-  const [savingPresence, setSavingPresence] = useState(false);
-  const [presenceError, setPresenceError] = useState(false);
 
   function close(restoreFocus = false) {
     if (menu.current) {
@@ -78,20 +77,7 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
         </details>
         {presence && <details className="settings-section">
           <summary>{t('presenceSettings')} <small>{t(presence.mode === 'offline' ? 'appearOffline' : 'appearOnline')}</small></summary>
-          <div className="setting-segments setting-segments-presence">
-            {(['online', 'offline'] as const).map(mode => <label key={mode}>
-              <input className="visually-hidden" type="radio" name="profile-presence" checked={presence.mode === mode} disabled={savingPresence}
-                onChange={async () => {
-                  setSavingPresence(true); setPresenceError(false);
-                  try { await presence.change(mode); }
-                  catch { setPresenceError(true); }
-                  finally { setSavingPresence(false); }
-                }} />
-              <span>{t(mode === 'offline' ? 'appearOffline' : 'appearOnline')}</span>
-            </label>)}
-          </div>
-          <p className="settings-hint">{t('presenceHelp')}</p>
-          {presenceError && <p className="settings-hint" role="alert">{t('profileError')}</p>}
+          <PresenceControl {...presence} />
         </details>}
         <details className="settings-section">
           <summary>{t('theme')} <small>{preferences.theme === 'system' ? t('system') + ' · ' : ''}{t(preferences.dark ? 'dark' : 'light')}</small></summary>

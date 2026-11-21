@@ -12,6 +12,7 @@ import { randomPlayerName } from './player-names.ts';
 import { FriendButton } from './friends.tsx';
 import type { Friends } from './friends.tsx';
 import { TouchBurst } from './touch-burst.tsx';
+import { PresenceControl } from './presence-control.tsx';
 import { formatPlayTime } from './game-time.tsx';
 import type { useProfile } from './use-profile.ts';
 
@@ -342,6 +343,11 @@ export function ProfilePage({ own, id, model, friends, navigate, edit, onDeleted
         {!own && profile && <div className="panel-actions"><FriendButton id={profile.id} model={friends} /></div>}
         {showLink && <input aria-label={t('shareProfile')} readOnly value={shareUrl} onFocus={event => event.currentTarget.select()} />}
       </section>
+      {own && profile && apiAvailable && <section className="surface stat-card profile-presence">
+        <h2>{t('presenceSettings')} <small><i className="presence-dot" data-online={model.profile?.presence !== 'offline'} />
+          {t(model.profile?.presence === 'offline' ? 'friendOffline' : 'friendOnline')}</small></h2>
+        <PresenceControl mode={model.profile?.presence ?? 'online'} change={presence => model.setPreferences({ presence })} />
+      </section>}
       {own && profile && touchOpen && <TouchEffectDialog selected={profile.touchEffect ?? 'soft'} save={touchEffect => model.setPreferences({ touchEffect })}
         close={() => setTouchOpen(false)} />}
       {own && profile && avatarOpen && <AvatarDialog profile={profile} save={model.setPreferences} close={() => setAvatarOpen(false)} />}

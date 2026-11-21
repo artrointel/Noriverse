@@ -22,7 +22,10 @@ import { BackNavigation, gamePath, RouteLink, useNavigation } from './platform/n
 import type { GameMode } from './platform/navigation.tsx';
 import { PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
+import { SketchPage } from './platform/sketch-page.tsx';
+import { sketchOutcome } from './games/sketch/rules.ts';
 import { defaultMatchSettings } from './games/match-settings.ts';
+import type { MatchSettings } from './games/match-settings.ts';
 import { puzzleOutcome } from './games/sichuan/multiplayer.ts';
 import { CreateRoomPage, RoomPage } from './platform/room-page.tsx';
 import { FriendRequestToast, FriendsPage, useFriends } from './platform/friends.tsx';
@@ -48,7 +51,8 @@ function App() {
     const boards = Object.fromEntries(Object.keys(boardRules).map(id => [id, createLocalBoard()]));
     return boards as Record<BoardGame, LocalBoard>;
   });
-  const [settings, setSettings] = useState(defaultMatchSettings);
+  const [settings, setSettings] = useState<MatchSettings>(() => ({ ...defaultMatchSettings,
+    sketch: { ...defaultMatchSettings.sketch, language: i18n.resolvedLanguage === 'ko' ? 'ko' : 'en' } }));
   const [selectedRoomGame, selectRoomGame] = useState<GameId>();
   const { power, flick: flickSettings, allowDoubleThree, puzzle: { settings: sichuanSettings }, overline, turnLimit } = settings;
   const roomOpen = room.active;
@@ -81,7 +85,8 @@ function App() {
     const loser = room.surrendered ?? room.timedOut;
     const winner = loser ? oppositeStone(loser) : room.winner;
     const puzzleResult = room.puzzle?.result && room.role ? puzzleOutcome(room.puzzle.result, room.role) : undefined;
-    const outcome = puzzleResult ?? (winner ? winner === 'draw' ? 'draw' : winner === room.playerColor ? 'win' : 'loss' : undefined);
+    const sketchResult = room.sketch?.phase === 'done' && room.role ? sketchOutcome(room.sketch, room.role) : undefined;
+    const outcome = sketchResult ?? puzzleResult ?? (winner ? winner === 'draw' ? 'draw' : winner === room.playerColor ? 'win' : 'loss' : undefined);
     if (!outcome) return;
     const matchId = room.matchId;
     lastAwayResult.current = matchId;
@@ -89,7 +94,7 @@ function App() {
       id: matchId, game: room.game, mode: 'online', outcome,
       seconds: elapsedPlaySeconds(room.playStartedAt, room.finishedAt),
     }).then(saved => { if (!saved && lastAwayResult.current === matchId) lastAwayResult.current = ''; });
-  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.playStartedAt, room.puzzle, room.role, room.inMatch, route]);
+  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.playStartedAt, room.puzzle, room.sketch, room.role, room.inMatch, route]);
 
   useEffect(() => {
     const view = route.id ? t(route.id) : route.page === 'room' ? t('room') : route.page === 'createRoom' ? t('newRoom')
@@ -227,6 +232,15 @@ function App() {
         const local = board ? localBoards[board] : undefined;
         if (online && playGame !== id) {
           return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite="" navigate={navigate} onPlay={enterRoomGame} />;
+        }
+        if (id === 'sketch') {
+          const sketchRoom = online && room.sketch && room.role ? { ...room, sketch: room.sketch, role: room.role } : undefined;
+          if (online && !sketchRoom) return <p role="status">{t('loading')}</p>;
+          return <SketchPage room={sketchRoom} settings={settings.sketch} ownProfile={profile.profile} navigate={navigate}
+            dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
+            onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
+            onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
+            record={online && apiAvailable && profile.profile ? profile.record : undefined} />;
         }
         if (id === 'sichuan') {
           const puzzleRoom = online && room.puzzle && room.puzzleConfig && room.role
