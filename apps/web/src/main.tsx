@@ -27,7 +27,8 @@ import { defaultMatchSettings } from './games/match-settings.ts';
 import type { MatchSettings } from './games/match-settings.ts';
 import { CreateRoomPage, RoomPage } from './platform/room-page.tsx';
 import { FriendRequestToast, FriendsPage, useFriends } from './platform/friends.tsx';
-import { InvitationToasts, useInvitations } from './platform/invitations.tsx';
+import { NotificationToasts, useInvitations } from './platform/invitations.tsx';
+import { ReactionUsageContext } from './platform/game-reactions.tsx';
 import { usePreferences } from './platform/preferences.ts';
 import { SettingsMenu } from './platform/settings-menu.tsx';
 import { NameDialog, ProfileNav, ProfilePage } from './platform/profiles.tsx';
@@ -44,7 +45,7 @@ function App() {
   const room = useRoomBoard(profile.profile);
   const friends = useFriends(profile.profile?.id, route.page === 'friends' ? 'full' : route.page === 'profile' ? 'summary' : false, route.page === 'room');
   const presence = profile.profile?.presence ?? 'online';
-  const invitations = useInvitations(profile.profile?.id, presence, profile.syncPresence);
+  const invitations = useInvitations(profile.profile?.id, presence, profile.syncPresence, profile.syncBadges);
   const playGame = route.page === 'play' && (!route.online || (room.code && room.inMatch && room.started && room.game === route.id
     && room.state !== 'closed' && room.state !== 'missing')) ? route.id : undefined;
   const [localBoards, setLocalBoards] = useState(() => {
@@ -95,11 +96,11 @@ function App() {
   }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.roundOutcome, room.playStartedAt, room.inMatch, room.testMatch, route]);
 
   useEffect(() => {
-    const view = route.id ? t(route.id) : route.page === 'room' ? t('room') : route.page === 'createRoom' ? t('newRoom')
+    const view = route.id ? t(route.id) : route.page === 'room' ? (room.active && room.title) || t('room') : route.page === 'createRoom' ? t('newRoom')
       : route.page === 'games' ? t('library') : null;
     const brand = i18n.resolvedLanguage === 'ko' ? '놀이버스' : 'Noriverse';
     document.title = view ? view + ' · ' + brand : brand + ' · ' + t('siteSummary');
-  }, [route, t, i18n.resolvedLanguage]);
+  }, [route, t, i18n.resolvedLanguage, room.active, room.title]);
 
   useEffect(() => {
     if (!room.started) {
@@ -120,13 +121,13 @@ function App() {
     }
   }, [room.game, room.started, room.role, room.inMatch, room.matchId, route, navigate]);
 
-  async function startGame(mode: GameMode) {
+  async function startGame(mode: GameMode, title?: string) {
     if (route.page !== 'setup') return false;
     const id = route.id;
     if (mode === 'online' && isRoomGame(id)) {
       const setupUrl = location.href;
       if (!room.active && room.state !== 'joining') {
-        if (!await room.create(id, settings)) return false;
+        if (!await room.create(id, settings, title)) return false;
       }
       if (location.href === setupUrl) navigate('/room');
     } else {
@@ -217,7 +218,7 @@ function App() {
         return <GameDetail id={route.id} navigate={navigate} />;
       case 'setup':
         return <GameSetup id={route.id} online={route.online} settings={settings} change={setSettings}
-          activeGame={roomOpen ? room.game : undefined}
+          activeGame={roomOpen ? room.game : undefined} profileName={profile.profile?.name} profileLoading={profile.status === 'loading'}
           onStart={startGame} navigate={navigate} />;
       case 'room':
         return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite={route.invite} navigate={navigate} onPlay={enterRoomGame} />;
@@ -323,7 +324,11 @@ function App() {
       </header>
       <main id="main" tabIndex={-1} className="route-frame"><BackNavigation.Provider value={backNavigation}><div className="route-content" key={path} data-play-game={backdropGame}>
         {backdropGame && <div className="game-backdrop" aria-hidden="true" key={backdropGame}><img src={games[backdropGame].art} alt="" decoding="async" /></div>}
-        <RoomRankingContext.Provider value={route.page === 'play' && route.online && playGame ? { entries: room.roomHistory, participants: room.participants } : undefined}>{page}</RoomRankingContext.Provider>
+        <ReactionUsageContext.Provider value={route.page === 'play' && route.online && room.testMatch ? undefined : profile.recordReaction}>
+          <RoomRankingContext.Provider value={route.page === 'play' && route.online && playGame
+            ? { entries: room.roomHistory, participants: room.participants, test: room.testMatch,
+              matchId: room.matchId, roomTitle: room.title, finished: Boolean(room.finishedAt) } : undefined}>{page}</RoomRankingContext.Provider>
+        </ReactionUsageContext.Provider>
       </div></BackNavigation.Provider></main>
       <footer className="site-footer">
         <div className="site-width footer-row">
@@ -339,7 +344,8 @@ function App() {
         </div>
         <div className="site-width footer-meta"><small>© {new Date().getFullYear()} Noriverse</small></div>
       </footer>
-      <InvitationToasts model={invitations} accept={invite => {
+      <NotificationToasts model={invitations} badges={profile.badgeToasts} dismissBadge={profile.dismissBadge}
+        openBadges={() => navigate('/profile')} accept={invite => {
         if (room.code !== invite.code) room.join(invite.code);
         navigate('/room?room=' + invite.code);
       }} />

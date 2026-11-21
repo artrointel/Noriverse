@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { defaultAvatar } from '../../../../packages/protocol/profile.ts';
@@ -28,7 +28,8 @@ function saveEmojiCookie(prefix: string, emojis: Emoji[]) {
   } catch { /* Cookie access is optional. */ }
 }
 
-export type RoomReactions = { events: TimedReaction[]; send: (emoji: Emoji) => void; enabled: boolean };
+export const ReactionUsageContext = createContext<(() => void) | undefined>(undefined);
+export type RoomReactions = { events: TimedReaction[]; send: (emoji: Emoji) => boolean; enabled: boolean };
 
 function EmojiGlyph({ emoji }: { emoji: Emoji }) {
   return <span className="reaction-glyph" data-emoji={emoji} aria-hidden="true">{emojiChoices[emoji]}</span>;
@@ -72,9 +73,10 @@ export function ReactionLayer({ events, viewport = false }: { events: TimedReact
 }
 
 export function ReactionPicker({ scope, enabled, send, lobby = false }: {
-  scope: string; enabled: boolean; send: (emoji: Emoji) => void; lobby?: boolean;
+  scope: string; enabled: boolean; send: (emoji: Emoji) => boolean; lobby?: boolean;
 }) {
   const { t, i18n } = useTranslation();
+  const trackUsage = useContext(ReactionUsageContext);
   const uid = useId();
   const control = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -122,7 +124,7 @@ export function ReactionPicker({ scope, enabled, send, lobby = false }: {
     const next = recentEmojis([emoji, ...recent]);
     setRecent(next);
     saveEmojiCookie(recentCookie, next);
-    send(emoji);
+    if (send(emoji)) trackUsage?.();
     close();
   }
 
@@ -200,9 +202,10 @@ export function GameReactions({ matchId, room, profile, enabled, size, children,
   const [local, setLocal] = useState<TimedReaction[]>([]);
   useEffect(() => { setLocal([]); }, [matchId]);
   function send(emoji: Emoji) {
-    if (room) { room.send(emoji); return; }
+    if (room) return room.send(emoji);
     const now = performance.now(), id = crypto.randomUUID();
     setLocal(previous => showReaction(previous, { id, emoji, corner: reactionCorners[0], sender: profile }, now));
+    return true;
   }
   return <div className="stage-stack" style={{ width: size.width, '--reaction-board-width': size.width + 'px' } as CSSProperties}>
     <div className="stage-frame" style={size}>

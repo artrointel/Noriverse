@@ -8,7 +8,7 @@ import type { RenderResolution } from '../games/render-resolution.ts';
 import { liarHintLimit, liarSpeaker } from '../games/liar/rules.ts';
 import type { LiarView } from '../games/liar/rules.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
-import { roomStandings } from '../network/room-history.ts';
+import { roomRankingEntries, roomStandings } from '../../../../packages/protocol/room-history.ts';
 import { Avatar } from './avatar.tsx';
 import { MatchStage } from './match-stage.tsx';
 import { EndRoundAction } from './end-round-action.tsx';
@@ -63,7 +63,8 @@ export function LiarPage({ room, ownProfile, dark, antialias, resolution, onReso
   const active = connected && roundStart.started && !retired && !outcome;
   const yours = active && (speaker === role || round.phase === 'guess' && round.accused === role);
   const voted = round.voted.includes(role);
-  const standings = useMemo(() => roomStandings(room.roomHistory, room.participants, 'liar'), [room.roomHistory, room.participants]);
+  const standings = useMemo(() => roomStandings(roomRankingEntries(room.roomHistory, room.testMatch),
+    room.participants.filter(player => room.testMatch || !player.mock), 'liar'), [room.roomHistory, room.participants, room.testMatch]);
   const players = round.players.map((player, index) => {
     const participant = room.participants.find(person => person.role === player);
     const profile = (player === role ? ownProfile : undefined) ?? participant?.profile;

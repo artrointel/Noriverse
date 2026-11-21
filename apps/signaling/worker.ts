@@ -1,5 +1,6 @@
 import { createRoomCode, isRoomGame, roomCodePattern } from '../../packages/protocol/rooms.ts';
 import { profileIdPattern } from '../../packages/protocol/profile.ts';
+import { readRoomTitle, roomTitleOptions } from '../../packages/protocol/room-titles.ts';
 import { notifyFriends, profileRequest, profileSession, verifiedFriends } from './profiles.ts';
 import { readBody } from './http.ts';
 import type { Env } from './bindings.ts';
@@ -106,13 +107,18 @@ export default {
       const body = await readBody(request);
       const game = body && typeof body === 'object' && 'game' in body ? body.game : 'omok';
       if (!isRoomGame(game)) return cors(new Response(null, { status: 400 }));
+      const input = body && typeof body === 'object' && 'title' in body ? body.title : undefined;
+      const customTitle = readRoomTitle(input);
+      if (input !== undefined && !customTitle) return cors(new Response(null, { status: 400 }));
       const session = profileSession(request, external);
       const profile = session && await env.PROFILES.getByName(session.id).summary(session.secret);
+      const suggestions = roomTitleOptions(profile?.name, request.headers.get('Accept-Language')?.split(/[,;]/, 1)[0]?.trim());
+      const title = customTitle ?? suggestions[Math.floor(Math.random() * suggestions.length)];
       for (let attempt = 0; attempt < 4; attempt++) {
         const code = createRoomCode();
         const room = env.ROOMS.getByName(code);
-        const token = await room.reserve(game, profile ?? undefined);
-        if (token) return cors(Response.json({ code, token }, { status: 201 }));
+        const token = await room.reserve(game, title, profile ?? undefined);
+        if (token) return cors(Response.json({ code, token, title }, { status: 201 }));
       }
       return cors(new Response(null, { status: 503 }));
     }

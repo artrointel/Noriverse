@@ -81,8 +81,10 @@
 }
 .sketch-width-preview i { border-radius: 50%; border: 1px solid #8c7c9680; }
 .sketch-width-preview i[data-eraser="true"] { border-style: dashed; }
-.sketch-hud-guess { position: absolute; z-index: 2; inset-inline: 10%; top: 88.4%; display: flex; justify-content: center; transform: translateY(-50%); }
-.sketch-hud-guess :is(.button, input) { min-height: 30px; font-size: clamp(.71rem, 2.6vw, .85rem); padding-block: 4px; }
+.sketch-page .game-viewport { container-type: inline-size; }
+.sketch-hud-guess { position: absolute; z-index: 2; inset-inline: 10%; top: 89.2%; display: flex; justify-content: center; transform: translateY(-50%); }
+.sketch-hud-guess :is(.button, input) { min-height: clamp(20px, 9cqw, 30px); font-size: clamp(.71rem, 3.5cqw, .85rem); padding-block: 1px; }
+.sketch-hud-guess :focus-visible { outline-offset: 1px; }
 .sketch-native-color { position: absolute; bottom: 7%; right: 8%; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .sketch-keyboard-tools:not(:focus-within) { position: absolute; width: 1px; height: 1px; padding: 0; clip-path: inset(50%); overflow: hidden; }
 .sketch-keyboard-tools:focus-within { position: absolute; z-index: 4; bottom: 4%; inset-inline: 5%; padding: 8px; border-radius: 10px;

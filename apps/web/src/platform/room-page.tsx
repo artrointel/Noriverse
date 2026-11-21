@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
-import { isRoomGame, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
+import { isRoomGame, roomCapacity, roomCodePattern, roomRoles } from '../../../../packages/protocol/rooms.ts';
 import type { Participant, RoomGame } from '../../../../packages/protocol/rooms.ts';
 import { oppositeStone, sideLabel } from '../games/table.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
@@ -156,6 +156,8 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const capacity = roomCapacity[activeGame];
   const gameChoices = roomGames.filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
   const canEdit = room.role === 'host' && (!room.started || room.finishedAt > 0);
+  const canChange = room.role === 'host' && gameChoices.length > 0;
+  const canRetry = room.needsReconnect || (connected && room.role === 'host' && !room.canStart && (activeGame !== 'liar' || participants.length >= 3));
 
   useEffect(() => {
     if (hasRoom || !apiAvailable) return;
@@ -217,8 +219,16 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   return <div className="site-width subpage match-workspace lobby-workspace">
     <BackLink fallback="/games" fallbackLabel="backToGames" navigate={navigate} />
     <header className="lobby-heading">
-      <h1 className="match-page-title" tabIndex={-1}>{t('room')}</h1>
-      <div className="lobby-heading-actions">
+      <h1 className="match-page-title" tabIndex={-1}>{room.title ?? t('room')}</h1>
+    </header>
+    {createPortal(<ReactionLayer events={room.lobbyReactions.events} viewport />, document.body)}
+    <GameFeature game={activeGame} heading={t(activeGame)}>
+      <div className="lobby-feature-rules"><GameRulesSummary game={activeGame} settings={room.settings} /></div>
+      <div className="panel-actions lobby-feature-actions">
+        {canEdit && <button type="button" className="button button-secondary" disabled={room.changingGame || !room.matchId}
+          onClick={() => setSettingsOpen(true)}><GearIcon />{t('settings')}</button>}
+        {canChange && <button type="button" className="button button-secondary"
+          onClick={() => setGamesOpen(true)}>{t('changeRoomGame')}</button>}
         {(room.role === 'host' || (connected && room.started && room.inMatch)) &&
           <button type="button" className="button button-primary" disabled={room.changingGame || (!room.started && !room.canStart)}
             aria-describedby={!room.started && !room.canStart ? 'lobby-connection' : undefined}
@@ -226,34 +236,21 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
         <button type="button" className="button button-secondary lobby-leave"
           onClick={() => { room.leave(); setCopyState('idle'); setInviteOpen(false); setSettingsOpen(false); setGamesOpen(false); }}>{t('leave')}</button>
       </div>
-    </header>
-    {createPortal(<ReactionLayer events={room.lobbyReactions.events} viewport />, document.body)}
-    <GameFeature game={activeGame} heading={t(activeGame)}>
-      <div className="lobby-feature-rules"><GameRulesSummary game={activeGame} settings={room.settings} /></div>
     </GameFeature>
-    <div className="surface lobby-toolbar">
-      <div className="panel-actions">
-        {room.mockControls && <>
-          <button type="button" className="button button-secondary" disabled={!room.mockControls.canAdd} onClick={room.mockControls.add}>{t('addMockPlayer')}</button>
-          {room.mockControls.canRemove && <button type="button" className="button button-secondary" onClick={room.mockControls.remove}>{t('removeMockPlayer')}</button>}
-        </>}
-        {canEdit && <button type="button" className="button button-secondary" disabled={room.changingGame || !room.matchId}
-          onClick={() => setSettingsOpen(true)}><GearIcon />{t('settings')}</button>}
-        {room.role === 'host' && gameChoices.length > 0 && <button type="button" className="button button-secondary"
-          onClick={() => setGamesOpen(true)}>{t('changeRoomGame')}</button>}
-        {(room.needsReconnect || (connected && room.role === 'host' && !room.canStart && (activeGame !== 'liar' || participants.length >= 3))) &&
-          <button type="button" className="button button-secondary" onClick={room.reconnect}>{t('retry')}</button>}
-      </div>
-      {room.rematchNotice === 'incoming' && <p role="status">{t('rematchIncoming')}</p>}
-    </div>
     <div className="lobby-grid">
-      <RoomRankingBoard entries={room.roomHistory} participants={participants}
-        status={room.state && <p id="lobby-connection" className="connection lobby-connection" role="status">
-          {t(activeGame === 'liar' && !room.started && participants.length < 3 ? 'liarNeedPlayers'
-            : room.role === 'host' && !room.started && connected && !room.canStart ? 'waitingAllConnections'
-              : connected && room.role !== 'host' && room.started && !room.inMatch ? 'waitingNextRound'
-                : connected && room.role !== 'host' && !room.started ? 'waitingStart' : room.state)}
-        </p>} />
+      <RoomRankingBoard entries={room.roomHistory} participants={participants} roomTitle={room.title} test={room.testMatch && !room.mockControls}
+        status={<>
+          {room.state && <div className="lobby-status">
+            <p id="lobby-connection" className="connection lobby-connection" role="status">
+              {t(activeGame === 'liar' && !room.started && participants.length < 3 ? 'liarNeedPlayers'
+                : room.role === 'host' && !room.started && connected && !room.canStart ? 'waitingAllConnections'
+                  : connected && room.role !== 'host' && room.started && !room.inMatch ? 'waitingNextRound'
+                    : connected && room.role !== 'host' && !room.started ? 'waitingStart' : room.state)}
+            </p>
+            {canRetry && <button type="button" className="button button-secondary" onClick={room.reconnect}>{t('retry')}</button>}
+          </div>}
+          {room.rematchNotice === 'incoming' && <p role="status">{t('rematchIncoming')}</p>}
+        </>} />
       <section className="surface lobby-panel room-participants" aria-label={t('participants')}>
         <header className="room-panel-heading"><h2>{t('participants')}</h2><div className="lobby-participant-tools">
           <span className="lobby-count">{participants.length}/{capacity}</span>
@@ -272,16 +269,20 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                 <Avatar appearance={participant} size={38} />
                 <span><strong>{participant.name}</strong><small>{seatInfo}</small>
                   <ParticipantStats key={participant.id} id={participant.id} game={activeGame} own={own ? ownProfile : undefined}
-                    latest={room.roomHistory.find(entry => entry.game === activeGame && entry.players.some(player => player.profileId === participant.id))} />
+                    latest={room.roomHistory.find(entry => !entry.test && entry.game === activeGame && entry.players.some(player => player.profileId === participant.id))} />
                 </span>
               </RouteLink>
               {!own && <FriendButton id={participant.id} model={friends} />}
             </> : <div className="person-link">
               <span className={'stone stone-' + (color > 2 ? color : sideLabel(activeGame, color) === 'black' ? 0 : 1)} aria-hidden="true" />
-              <span><strong>{t(mock ? 'mockPlayer' : 'anonymousPlayer')}</strong><small>{mock ? t('mockIdle') : seatInfo}</small></span>
+              <span><strong>{mock ? t('mockSeat', { number: roomRoles.indexOf(role) }) : t('anonymousPlayer')}</strong><small>{mock ? t('mockIdle') : seatInfo}</small></span>
             </div>}
           </li>;
         })}</ul>
+        {room.mockControls && <div className="panel-actions">
+          <button type="button" className="button button-secondary" disabled={!room.mockControls.canAdd} onClick={room.mockControls.add}>{t('addMockPlayer')}</button>
+          {room.mockControls.canRemove && <button type="button" className="button button-secondary" onClick={room.mockControls.remove}>{t('removeMockPlayer')}</button>}
+        </div>}
         <div className="invite-code">
           <div><span>{t('code')}</span><code>{room.code}</code></div>
           <button type="button" className="button button-secondary" onClick={() => void copyInvite()}>{t(copyState === 'copied' ? 'copied' : 'copy')}</button>

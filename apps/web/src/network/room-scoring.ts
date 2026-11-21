@@ -7,7 +7,7 @@ import { puzzleProgress } from '../games/sichuan/multiplayer.ts';
 import { isLiarRound, liarParticipationPoints } from '../games/liar/rules.ts';
 import { matchColor } from './room-match.ts';
 import type { Match } from './room-match.ts';
-import type { RoomResultPlayer } from './room-history.ts';
+import type { RoomResultPlayer } from '../../../../packages/protocol/room-history.ts';
 
 function omokProgress(history: number[], color: number) {
   const board = boardFrom(history);

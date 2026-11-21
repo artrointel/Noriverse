@@ -4,6 +4,8 @@ import type { AvatarLayers, FriendAction, GameStats, MatchReport, OwnProfile, Pr
 import type { RoomInvite } from '../../packages/protocol/rooms.ts';
 import type { Env } from './bindings.ts';
 import { readBody } from './http.ts';
+import { badgeCatalog, reachedBadges } from '../../packages/protocol/badges.ts';
+import type { BadgeMetric, EarnedBadge } from '../../packages/protocol/badges.ts';
 
 const cookieName = 'noriverse_profile';
 type Identity = Partial<AvatarLayers> & { id: string; secret: string; name: string; favorites?: ProfileGame[]; friends?: string[]; touchEffect?: TouchEffect; presence?: PresenceMode };
@@ -95,6 +97,14 @@ export async function profileRequest(request: Request, env: Env, url: URL, exter
     const profile = await store.record(auth.secret, report);
     return profile ? json(profile, 200) : json(null, 401);
   }
+  if (path === '/api/profiles/me/reactions' && request.method === 'POST') {
+    if (!store) return json(null, 401);
+    const input = await readBody(request) as { id?: unknown; owner?: unknown } | undefined;
+    if (typeof input?.id !== 'string' || !profileIdPattern.test(input.id)) return json(null, 400);
+    if (input.owner !== auth.id) return json(null, 409);
+    const badges = await store.recordReaction(auth.secret, input.id);
+    return badges ? json(badges, 200) : json(null, 401);
+  }
   if ((path === '/api/profiles/me/friends' || path === '/api/profiles/me/social') && (request.method === 'GET' || request.method === 'POST')) {
     if (!store) return json(null, 401);
     const links = await verifiedFriends(env, auth.id, auth.secret);
@@ -150,6 +160,8 @@ export class ProfileStore extends DurableObject<Env> {
       );
       CREATE INDEX IF NOT EXISTS matches_recent ON matches(playedAt DESC);
       CREATE TABLE IF NOT EXISTS presence_tickets (id TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS badges (id TEXT PRIMARY KEY, earnedAt INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS badge_events (kind TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (kind, id));
     `);
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
@@ -171,7 +183,7 @@ export class ProfileStore extends DurableObject<Env> {
       const contacts = await friendGraph(this.env).removeProfile(identity.id);
       this.ctx.waitUntil(Promise.allSettled(contacts.map(id => this.env.PROFILES.getByName(id).sendSocialChange())));
       this.ctx.storage.transactionSync(() => {
-        this.ctx.storage.sql.exec('DELETE FROM matches; DELETE FROM presence_tickets;');
+        this.ctx.storage.sql.exec('DELETE FROM matches; DELETE FROM presence_tickets; DELETE FROM badges; DELETE FROM badge_events;');
         this.ctx.storage.kv.delete('currentRoom');
         this.ctx.storage.kv.delete('invites');
         this.ctx.storage.kv.delete('lastOnlineAt');
@@ -254,6 +266,7 @@ export class ProfileStore extends DurableObject<Env> {
       this.ctx.storage.kv.put('lastOnlineAt', Date.now());
     }
     this.sendPresenceMode([server], mode);
+    this.sendBadges([server], this.earnedBadges());
     this.sendInvites([server], mode === 'offline' ? [] : await this.pendingInvites());
     if (!wasOnline || !await this.ctx.storage.getAlarm()) await this.ctx.storage.setAlarm(Date.now() + presenceLease);
     if (!wasOnline) this.notifyPresence();
@@ -367,6 +380,55 @@ export class ProfileStore extends DurableObject<Env> {
     return this.ownView(identity);
   }
 
+  private earnedBadges() {
+    return this.ctx.storage.sql.exec<EarnedBadge>('SELECT id, earnedAt FROM badges ORDER BY earnedAt, id').toArray();
+  }
+
+  private insertBadges(badges: EarnedBadge[]) {
+    return badges.flatMap(badge => this.ctx.storage.sql.exec<EarnedBadge>(
+      'INSERT OR IGNORE INTO badges VALUES (?, ?) RETURNING id, earnedAt', badge.id, badge.earnedAt,
+    ).toArray());
+  }
+
+  private unlockBadges(badges: EarnedBadge[]) {
+    const added = this.ctx.storage.transactionSync(() => this.insertBadges(badges));
+    this.sendBadges(this.ctx.getWebSockets(), added);
+  }
+
+  private sendBadges(sockets: WebSocket[], badges: EarnedBadge[]) {
+    if (!badges.length) return;
+    const message = JSON.stringify({ type: 'badges-earned', badges });
+    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN) {
+      try { socket.send(message); } catch { /* The profile still contains the unlocked badges. */ }
+    }
+  }
+
+  private countBadgeEvent(kind: Extract<BadgeMetric, 'reactions' | 'roomLeads'>, id: string, earnedAt: number) {
+    const max = Math.max(...Object.values(badgeCatalog).filter(badge => badge.metric === kind).map(badge => badge.target));
+    const sql = this.ctx.storage.sql;
+    const count = () => sql.exec<{ count: number }>('SELECT count(*) AS count FROM badge_events WHERE kind = ?', kind).one().count;
+    const added = this.ctx.storage.transactionSync(() => {
+      if (count() >= max) return [];
+      sql.exec('INSERT OR IGNORE INTO badge_events VALUES (?, ?)', kind, id);
+      return this.insertBadges(reachedBadges(kind, count()).map(id => ({ id, earnedAt })));
+    });
+    this.sendBadges(this.ctx.getWebSockets(), added);
+  }
+
+  recordReaction(secret: string, id: string) {
+    if (this.ctx.storage.kv.get<Identity>('identity')?.secret !== secret) return null;
+    this.countBadgeEvent('reactions', id, Date.now());
+    return this.earnedBadges();
+  }
+
+  grantRoomBadges(badges: EarnedBadge[]) {
+    if (this.ctx.storage.kv.get<Identity>('identity')) this.unlockBadges(badges);
+  }
+
+  recordRoomLead(room: string, earnedAt: number) {
+    if (this.ctx.storage.kv.get<Identity>('identity')) this.countBadgeEvent('roomLeads', room, earnedAt);
+  }
+
   async preferences(secret: string, update: ProfilePreferences) {
     return this.ctx.blockConcurrencyWhile(async () => {
       const identity = await this.ctx.storage.get<Identity>('identity');
@@ -414,6 +476,16 @@ export class ProfileStore extends DurableObject<Env> {
       games[game] = stats;
       totalSeconds += stats.seconds;
     }
+    let badges = this.earnedBadges();
+    const gameCount = Object.values(games).filter(stats => stats.sessions > 0).length;
+    const conquest = reachedBadges('games', gameCount).filter(id => !badges.some(badge => badge.id === id));
+    if (conquest.length) {
+      const firstPlayed = this.ctx.storage.sql.exec<{ playedAt: number }>(
+        "SELECT min(playedAt) AS playedAt FROM matches WHERE mode = 'online' GROUP BY game ORDER BY playedAt",
+      ).toArray();
+      this.unlockBadges(conquest.map(id => ({ id, earnedAt: firstPlayed[badgeCatalog[id].target - 1].playedAt })));
+      badges = this.earnedBadges();
+    }
     type MatchRow = {
       id: string; game: MatchReport['game']; mode: MatchReport['mode']; outcome: MatchReport['outcome']; seconds: number; playedAt: number;
     };
@@ -423,7 +495,7 @@ export class ProfileStore extends DurableObject<Env> {
     return {
       id: identity.id, name: identity.name, ...avatarLayers(identity),
       touchEffect: identity.touchEffect ?? 'soft',
-      favorites: identity.favorites ?? [], level: levelFromPlayTime(totalSeconds), xp: totalSeconds, totalSeconds, games, recent,
+      favorites: identity.favorites ?? [], level: levelFromPlayTime(totalSeconds), xp: totalSeconds, totalSeconds, games, recent, badges,
     };
   }
 }

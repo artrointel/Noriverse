@@ -11,7 +11,13 @@ export const sketchSceneHeight = 594;
 const toolsTexture = 'sketch-hud-tools';
 const platesTexture = 'sketch-hud-plates';
 const toolOrder = ['palette', ...brushStyles, 'eraser', 'undo', 'redo', 'clear', 'next', 'custom', 'clock'] as const;
-const plateOrder = ['clock', 'word', 'panel', 'action'] as const;
+const plates = {
+  clock: { frame: { x: 0, y: 0, w: 384, h: 112 } },
+  word: { frame: { x: 384, y: 0, w: 384, h: 112 } },
+  action: { frame: { x: 384, y: 112, w: 384, h: 112 } },
+};
+const settingsY = 552;
+const paletteY = 578;
 type HudLabel = 'palette' | 'custom' | 'recent' | 'width' | 'eraser' | 'undo' | 'redo' | 'clear' | 'next' | typeof brushStyles[number];
 export type SketchHudView = {
   clock: string; low: boolean; word: string; wordLabel: string; status: string; notice?: string; hints: string[];
@@ -29,7 +35,7 @@ export function loadSketchHud(scene: Phaser.Scene) {
     frames: Object.fromEntries(names.map((name, index) => [name, { frame: { x: index % cols * w, y: Math.floor(index / cols) * h, w, h } }])),
   });
   scene.load.atlas(toolsTexture, hudToolArt, atlas(toolOrder, 4, 128, 128));
-  scene.load.atlas(platesTexture, hudPlateArt, atlas(plateOrder, 2, 384, 112));
+  scene.load.atlas(platesTexture, hudPlateArt, { frames: plates });
 }
 
 export function createSketchHud(scene: Phaser.Scene) {
@@ -42,53 +48,52 @@ export function createSketchHud(scene: Phaser.Scene) {
     textLabels.push(label);
     return label;
   };
-  const rail = (key: typeof plateOrder[number], x: number, y: number, width: number, height: number) =>
+  const rail = (key: keyof typeof plates, x: number, y: number, width: number, height: number) =>
     scene.add.image(x, y, platesTexture, key).setDisplaySize(width, height);
   const icon = (key: typeof toolOrder[number], x: number, y: number, size: number) =>
     scene.add.image(x, y, toolsTexture, key).setDisplaySize(size, size);
-  rail('panel', 240, 537, 480, 114);
   rail('clock', 240, 22, 108, 36);
   icon('clock', 206, 22, 23);
   const clock = text(248, 22, 24);
   const wordPlate = rail('word', 240, 455, 224, 39);
   const word = text(240, 455, 22).setShadow(0, 1, '#13091e', 5, false, true);
-  const status = text(240, 497, 15);
-  const hints = text(240, 554, 15);
-  const notice = text(240, 577, 13);
-  const score = Array.from({ length: 4 }, (_, index) => text(63 + index * 117, 578, 15));
+  const status = text(240, 492, 15);
+  const hints = text(240, 567, 15);
+  const notice = text(240, paletteY, 13);
+  const score = Array.from({ length: 4 }, () => text(0, 584, 15));
   const controls = scene.add.container();
-  const widthLabel = text(32, 548, 13);
-  const widthNumber = text(196, 548, 15);
-  const recent = text(242, 548, 13);
-  const track = scene.add.rectangle(108, 548, 84, 4, 0xaf9fd0).setOrigin(.5);
-  const thumb = scene.add.circle(66, 548, 6, 0xffde9a);
-  const sample = scene.add.circle(174, 548, 7, 0xffffff);
+  const widthLabel = text(32, settingsY, 13);
+  const widthNumber = text(196, settingsY, 15);
+  const recent = text(242, settingsY, 13);
+  const track = scene.add.rectangle(108, settingsY, 84, 4, 0xaf9fd0).setStrokeStyle(1, 0x2e213a);
+  const thumb = scene.add.circle(66, settingsY, 6, 0xffde9a).setStrokeStyle(1, 0x2e213a);
+  const sample = scene.add.circle(174, settingsY, 7, 0xffffff);
   controls.add([widthLabel, widthNumber, recent, track, thumb, sample]);
 
   function fit(label: Phaser.GameObjects.Text, value: string, width: number) {
     label.setText(value).setScale(Math.min(1, width / Math.max(1, label.width)), 1);
   }
 
-  const button = (key: typeof toolOrder[number], i: number) => {
-    const x = 24 + 48 * i;
-    const plate = icon(key, x, 499, 33);
-    const label = text(x, 520, 13);
+  const button = <Key extends typeof toolOrder[number]>(key: Key) => {
+    const plate = icon(key, 0, 505, 36);
+    const label = text(0, 529, 13);
     controls.add([plate, label]);
-    return { key, x, y: 505, width: 45, height: 47, plate, label };
+    return { key, x: 0, y: 510, width: 44, height: 49, plate, label };
   };
-  const buttons = (['palette', ...brushStyles, 'eraser'] as const).map((key, i) => ({ ...button(key, i), key }));
-  const edits = (['undo', 'redo', 'clear', 'next'] as const).map((key, i) => ({ ...button(key, i + 6), key }));
-  const custom = { x: 411, y: 575, width: 110, height: 29, plate: rail('action', 411, 575, 110, 28),
-    icon: icon('custom', 367, 575, 21), label: text(421, 575, 13) };
+  const buttons = (['palette', ...brushStyles, 'eraser'] as const).map(key => button(key));
+  const edits = (['undo', 'redo', 'clear', 'next'] as const).map(key => button(key));
+  const custom = { x: 411, y: paletteY, width: 110, height: 28, plate: rail('action', 411, paletteY, 110, 28),
+    icon: icon('custom', 367, paletteY, 21), label: text(421, paletteY, 13) };
   controls.add([custom.plate, custom.icon, custom.label]);
   const swatch = (x: number, y: number) => {
     const tile = scene.add.circle(x, y, 9, 0xffffff).setStrokeStyle(1.5, 0xe5c9e8);
     controls.add(tile);
     return tile;
   };
-  const recentColors = Array.from({ length: 7 }, (_, index) => swatch(289 + index * 27, 548));
-  const palette = inkColors.map((_, index) => swatch(28 + index * 40, 575));
+  const recentColors = Array.from({ length: 7 }, (_, index) => swatch(289 + index * 27, settingsY));
+  const palette = inkColors.map((_, index) => swatch(28 + index * 40, paletteY));
   let view: SketchHudView | undefined;
+  let laidOutWithNext: boolean | undefined;
   let paletteOpen = false;
   let slider: number | undefined;
 
@@ -117,6 +122,19 @@ export function createSketchHud(scene: Phaser.Scene) {
     });
     controls.setVisible(Boolean(tool));
     if (!tool) { paletteOpen = false; slider = undefined; return; }
+    const hasNext = Boolean(tool.next);
+    if (hasNext !== laidOutWithNext) {
+      const items = [...buttons, ...edits];
+      const step = 46, gap = 10;
+      const visibleCount = items.length - Number(!hasNext);
+      const start = (tableSize - visibleCount * step - gap) / 2 + step / 2;
+      items.forEach((item, index) => {
+        item.x = start + index * step + (index >= buttons.length ? gap : 0);
+        item.plate.setX(item.x);
+        item.label.setX(item.x);
+      });
+      laidOutWithNext = hasNext;
+    }
     const erasing = tool.brush === eraserBrush;
     const max = erasing ? maxEraserWidth : maxInkWidth;
     fit(widthLabel, tool.labels.width, 56);
@@ -164,7 +182,7 @@ export function createSketchHud(scene: Phaser.Scene) {
       const tool = view?.tools;
       const { worldX: x, worldY: y } = pointer;
       if (!tool || y < sketchMapBottom) return false;
-      if (x >= 59 && x <= 157 && Math.abs(y - 548) <= 13) {
+      if (x >= 59 && x <= 157 && Math.abs(y - settingsY) <= 12) {
         slider = pointer.id;
         changeWidth(x);
         return true;
@@ -172,7 +190,7 @@ export function createSketchHud(scene: Phaser.Scene) {
       const brush = buttons.findIndex(item => matches(item, x, y));
       if (brush === 0 && view) { paletteOpen = !paletteOpen; const next = view; view = undefined; update(next); }
       if (brush > 0) tool.setBrush(brush - 1);
-      const apply = edits.find(item => matches(item, x, y))?.key;
+      const apply = edits.find(item => item.plate.visible && matches(item, x, y))?.key;
       if (apply === 'next') tool.next?.();
       else if (apply && (apply === 'redo' ? tool.canRedo : tool.canUndo)) tool.edit(apply);
       const last = recentColors.findIndex(tile => tile.visible && Math.hypot(tile.x - x, tile.y - y) <= 13);

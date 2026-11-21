@@ -51,7 +51,7 @@ export function readRelayData(value: unknown): RelayData | undefined {
 }
 export type RoomMessage =
   | (Signal & { peer?: Role })
-  | { type: 'welcome'; role: Role; token: string }
+  | { type: 'welcome'; role: Role; token: string; title?: string }
   | { type: 'roster'; participants: Participant[] }
   | { type: 'paired' | 'peer-left'; peer?: Role }
   | { type: 'relay-request' | 'relay-open'; peer: Role }

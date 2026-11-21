@@ -1,14 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { readReport } from '../../../../packages/protocol/profile.ts';
+import { profileIdPattern, readReport } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, OwnProfile, PresenceMode, ProfilePreferences, PublicProfile } from '../../../../packages/protocol/profile.ts';
+import { mergeBadges, readEarnedBadge } from '../../../../packages/protocol/badges.ts';
+import type { BadgeId, EarnedBadge } from '../../../../packages/protocol/badges.ts';
 import { apiAvailable, apiFetch } from '../network/api.ts';
-import { deleteBrowserProfile, readBrowserProfile, readBrowserTouchEffect, saveBrowserAvatar, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
+import { deleteBrowserProfile, readBrowserProfile, readBrowserTouchEffect, recordBrowserReaction, saveBrowserAvatar, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
+import { playSound } from './audio.ts';
 
 const recordCount = (profile: PublicProfile) => Object.values(profile.games).reduce((sum, game) => sum + game.sessions, 0);
 const applyBrowserTouchEffect = (profile: OwnProfile): OwnProfile => ({ ...profile,
   touchEffect: readBrowserTouchEffect(profile.id) ?? profile.touchEffect ?? 'soft',
 });
 const matchQueueKey = (owner: string) => 'noriverse.pendingMatches.' + owner;
+const reactionQueueKey = (owner: string) => 'noriverse.pendingReactions.' + owner;
+
+function pendingReactions(owner: string): string[] {
+  try {
+    const values: unknown = JSON.parse(localStorage.getItem(reactionQueueKey(owner)) ?? '[]');
+    return Array.isArray(values) ? values.filter((id): id is string => typeof id === 'string' && profileIdPattern.test(id)) : [];
+  } catch { return []; }
+}
+
+function saveReactionQueue(owner: string, pending: string[]) {
+  try {
+    if (pending.length) localStorage.setItem(reactionQueueKey(owner), JSON.stringify(pending));
+    else localStorage.removeItem(reactionQueueKey(owner));
+  } catch { /* The current reaction can still be submitted. */ }
+}
 
 function pendingMatches(owner: string): MatchReport[] {
   try {
@@ -30,7 +48,34 @@ export function useProfile(profileOpen: boolean) {
   const [profile, setProfile] = useState<OwnProfile>();
   const owner = profile?.id;
   const deletingOwner = useRef<string>(null);
+  const knownBadges = useRef<{ owner?: string; ids: Set<BadgeId> }>({ ids: new Set() });
+  const [badgeToasts, setBadgeToasts] = useState<EarnedBadge[]>([]);
   const [status, setStatus] = useState<'loading' | 'missing' | 'ready' | 'error'>('loading');
+  const badgeList = profile?.badges;
+  useEffect(() => {
+    if (knownBadges.current.owner !== owner) {
+      knownBadges.current = { owner, ids: new Set(badgeList?.map(badge => badge.id)) };
+      setBadgeToasts([]);
+      return;
+    }
+    const earned = badgeList?.filter(badge => !knownBadges.current.ids.has(badge.id)) ?? [];
+    if (!earned.length) return;
+    for (const badge of earned) knownBadges.current.ids.add(badge.id);
+    setBadgeToasts(previous => [...previous, ...earned]);
+    playSound('badge');
+  }, [owner, badgeList]);
+
+  const firstToast = badgeToasts[0]?.id;
+  useEffect(() => {
+    if (!firstToast) return;
+    const timer = window.setTimeout(() => setBadgeToasts(previous => previous.filter(badge => badge.id !== firstToast)), 6500);
+    return () => window.clearTimeout(timer);
+  }, [firstToast]);
+
+  const syncBadges = useCallback((id: string, badges: EarnedBadge[]) => {
+    if (deletingOwner.current === id || !badges.length) return;
+    setProfile(current => current?.id === id ? { ...current, badges: mergeBadges(current.badges, badges) } : current);
+  }, []);
   useEffect(() => {
     if (!apiAvailable) {
       const saved = readBrowserProfile();
@@ -67,7 +112,8 @@ export function useProfile(profileOpen: boolean) {
     if (!response.ok) throw new Error();
     const next = await response.json() as OwnProfile;
     if (next.id === deletingOwner.current) throw new Error();
-    setProfile(current => applyBrowserTouchEffect(current?.id === next.id ? { ...next, presence: current.presence ?? next.presence } : next));
+    setProfile(current => applyBrowserTouchEffect(current?.id === next.id
+      ? { ...next, presence: current.presence ?? next.presence, badges: mergeBadges(current.badges, next.badges) } : next));
     setStatus('ready');
   }
 
@@ -87,6 +133,7 @@ export function useProfile(profileOpen: boolean) {
     }
     saveBrowserTouchEffect(owner);
     try { localStorage.removeItem(matchQueueKey(owner)); } catch { /* Storage can be disabled. */ }
+    saveReactionQueue(owner, []);
     setProfile(undefined);
     setStatus('missing');
   }
@@ -123,7 +170,7 @@ export function useProfile(profileOpen: boolean) {
       const presence = 'presence' in preferences ? next.presence : current.presence ?? next.presence;
       return recordCount(current) > recordCount(next)
         ? { ...current, avatar: next.avatar, avatarBackground: next.avatarBackground, favorites: next.favorites, touchEffect: next.touchEffect, presence }
-        : { ...next, presence };
+        : { ...next, presence, badges: mergeBadges(current.badges, next.badges) };
     });
   }
 
@@ -146,13 +193,37 @@ export function useProfile(profileOpen: boolean) {
       const next = await response.json() as PublicProfile;
       if (next.id !== owner) return false;
       updatePendingMatch(owner, match, false);
+      syncBadges(owner, next.badges ?? []);
       setProfile(current => current?.id === next.id && recordCount(current) <= recordCount(next)
         ? { ...current, totalSeconds: next.totalSeconds, xp: next.xp, level: next.level, games: next.games, recent: next.recent } : current);
       return true;
     } catch {
       return false;
     }
-  }, [owner]);
+  }, [owner, syncBadges]);
+
+  const submitReaction = useCallback(async (id: string) => {
+    if (!owner || owner === deletingOwner.current) return false;
+    try {
+      const response = await apiFetch('/api/profiles/me/reactions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, owner }), keepalive: true,
+      });
+      if (!response.ok) return false;
+      const result: unknown = await response.json();
+      if (!Array.isArray(result)) return false;
+      saveReactionQueue(owner, pendingReactions(owner).filter(pending => pending !== id));
+      syncBadges(owner, result.map(readEarnedBadge).filter(badge => badge !== undefined));
+      return true;
+    } catch { return false; }
+  }, [owner, syncBadges]);
+
+  function recordReaction() {
+    if (!owner || owner === deletingOwner.current || badgeList?.some(badge => badge.id === 'goodSport')) return;
+    if (!apiAvailable) { syncBadges(owner, recordBrowserReaction(owner)); return; }
+    const id = crypto.randomUUID();
+    saveReactionQueue(owner, [...pendingReactions(owner), id]);
+    void submitReaction(id);
+  }
 
   useEffect(() => {
     if (!apiAvailable || !owner) return;
@@ -166,12 +237,16 @@ export function useProfile(profileOpen: boolean) {
         for (const match of pendingMatches(id)) {
           if (!active || !await record(match)) break;
         }
+        for (const reaction of pendingReactions(id)) {
+          if (!active || !await submitReaction(reaction)) break;
+        }
       } finally { retrying = false; }
     }
     void retry();
     window.addEventListener('online', retry);
     return () => { active = false; window.removeEventListener('online', retry); };
-  }, [owner, record, profileOpen]);
+  }, [owner, record, submitReaction, profileOpen]);
 
-  return { profile, status, saveName, deleteProfile, setPreferences, syncPresence, record };
+  return { profile, status, saveName, deleteProfile, setPreferences, syncPresence, record, recordReaction, syncBadges, badgeToasts,
+    dismissBadge: (id: BadgeId) => setBadgeToasts(previous => previous.filter(badge => badge.id !== id)) };
 }

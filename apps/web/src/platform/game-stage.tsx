@@ -1,5 +1,5 @@
 import { RoomRankingControl } from './room-ranking.tsx';
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { touchResolution } from '../../../../packages/protocol/rooms.ts';
@@ -53,6 +53,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const resultButton = useRef<HTMLButtonElement>(null);
   const gameSettings = useRef<HTMLDetailsElement>(null);
   const gameInfo = useRef<HTMLDetailsElement>(null);
+  const gameHelp = useRef<HTMLDialogElement>(null);
+  const helpId = useId();
   const burstId = useRef(0);
   const [bursts, setBursts] = useState<{ id: number; x: number; y: number; remote: boolean; effect: TouchParticle }[]>([]);
   const current = useRef(view);
@@ -120,7 +122,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     if (mount.current && 'devicePixelContentBoxSize' in ResizeObserverEntry.prototype) {
       observer.observe(mount.current, { box: 'device-pixel-content-box' });
     }
-    for (const chrome of [stage.querySelector('.stage-bar'), stage.querySelector('.stage-help'), footerControls, header]) {
+    for (const chrome of [stage.querySelector('.stage-bar'), footerControls, header]) {
       if (chrome) observer.observe(chrome);
     }
     window.addEventListener('resize', measure);
@@ -296,6 +298,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
           <span>{stageContext.mode}</span><strong>{stageContext.map}</strong>
         </div>}
         <div className="stage-actions">
+          {resultHidden && <button ref={resultButton} className="button stage-result-trigger" type="button" aria-label={t('viewResult')} onClick={onShowResult}>{t('viewResult')}</button>}
           {info && <details className="stage-info" ref={gameInfo} onKeyDown={event => {
             if (event.key === 'Escape' && event.currentTarget.open) {
               event.preventDefault();
@@ -309,7 +312,12 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
             </summary>
             <div className="surface match-panel">{info}</div>
           </details>}
-          {resultHidden && <button ref={resultButton} className="button stage-result-trigger" type="button" aria-label={t('viewResult')} onClick={onShowResult}>{t('viewResult')}</button>}
+          <button className="button button-secondary stage-control stage-control-icon stage-help-trigger" type="button"
+            aria-label={t('gameHelp')} title={t('gameHelp')} aria-haspopup="dialog" aria-controls={helpId}
+            onClick={() => {
+              if (gameInfo.current) gameInfo.current.open = false;
+              gameHelp.current?.showModal();
+            }}>?</button>
           <button className="button button-secondary stage-control" type="button" onClick={() => void toggleFullscreen()}>
             {t(expanded ? 'restore' : 'fullscreen')}
           </button>
@@ -351,7 +359,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
             tabIndex={id === 'liar' ? undefined : 0}
             role="group"
             aria-label={t(boardLabel)}
-            aria-describedby="game-help"
+            aria-describedby={helpId + '-body'}
             onBlur={() => setCursor(null)}
             onPointerDownCapture={handleTouch}
             onKeyDown={id === 'physics' || id === 'sketch' || id === 'liar' ? undefined : onKeyDown}
@@ -372,11 +380,18 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         </div>
       )}
       <div className="visually-hidden" aria-live="polite">{focusLabel}</div>
-      <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp'
-        : id === 'sketch' ? 'sketchHelp' : id === 'liar' ? 'liarHelp' : 'boardHelp')}
-        {(id === 'omok' || id === 'chess') && <> {t('previewMoveHelp')}</>}
-        {id === 'othello' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
-      </p>
+      <dialog ref={gameHelp} id={helpId} className="surface profile-dialog stage-help-dialog" aria-labelledby={helpId + '-title'}
+        aria-describedby={helpId + '-body'} onKeyDown={event => { if (event.key === 'Escape') event.stopPropagation(); }}>
+        <header className="room-panel-heading">
+          <h2 id={helpId + '-title'}>{t('gameHelp')}</h2>
+          <button className="settings-close" type="button" aria-label={t('close')} onClick={() => gameHelp.current?.close()}><span aria-hidden="true" /></button>
+        </header>
+        <p id={helpId + '-body'}>{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp'
+          : id === 'sketch' ? 'sketchHelp' : id === 'liar' ? 'liarHelp' : 'boardHelp')}
+          {(id === 'omok' || id === 'chess') && <> {t('previewMoveHelp')}</>}
+          {id === 'othello' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
+        </p>
+      </dialog>
     </section>
   );
 }

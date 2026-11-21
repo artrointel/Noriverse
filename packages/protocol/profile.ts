@@ -1,5 +1,6 @@
 import { isGameId } from './games.ts';
 import type { GameId } from './games.ts';
+import type { EarnedBadge } from './badges.ts';
 
 export const profileIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 export { gameIds as profileGames, isGameId as isProfileGame } from './games.ts';
@@ -57,6 +58,7 @@ export interface PublicProfile extends AvatarLayers {
   level: number;
   xp: number;
   totalSeconds: number;
+  badges?: EarnedBadge[];
   games: Record<ProfileGame, GameStats>;
   recent: (MatchReport & { playedAt: number })[];
 }

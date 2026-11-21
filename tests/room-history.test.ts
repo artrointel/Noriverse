@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mergeRoomHistory, readRoomResult } from '../apps/web/src/network/room-history.ts';
-import type { RoomResult } from '../apps/web/src/network/room-history.ts';
+import { mergeRoomHistory, readRoomResult } from '../packages/protocol/room-history.ts';
+import type { RoomResult } from '../packages/protocol/room-history.ts';
 
 const first: RoomResult = {
   id: '12345678-1234-1234-1234-123456789001', game: 'omok', endedAt: 1_000, seconds: 20,

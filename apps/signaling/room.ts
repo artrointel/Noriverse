@@ -4,9 +4,13 @@ import type { Participant, Role, RoomGame, RoomMessage } from '../../packages/pr
 import type { ProfileSummary } from '../../packages/protocol/profile.ts';
 import type { Env } from './bindings.ts';
 import { notifyFriends } from './profiles.ts';
+import { minimumRoomPlayers } from '../../packages/protocol/games.ts';
+import { readRoomResult, roomStandings } from '../../packages/protocol/room-history.ts';
+import type { RoomResult } from '../../packages/protocol/room-history.ts';
+import { roomStreakBadges } from '../../packages/protocol/room-badges.ts';
 
 interface Reservation { host: string; hostJoined?: boolean; guest?: string; guest2?: string; guest3?: string; game?: RoomGame; expires: number;
-  profiles?: Partial<Record<Role, ProfileSummary>>; memberIds?: Partial<Record<Role, string>> }
+  profiles?: Partial<Record<Role, ProfileSummary>>; memberIds?: Partial<Record<Role, string>>; closedAt?: number; title?: string }
 type AttachedSeat = { role: Role; token?: string; relay?: boolean };
 const roomLifetime = 30 * 60 * 1000;
 const guests = roomRoles.filter(role => role !== 'host');
@@ -18,14 +22,23 @@ function send(socket: WebSocket, message: RoomMessage) {
 
 export class Room extends DurableObject<Env> {
   private readonly relayBudget = new WeakMap<WebSocket, { tokens: number; at: number }>();
-  async reserve(game: RoomGame, profile?: ProfileSummary): Promise<string | null> {
+  constructor(context: DurableObjectState, env: Env) {
+    super(context, env);
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS badge_room_members (memberId TEXT PRIMARY KEY, profileId TEXT);
+      CREATE TABLE IF NOT EXISTS badge_room_results (id TEXT PRIMARY KEY, result TEXT NOT NULL);
+    `);
+  }
+
+  async reserve(game: RoomGame, title: string, profile?: ProfileSummary): Promise<string | null> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const previous = await this.ctx.storage.get<Reservation>('reservation');
-      if (previous && previous.expires > Date.now()) return null;
+      if (previous && (previous.expires > Date.now() || !await this.finishRoom(previous))) return null;
       this.closeRoomSockets();
-      const reservation: Reservation = { host: crypto.randomUUID(), hostJoined: false, game, expires: Date.now() + roomLifetime,
+      const reservation: Reservation = { host: crypto.randomUUID(), hostJoined: false, game, title, expires: Date.now() + roomLifetime,
         profiles: profile ? { host: profile } : undefined, memberIds: { host: crypto.randomUUID() } };
       await this.ctx.storage.put('reservation', reservation);
+      this.rememberBadgeMembers(reservation);
       await this.ctx.storage.setAlarm(reservation.expires);
       return reservation.host;
     });
@@ -77,6 +90,7 @@ export class Room extends DurableObject<Env> {
       if (!role) return false;
       reservation.profiles = { ...reservation.profiles, [role]: profile };
       await this.ctx.storage.put('reservation', reservation);
+      this.rememberBadgeMembers(reservation);
       this.sendRoster(reservation);
       this.notifyRoomChange(reservation);
       return true;
@@ -112,9 +126,10 @@ export class Room extends DurableObject<Env> {
         reservation.memberIds = { ...reservation.memberIds, [role]: reservation.memberIds?.[role] ?? crypto.randomUUID() };
         await this.ctx.storage.put('reservation', reservation);
       }
+      this.rememberBadgeMembers(reservation);
       this.socketFor(role, server)?.close(1000, 'Seat replaced');
       server.serializeAttachment({ role, token: seat });
-      send(server, { type: 'welcome', role, token: seat });
+      send(server, { type: 'welcome', role, token: seat, title: reservation.title });
       if (role === 'host') {
         for (const peer of guests) this.pair(server, peer);
       } else if (host) this.pair(host, role);
@@ -129,6 +144,11 @@ export class Room extends DurableObject<Env> {
     if (!role || this.socketFor(role) !== socket || typeof message !== 'string' || message.length > maxRelayMessageLength) return;
     try {
       const raw: unknown = JSON.parse(message);
+      if (role === 'host' && raw && typeof raw === 'object' && 'type' in raw && raw.type === 'room-result') {
+        const result = 'entry' in raw ? readRoomResult(raw.entry) : undefined;
+        if (result && !result.test) await this.recordBadgeResult(socket, result);
+        return;
+      }
       if (role !== 'host' && raw && typeof raw === 'object' && 'type' in raw && raw.type === 'leave') {
         await this.ctx.blockConcurrencyWhile(async () => {
           const reservation = await this.ctx.storage.get<Reservation>('reservation');
@@ -190,10 +210,7 @@ export class Room extends DurableObject<Env> {
         if (this.socketFor('host', socket)) return;
         const reservation = await this.ctx.storage.get<Reservation>('reservation');
         if (!reservation || (attachment.token ? attachment.token !== reservation.host : reservation.hostJoined === false)) return;
-        await this.ctx.storage.delete('reservation');
-        await this.ctx.storage.deleteAlarm();
-        this.closeRoomSockets();
-        this.notifyRoomChange(reservation);
+        await this.finishRoom(reservation);
       });
       return;
     }
@@ -228,14 +245,85 @@ export class Room extends DurableObject<Env> {
   }
 
   async alarm() {
-    const reservation = await this.ctx.storage.get<Reservation>('reservation');
-    if (reservation && reservation.expires > Date.now()) {
-      await this.ctx.storage.setAlarm(reservation.expires);
-      return;
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const reservation = await this.ctx.storage.get<Reservation>('reservation');
+      if (!reservation) return;
+      if (!reservation.closedAt && reservation.expires > Date.now()) await this.ctx.storage.setAlarm(reservation.expires);
+      else await this.finishRoom(reservation);
+    });
+  }
+
+  private rememberBadgeMembers(reservation: Reservation) {
+    for (const role of roomRoles) {
+      const memberId = reservation.memberIds?.[role];
+      if (!memberId) continue;
+      this.ctx.storage.sql.exec(`INSERT INTO badge_room_members VALUES (?, ?)
+        ON CONFLICT(memberId) DO UPDATE SET profileId = excluded.profileId
+        WHERE excluded.profileId IS NOT NULL AND excluded.profileId IS NOT badge_room_members.profileId`,
+      memberId, reservation.profiles?.[role]?.id ?? null);
     }
+  }
+
+  private badgeResults() {
+    const profiles = new Map(this.ctx.storage.sql.exec<{ memberId: string; profileId: string | null }>(
+      'SELECT memberId, profileId FROM badge_room_members',
+    ).toArray().map(row => [row.memberId, row.profileId ?? undefined]));
+    return this.ctx.storage.sql.exec<{ result: string }>('SELECT result FROM badge_room_results ORDER BY rowid').toArray()
+      .map(({ result }) => {
+        const entry = JSON.parse(result) as RoomResult;
+        return { ...entry, players: entry.players.map(player => ({ ...player,
+          profileId: player.profileId ?? (player.memberId ? profiles.get(player.memberId) : undefined),
+        })) };
+      });
+  }
+
+  private async recordBadgeResult(socket: WebSocket, result: RoomResult) {
+    const awards = await this.ctx.blockConcurrencyWhile(async () => {
+      const reservation = await this.ctx.storage.get<Reservation>('reservation');
+      if (!reservation || reservation.closedAt || reservation.expires <= Date.now() || reservation.host !== this.attachedSeat(socket)?.token
+        || result.players.length < minimumRoomPlayers(result.game)
+        || result.players.length > roomCapacity[result.game]
+        || result.players.find(player => player.role === 'host')?.memberId !== reservation.memberIds?.host) return;
+      const sql = this.ctx.storage.sql;
+      const players = result.players.map(player => {
+        if (!player.memberId || player.points === undefined) return;
+        const member = sql.exec<{ profileId: string | null }>('SELECT profileId FROM badge_room_members WHERE memberId = ?', player.memberId).toArray()[0];
+        if (member) return { ...player, profileId: member.profileId ?? undefined };
+      });
+      if (players.some(player => !player) || new Set(players.map(player => player?.profileId ?? player?.memberId)).size !== players.length) return;
+      const stored = { ...result, players, endedAt: Date.now() };
+      const added = sql.exec('INSERT OR IGNORE INTO badge_room_results VALUES (?, ?) RETURNING id', result.id, JSON.stringify(stored)).toArray();
+      if (!added.length) return;
+      return roomStreakBadges(this.badgeResults()).filter(award => award.badges.some(badge => badge.earnedAt === stored.endedAt));
+    });
+    if (awards?.length) this.ctx.waitUntil(this.deliverStreakBadges(awards).catch(() => {}));
+  }
+
+  private async deliverStreakBadges(awards: ReturnType<typeof roomStreakBadges>) {
+    await Promise.all(awards.map(({ id, badges }) => this.env.PROFILES.getByName(id).grantRoomBadges(badges)));
+  }
+
+  private async finishRoom(reservation: Reservation) {
     this.closeRoomSockets();
-    await this.ctx.storage.delete('reservation');
-    if (reservation) this.notifyRoomChange(reservation);
+    const closedAt = reservation.closedAt ?? Math.min(Date.now(), reservation.expires);
+    const entries = this.badgeResults();
+    const winner = roomStandings([...entries].reverse(), [])[0];
+    const profileId = winner && entries.flatMap(entry => entry.players).find(player => player.profileId === winner.key)?.profileId;
+    if (!reservation.closedAt && entries.length) await this.ctx.storage.put('reservation', { ...reservation, closedAt });
+    try {
+      await this.deliverStreakBadges(roomStreakBadges(entries));
+      if (profileId) await this.env.PROFILES.getByName(profileId).recordRoomLead(reservation.host, closedAt);
+    } catch {
+      await this.ctx.storage.setAlarm(Date.now() + 5000);
+      return false;
+    }
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.kv.delete('reservation');
+      this.ctx.storage.sql.exec('DELETE FROM badge_room_members; DELETE FROM badge_room_results;');
+    });
+    await this.ctx.storage.deleteAlarm();
+    this.notifyRoomChange(reservation);
+    return true;
   }
 
   private notifyRoomChange(reservation: Reservation) {

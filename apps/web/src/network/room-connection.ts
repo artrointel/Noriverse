@@ -1,4 +1,6 @@
 import { isRoomRole, maxRelayMessageLength, readRelayData, roomRoles } from '../../../../packages/protocol/rooms.ts';
+import type { RoomResult } from '../../../../packages/protocol/room-history.ts';
+import { readRoomTitle } from '../../../../packages/protocol/room-titles.ts';
 import type { Participant, Role, RoomMessage, Signal } from '../../../../packages/protocol/rooms.ts';
 import { apiUrl } from './api.ts';
 
@@ -6,7 +8,7 @@ export type ConnectionState = 'joining' | 'waiting' | 'connecting' | 'connected'
 
 interface RoomEvents {
   state: (state: ConnectionState) => void;
-  seat: (role: Role, token: string) => void;
+  seat: (role: Role, token: string, title?: string) => void;
   open: (peer: Role) => void;
   receive: (message: unknown, peer: Role) => void;
   roster: (participants: Participant[]) => void;
@@ -136,7 +138,7 @@ export function connectToRoom(code: string, token: string | undefined, events: R
     if (message.type === 'room-closed') { closePeers(); state('closed'); return; }
     if (message.type === 'welcome') {
       role = message.role;
-      events.seat(role, message.token);
+      events.seat(role, message.token, readRoomTitle(message.title));
       state('waiting');
       return;
     }
@@ -209,6 +211,9 @@ export function connectToRoom(code: string, token: string | undefined, events: R
 
   return {
     connectedPeers,
+    reportResult(entry: RoomResult) {
+      if (role === 'host' && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'room-result', entry }));
+    },
     send(message: unknown, target?: Role) {
       const data = JSON.stringify(message);
       let sent = false;

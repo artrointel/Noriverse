@@ -9,12 +9,14 @@ import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { BackLink, gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { randomPlayerName } from './player-names.ts';
+import { DiceIcon } from './dice-icon.tsx';
 import { FriendButton } from './friends.tsx';
 import type { Friends } from './friends.tsx';
 import { TouchBurst } from './touch-burst.tsx';
 import { PresenceControl } from './presence-control.tsx';
 import { formatPlayTime } from './game-time.tsx';
 import type { useProfile } from './use-profile.ts';
+import { ProfileBadges } from './profile-badges.tsx';
 
 export function NameDialog({ name, close, save }: {
   name?: string; close: () => void; save: (name: string) => Promise<void>;
@@ -56,12 +58,7 @@ export function NameDialog({ name, close, save }: {
             placeholder={t('namePlaceholder')} autoComplete="nickname" maxLength={24} autoFocus required />
           <button type="button" className="dice-button" aria-label={t('randomName')} title={t('randomName')}
             disabled={busy} onClick={() => setValue(randomPlayerName(i18n.resolvedLanguage, value))}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-              <rect x="4" y="4" width="16" height="16" rx="4" transform="rotate(-12 12 12)" />
-              <circle cx="8.5" cy="8.5" r=".85" fill="currentColor" stroke="none" />
-              <circle cx="12" cy="12" r=".85" fill="currentColor" stroke="none" />
-              <circle cx="15.5" cy="15.5" r=".85" fill="currentColor" stroke="none" />
-            </svg>
+            <DiceIcon />
           </button>
         </div>
         {failed && <p role="alert" className="muted">{t('profileError')}</p>}
@@ -330,6 +327,7 @@ export function ProfilePage({ own, id, model, friends, navigate, edit, onDeleted
               <p className="profile-level">{t('levelValue', { level: profile.level })} <span>{t('totalPlayTime')} {formatPlayTime(profile.totalSeconds)}</span></p>
               <progress aria-label={t('levelProgress')} max={secondsPerLevel} value={profile.totalSeconds % secondsPerLevel} />
             </div>}
+            {profile && <ProfileBadges key={profile.id} badges={profile.badges} />}
           </div>
         </div>
         {own && !loading && <div className="panel-actions">

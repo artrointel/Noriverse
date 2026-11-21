@@ -4,8 +4,8 @@ import type { Participant, Role } from '../packages/protocol/rooms.ts';
 import { defaultMatchSettings } from '../apps/web/src/games/match-settings.ts';
 import { applyLiarAction, defaultLiarSettings, makeLiarRound } from '../apps/web/src/games/liar/rules.ts';
 import { inRound, lobbyMatch, mockSeatsFor, roundSeats } from '../apps/web/src/network/room-match.ts';
-import { mergeRoomHistory, readRoomResult, roomStandings } from '../apps/web/src/network/room-history.ts';
-import type { RoomResult } from '../apps/web/src/network/room-history.ts';
+import { mergeRoomHistory, readRoomResult, roomRankChange, roomRankingEntries, roomStandings } from '../packages/protocol/room-history.ts';
+import type { RoomResult } from '../packages/protocol/room-history.ts';
 import { awardRoomPoints } from '../apps/web/src/network/room-scoring.ts';
 
 test('room awards cap wins, preserve draws and reward losing progress', () => {
@@ -61,5 +61,42 @@ test('passive test seats respect room capacity and cannot be used by a network a
   const match = { ...lobbyMatch('liar', defaultMatchSettings), mockSeats: mocks };
   assert(inRound(match, 'host'));
   assert(!inRound(match, 'guest'));
-  assert.equal(roomStandings([], [{ role: 'guest', mock: true }]).length, 0);
+  assert.equal(roomStandings([], [{ role: 'guest', mock: true }])[0].key, 'mock:guest');
+});
+
+test('mock results count in test rankings without taking the real guest’s identity or points', () => {
+  const game = lobbyMatch('omok', defaultMatchSettings);
+  const realGuest = { role: 'guest', memberId: crypto.randomUUID() } satisfies Participant;
+  const mock = { role: 'guest', mock: true } satisfies Participant;
+  const entry: RoomResult = {
+    id: crypto.randomUUID(), game: 'omok', endedAt: 100, seconds: 5, test: true, players: [
+      { role: 'host', outcome: 'win', ...awardRoomPoints(game, 'host', 'win') },
+      { role: 'guest', mock: true, outcome: 'loss', ...awardRoomPoints(game, 'guest', 'loss') },
+    ],
+  };
+  assert.deepEqual(readRoomResult(entry), entry);
+  assert.equal(readRoomResult({ ...entry, test: undefined }), undefined);
+  assert.deepEqual(roomStandings(roomRankingEntries([entry], true), [mock, realGuest]).map(row => [row.key, row.points]),
+    [['host', 50], ['mock:guest', 10], [realGuest.memberId, 0]]);
+  assert.deepEqual(roomStandings(roomRankingEntries([entry], false), [realGuest]).map(row => row.points), [0]);
+});
+
+test('a completed game reports the highest overtaking move against established rankings', () => {
+  const initial: RoomResult = {
+    id: crypto.randomUUID(), game: 'omok', endedAt: 100, seconds: 20, players: [
+      { role: 'host', name: 'Blue', outcome: 'win', points: 50 },
+      { role: 'guest', name: 'Green', outcome: 'loss', points: 25 },
+    ],
+  };
+  const next: RoomResult = {
+    ...initial, id: crypto.randomUUID(), endedAt: 150, players: [
+      { role: 'host', name: 'Blue', outcome: 'loss', points: 10 },
+      { role: 'guest', name: 'Green', outcome: 'win', points: 50 },
+    ],
+  };
+  assert.equal(roomRankChange([initial], [], initial), undefined);
+  const move = roomRankChange([next, initial], [], next);
+  assert.deepEqual([move?.player.name, move?.passed.name, move?.rank], ['Green', 'Blue', 1]);
+  const sameOrder = { ...initial, id: crypto.randomUUID(), endedAt: 120 };
+  assert.equal(roomRankChange([sameOrder, initial], [], sameOrder), undefined);
 });

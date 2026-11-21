@@ -6,13 +6,18 @@ import type { PresenceMode } from '../../../../packages/protocol/profile.ts';
 import { readInvite } from '../../../../packages/protocol/rooms.ts';
 import type { RoomInvite } from '../../../../packages/protocol/rooms.ts';
 import { apiAvailable, apiFetch, apiUrl } from '../network/api.ts';
+import { readEarnedBadge } from '../../../../packages/protocol/badges.ts';
+import type { BadgeId, EarnedBadge } from '../../../../packages/protocol/badges.ts';
+import { badgeCopy, badgeImage } from './profile-badges.tsx';
 
 const readEndpoint = '/api/profiles/me/invites/read';
 export const socialChangeEvent = 'noriverse:friends-changed';
 
-export function useInvitations(profile: string | undefined, presence: PresenceMode, onPresence: (id: string, presence: PresenceMode) => void) {
+export function useInvitations(profile: string | undefined, presence: PresenceMode, onPresence: (id: string, presence: PresenceMode) => void,
+  onBadges: (id: string, badges: EarnedBadge[]) => void) {
   const [invites, setInvites] = useState<RoomInvite[]>([]);
   const updatePresence = useEffectEvent(onPresence);
+  const updateBadges = useEffectEvent(onBadges);
   useEffect(() => {
     if (!profile || !apiAvailable) return;
     const id = profile;
@@ -62,6 +67,10 @@ export function useInvitations(profile: string | undefined, presence: PresenceMo
           try {
             const message = JSON.parse(event.data);
             if (message.type === 'friends-changed') { window.dispatchEvent(new Event(socialChangeEvent)); return; }
+            if (message.type === 'badges-earned' && Array.isArray(message.badges)) {
+              updateBadges(id, (message.badges as unknown[]).map(readEarnedBadge).filter(badge => badge !== undefined));
+              return;
+            }
             if (message.type === 'presence-mode' && (message.presence === 'offline' || message.presence === 'online')) {
               updatePresence(id, message.presence);
               return;
@@ -120,17 +129,27 @@ export function useInvitations(profile: string | undefined, presence: PresenceMo
   return { invites: profile && presence === 'online' ? invites : [], dismiss };
 }
 
-export function InvitationToasts({ model, accept }: { model: ReturnType<typeof useInvitations>; accept: (invite: RoomInvite) => void }) {
-  const { t } = useTranslation();
+export function NotificationToasts({ model, accept, badges, dismissBadge, openBadges }: {
+  model: ReturnType<typeof useInvitations>; accept: (invite: RoomInvite) => void;
+  badges: EarnedBadge[]; dismissBadge: (id: BadgeId) => void; openBadges: () => void;
+}) {
+  const { t, i18n } = useTranslation();
   const [fullscreen, setFullscreen] = useState<Element | null>(document.fullscreenElement);
   useEffect(() => {
     const sync = () => setFullscreen(document.fullscreenElement);
     document.addEventListener('fullscreenchange', sync);
     return () => document.removeEventListener('fullscreenchange', sync);
   }, []);
-  if (!model.invites.length) return null;
-  const toast = <aside className="invite-toasts" aria-label={t('invites')} aria-live="polite">
-    {model.invites.slice(0, 3).map(invite => <div className="surface invite-toast" key={invite.id}>
+  if (!model.invites.length && !badges.length) return null;
+  const toast = <aside className="invite-toasts" aria-label={t('notifications')} aria-live="polite">
+    {badges.slice(0, 2).map(badge => <div className="surface invite-toast badge-toast" key={badge.id}>
+      <button className="invite-toast-content" type="button" onClick={() => { dismissBadge(badge.id); openBadges(); }}>
+        <img src={badgeImage(badge.id)} width="47" height="47" alt="" />
+        <span><small>{t('badgeUnlocked')}</small><strong>{badgeCopy(badge.id, i18n.resolvedLanguage)[0]}</strong></span>
+      </button>
+      <button className="settings-close" type="button" aria-label={t('close')} onClick={() => dismissBadge(badge.id)}><span aria-hidden="true" /></button>
+    </div>)}
+    {model.invites.slice(0, Math.max(1, 3 - badges.length)).map(invite => <div className="surface invite-toast" key={invite.id}>
       <button className="invite-toast-content" type="button" onClick={() => { model.dismiss(invite); accept(invite); }}>
         <strong>{t('inviteMessage', { player: invite.name, game: t(invite.game) })}</strong>
         <small>{t('acceptInvite')}</small>
