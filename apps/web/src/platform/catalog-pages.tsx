@@ -6,12 +6,16 @@ import type { GuestRoom } from '../network/guest-seat.ts';
 import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
 import type { ReactNode, Ref } from 'react';
 import type { GameId } from '../../../../packages/protocol/games.ts';
+import { isOnlineOnlyGame, roomCapacity, supportsPlayerCount } from '../../../../packages/protocol/games.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { cardsPerPage, pageNumbers } from './library-pagination.ts';
 import { BackLink, gamePath, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 
-type Filter = 'all' | 'favorites' | 'strategy' | 'action';
+type LibraryScope = 'all' | 'favorites';
+const tags = ['strategy', 'action'] as const;
+type LibraryTag = typeof tags[number];
+const playerCounts = Array.from({ length: Math.max(...Object.values(roomCapacity)) }, (_, index) => index + 1);
 const heartPath = 'M12 21S1.8 15.4 1.8 8.8C1.8 3.2 8.8 1.7 12 6.6c3.2-4.9 10.2-3.4 10.2 2.2C22.2 15.4 12 21 12 21Z';
 
 function Tags({ id }: { id: GameId }) {
@@ -89,7 +93,8 @@ function GamePreview({ id, active, navigate, onClose }: { id: GameId; active: bo
         </section>
         <div className="preview-modes">
           <span>{t('gameMode')}</span>
-          <strong>{apiAvailable && isRoomGame(id) ? t('newRoom') + ' · ' : ''}{t('local')}</strong>
+          <strong>{isOnlineOnlyGame(id) ? t(apiAvailable ? 'newRoom' : 'roomUnavailable')
+            : apiAvailable && isRoomGame(id) ? t('newRoom') + ' · ' + t('local') : t('local')}</strong>
         </div>
         <RouteLink href={gamePath(id, 'setup')} navigate={navigate} className="button button-primary preview-play">
           <i className="play-glyph" aria-hidden="true" />{t('selectGame')}
@@ -105,7 +110,9 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
   rejoin?: { room: GuestRoom; resume: () => void };
 }) {
   const { t } = useTranslation();
-  const [filter, setFilter] = useState<Filter>('all');
+  const [scope, setScope] = useState<LibraryScope>('all');
+  const [playerCount, setPlayerCount] = useState(0);
+  const [activeTags, setActiveTags] = useState<LibraryTag[]>([]);
   const [query, setQuery] = useState('');
   const [selection, setSelection] = useState<GameId>();
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -115,14 +122,12 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
   const previewSlot = useRef<HTMLDivElement>(null);
   const lastCard = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
-  const visibleFilter = useDeferredValue(filter);
   const visibleQuery = useDeferredValue(query);
-  const visibleGames = gameIds.filter(id => {
-    const game = games[id];
-    const matchesFilter = visibleFilter === 'all'
-      || (visibleFilter === 'favorites' ? favorites.includes(id) : game.category === visibleFilter);
-    return matchesFilter && matchesGame(id, visibleQuery, t(id));
-  });
+  const visibleGames = gameIds.filter(id => (scope === 'all' || favorites.includes(id))
+    && (!playerCount || supportsPlayerCount(id, playerCount))
+    && (!activeTags.length || activeTags.includes(games[id].category))
+    && matchesGame(id, visibleQuery, t(id)));
+  const filterCount = activeTags.length + Number(Boolean(playerCount));
   const selected = previewOpen && selection && visibleGames.includes(selection) ? selection : undefined;
   const pageCount = Math.max(1, Math.ceil(visibleGames.length / capacity));
   const page = Math.min(pageCount, Math.floor(pageAnchor / capacity) + 1);
@@ -150,7 +155,12 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
       observer.disconnect();
       window.removeEventListener('resize', measure);
     };
-  }, [pageGames[0], selected, visibleFilter, visibleQuery]);
+  }, [pageGames[0], selected, scope, playerCount, activeTags, visibleQuery]);
+
+  function resetView() {
+    setPageAnchor(0);
+    setPreviewOpen(false);
+  }
 
   function select(id: GameId, button: HTMLButtonElement) {
     lastCard.current = button;
@@ -200,15 +210,44 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
                 <circle cx="10.8" cy="10.8" r="5.7" /><path d="m15 15 4.4 4.4" />
               </svg>
               <input ref={search} type="search" aria-label={t('gameSearch')} placeholder={t('gameSearchHint')} value={query}
-                onChange={event => { setQuery(event.target.value); setPageAnchor(0); setPreviewOpen(false); }} />
+                onChange={event => { setQuery(event.target.value); resetView(); }} />
             </div>
             <div className="filter" aria-label={t('games')}>
-              {(['all', 'favorites', 'strategy', 'action'] as const).map(option => (
-                <button key={option} type="button" aria-pressed={filter === option} onClick={() => {
-                  setFilter(option); setPageAnchor(0); setPreviewOpen(false);
+              {(['all', 'favorites'] as const).map(option => (
+                <button key={option} type="button" aria-pressed={scope === option} onClick={() => {
+                  setScope(option); resetView();
                 }}>{t(option)}</button>
               ))}
             </div>
+            <details className="catalog-filters" onKeyDown={event => {
+              if (event.key === 'Escape' && event.currentTarget.open) {
+                event.currentTarget.open = false;
+                event.currentTarget.querySelector('summary')?.focus();
+              }
+            }}>
+              <summary className="button button-secondary">{t('libraryFilters')}
+                {filterCount > 0 && <span className="lobby-count">{filterCount}</span>}
+              </summary>
+              <div className="surface catalog-filter-panel">
+                <label className="catalog-player-filter">{t('libraryMinimumPlayers')}
+                  <select value={playerCount} onChange={event => { setPlayerCount(Number(event.currentTarget.value)); resetView(); }}>
+                    <option value={0}>{t('libraryAnyPlayers')}</option>
+                    {playerCounts.map(count => <option key={count} value={count}>{t('libraryStartsWith', { count })}</option>)}
+                  </select>
+                </label>
+                <fieldset>
+                  <legend>{t('libraryTags')}</legend>
+                  <div className="catalog-tag-filters">{tags.map(tag => <button type="button" className="button button-secondary" key={tag}
+                    aria-pressed={activeTags.includes(tag)} onClick={() => {
+                      setActiveTags(current => current.includes(tag) ? current.filter(item => item !== tag) : [...current, tag]);
+                      resetView();
+                    }}>{t(tag)}</button>)}</div>
+                </fieldset>
+                <button className="button button-secondary" type="button" disabled={!filterCount} onClick={() => {
+                  setPlayerCount(0); setActiveTags([]); resetView();
+                }}>{t('libraryClearFilters')}</button>
+              </div>
+            </details>
           </div>
         </div>
         {favoriteError && <p role="alert" className="muted favorite-error">{t('profileError')}</p>}
@@ -220,9 +259,9 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
           </div>
           <div className="catalog-list">
             <GameSelectionGrid gridRef={grid} ids={pageGames} selected={selected} onSelect={select}
-              busy={visibleFilter !== filter || visibleQuery !== query} favorites={{ games: favorites, disabled: disableFavorite, toggle: onFavorite }}>
+              busy={visibleQuery !== query} favorites={{ games: favorites, disabled: disableFavorite, toggle: onFavorite }}>
               {visibleGames.length === 0 && <p className="surface library-empty" role="status">
-                {t(visibleFilter === 'favorites' && favorites.length === 0
+                {t(scope === 'favorites' && favorites.length === 0
                   ? apiAvailable ? 'emptyFavorites' : 'favoritesUnavailable'
                   : 'noSearchResults')}
               </p>}

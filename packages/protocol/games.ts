@@ -4,6 +4,10 @@ export const gameIds = Object.freeze(Object.keys(roomCapacity) as GameId[]);
 export const minimumRoomPlayers = (game: GameId) => game === 'liar' ? 3 : 2;
 export const isOnlineOnlyGame = (game: GameId) => game === 'liar';
 
+export function supportsPlayerCount(game: GameId, count: number) {
+  return count === 1 ? !isOnlineOnlyGame(game) : Number.isInteger(count) && count >= minimumRoomPlayers(game) && count <= roomCapacity[game];
+}
+
 export function isGameId(value: unknown): value is GameId {
   return typeof value === 'string' && Object.hasOwn(roomCapacity, value);
 }

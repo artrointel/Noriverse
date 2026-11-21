@@ -26,14 +26,17 @@ import type { RoomResult } from './room-history.ts';
 import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchOutcome, matchTurn, matchWinner, readMatchSnapshot, roundSeats } from './room-match.ts';
 import type { Match } from './room-match.ts';
 import { countdownDuration } from '../games/round-cues.ts';
-import { advanceSketch, applySketchAction, defaultSketchSettings, inkBatch, inkLimit, makeSketchRound, readInk, sketchDeck, visibleSketch } from '../games/sketch/rules.ts';
-import type { SketchAction, SketchRound } from '../games/sketch/rules.ts';
+import { advanceSketch, applySketchAction, chooseSketchMap, defaultSketchSettings, makeSketchRound, nextSketchEvent, sketchDeck, startSketchTurn, visibleSketch } from '../games/sketch/rules.ts';
+import type { Prompt, SketchAction, SketchRound } from '../games/sketch/rules.ts';
+import { inkBatch, inkLimit, readInk } from '../games/sketch/ink.ts';
 import { advanceLiar, applyLiarAction, defaultLiarSettings, isLiarRound, makeLiarRound, visibleLiar } from '../games/liar/rules.ts';
 import type { LiarAction, LiarRound } from '../games/liar/rules.ts';
 
 type Seat = { code: string; role: Role; token: string };
 const lobbySlots = assignReactionSlots(roomRoles);
-const matchDeadline = (match: Match) => match.liar?.deadline ?? match.sketch?.deadline ?? (match.puzzle ? puzzleEnd(match.puzzle) : match.deadline);
+const matchDeadline = (match: Match) => match.liar?.deadline
+  ?? (match.sketch && match.sketchConfig ? nextSketchEvent(match.sketch, match.sketchConfig) : undefined)
+  ?? (match.puzzle ? puzzleEnd(match.puzzle) : match.deadline);
 
 export function useRoomBoard(profile?: ProfileSummary) {
   const [code, setCode] = useState<string>();
@@ -45,7 +48,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const results = useRef<RoomResult[]>([]);
   const matchRoster = useRef<{ seats: Role[]; names: Map<Role, string>; reactionSlots: ReturnType<typeof assignReactionSlots<Role>> }>(undefined);
   const preparedSeats = useRef(new Set<Role>());
-  const drawingDeck = useRef<string[]>([]);
+  const drawingDeck = useRef<Prompt[]>([]);
   const previousMatch = useRef<Match>(undefined);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const roster = useRef<Participant[]>([]);
@@ -204,7 +207,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     if (!seats.every(player => preparedSeats.current.has(player))) return;
     const beginsAt = Date.now() + countdownDuration;
     const sketch = current.sketch && current.sketchConfig
-      ? { ...current.sketch, deadline: beginsAt + current.sketchConfig.seconds * 1000 } : undefined;
+      ? startSketchTurn(current.sketch, current.sketchConfig, beginsAt) : undefined;
     const liar = current.liar && current.liarConfig ? { ...current.liar, deadline: beginsAt + current.liarConfig.seconds * 1000 } : undefined;
     update({ ...current, beginsAt, deadline: nextDeadline(current.turnLimit, beginsAt), sketch, liar });
     snapshot();
@@ -242,10 +245,10 @@ export function useRoomBoard(profile?: ProfileSummary) {
     const current = match.current;
     const now = Date.now();
     if (!current.sketch || !matchInProgress(current, now)) return false;
-    if (expireTurn(now)) return false;
+    if (current.sketch.phase === 'draw' && current.sketch.deadline <= now) { expireTurn(now); return false; }
     const sketch = applySketchAction(current.sketch, actor, action, now);
     if (!sketch) return false;
-    if (sketch.board.length > current.sketch.board.length) {
+    if (action && typeof action === 'object' && 'kind' in action && action.kind === 'ink') {
       const lines = sketch.board.slice(current.sketch.board.length);
       update({ ...current, sketch });
       link.current?.send({ type: 'sketch-ink', id: current.id, turn: sketch.turn, revision: sketch.revision, lines });
@@ -494,7 +497,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
           const sketch = current.sketch;
           const lines = readInk(raw.lines, inkBatch);
           if (raw.revision === sketch.revision + 1 && sketch.phase === 'draw' && lines?.length && sketch.board.length + lines.length <= inkLimit) {
-            update({ ...current, sketch: { ...sketch, revision: raw.revision, board: [...sketch.board, ...lines] } });
+            update({ ...current, sketch: { ...sketch, revision: raw.revision, board: [...sketch.board, ...lines], redoCount: 0 } });
           } else link.current?.send({ type: 'sketch-sync', id: current.id });
         } else if (raw.type === 'launch') {
           if (!current.physics || current.physics.shot || current.timeoutPending || !current.startedAt || current.finishedAt || !('id' in raw) || current.id !== raw.id
@@ -641,7 +644,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     update({ ...current, id: rematch ? crypto.randomUUID() : current.id, hostColor, startedAt: now, finishedAt: 0,
       history: [], surrendered: undefined, timedOut: undefined, timeoutPending: undefined, deadline: 0, beginsAt: current.puzzleConfig ? undefined : 0,
       puzzle: current.puzzleConfig ? makePuzzleRound(current.puzzleConfig, Math.random, seats) : undefined,
-      sketch: current.sketchConfig ? makeSketchRound(seats, drawingDeck.current[0]) : undefined,
+      sketch: current.sketchConfig ? makeSketchRound(seats, drawingDeck.current[0], chooseSketchMap(current.sketchConfig.map)) : undefined,
       liar: current.liarConfig ? makeLiarRound(seats, current.liarConfig.language, Math.random, previous?.liar?.result?.word) : undefined,
       physicsSeats, physics: physicsSeats ? createFlickRound(current.flickSettings ?? defaultFlickSettings, physicsSeats.length) : undefined });
     snapshot();
@@ -676,6 +679,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     sketch: round.sketch, sketchConfig: round.sketchConfig,
     sketchWrongGuess: sketchFeedback?.id === matchId && sketchFeedback.turn === round.sketch?.turn && sketchFeedback.wrong,
     sketchDisplayDeadline: round.sketch?.deadline ? round.sketch.deadline + (round.clockOffset ?? 0) : 0,
+    sketchDisplayOpen: round.sketch?.opensAt ? round.sketch.opensAt + (round.clockOffset ?? 0) : 0,
     sketchAction(action: SketchAction) {
       const current = match.current, own = seat.current?.role;
       if (!own || !ready.current || !current.sketch || current.finishedAt) return false;

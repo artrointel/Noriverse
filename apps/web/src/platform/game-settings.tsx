@@ -11,7 +11,8 @@ import { SichuanModePicker, SichuanSettingsFields } from './sichuan-settings.tsx
 import { games } from './game-catalog.ts';
 import { formatPlayTime } from './game-time.tsx';
 import { SettingsSection, SettingsSelect } from './settings-fields.tsx';
-import { sketchCycles, sketchTimes } from '../games/sketch/rules.ts';
+import { maxHintInterval, sketchCycles, sketchMaps, sketchTimes } from '../games/sketch/rules.ts';
+import type { SketchSettings } from '../games/sketch/rules.ts';
 import { liarGuessSeconds, liarHintTimes, liarVoteSeconds } from '../games/liar/rules.ts';
 
 export function GameFeature({ game, heading, children }: { game: GameId; heading: string; children?: ReactNode }) {
@@ -65,6 +66,48 @@ function TurnLimitSettings({ limit, change, onValidity }: {
   </SettingsSection>;
 }
 
+function SketchSettingsFields({ value, change, online, onValidity }: {
+  value: SketchSettings; change: (settings: SketchSettings) => void; online: boolean; onValidity: (valid: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const hintId = useId();
+  const [interval, setInterval] = useState(String(value.hintSeconds));
+  const valid = Number.isInteger(Number(interval)) && Number(interval) >= 1 && Number(interval) <= maxHintInterval;
+  return <SettingsSection title={t('setupBoardRules')}>
+    <SettingsSelect label={t('sketchLanguage')} value={value.language} change={language =>
+      change({ ...value, language: language === 'en' ? 'en' : 'ko' })}>
+      <option value="ko">한국어</option><option value="en">English</option>
+    </SettingsSelect>
+    <SettingsSelect label={t('sketchMap')} value={value.map} change={selected =>
+      change({ ...value, map: sketchMaps.find(map => map === selected) ?? 'random' })}>
+      {(['random', ...sketchMaps] as const).map(map => <option key={map} value={map}>{t('sketchMap_' + map)}</option>)}
+    </SettingsSelect>
+    {online && <>
+      <SettingsSelect label={t('sketchTime')} value={value.seconds} change={selected =>
+        change({ ...value, seconds: sketchTimes.find(seconds => seconds === Number(selected)) ?? value.seconds })}>
+        {sketchTimes.map(seconds => <option key={seconds} value={seconds}>{formatPlayTime(seconds)}</option>)}
+      </SettingsSelect>
+      <SettingsSelect label={t('sketchCycles')} value={value.cycles} change={selected =>
+        change({ ...value, cycles: sketchCycles.find(cycles => cycles === Number(selected)) ?? value.cycles })}>
+        {sketchCycles.map(cycles => <option key={cycles} value={cycles}>{cycles}</option>)}
+      </SettingsSelect>
+      <div className="setup-row">
+        <div className="setup-field-label"><label htmlFor={hintId}>{t('sketchHintInterval')}</label>
+          <small id={hintId + '-help'} className={!valid ? 'setup-error' : undefined}>{t('sketchHintIntervalHelp', { max: maxHintInterval })}</small>
+        </div>
+        <input id={hintId} type="number" min={1} max={maxHintInterval} step={1} inputMode="numeric" value={interval}
+          aria-invalid={!valid} aria-describedby={hintId + '-help'} onChange={event => {
+            const seconds = event.currentTarget.valueAsNumber;
+            const valid = Number.isInteger(seconds) && seconds >= 1 && seconds <= maxHintInterval;
+            setInterval(event.currentTarget.value);
+            onValidity(valid);
+            if (valid) change({ ...value, hintSeconds: seconds });
+          }} />
+      </div>
+    </>}
+  </SettingsSection>;
+}
+
 export function GameRulesEditor({ game, settings, change, online, onValidity }: {
   game: GameId; settings: MatchSettings; change: (settings: MatchSettings) => void;
   online: boolean; onValidity: (valid: boolean) => void;
@@ -83,25 +126,8 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
       </SettingsSelect>
     </SettingsSection>;
   }
-  if (game === 'sketch') {
-    const sketch = settings.sketch;
-    return <SettingsSection title={t('setupBoardRules')}>
-      <SettingsSelect label={t('sketchLanguage')} value={sketch.language} change={language =>
-        change({ ...settings, sketch: { ...sketch, language: language === 'en' ? 'en' : 'ko' } })}>
-        <option value="ko">한국어</option><option value="en">English</option>
-      </SettingsSelect>
-      {online && <>
-        <SettingsSelect label={t('sketchTime')} value={sketch.seconds} change={value =>
-          change({ ...settings, sketch: { ...sketch, seconds: sketchTimes.find(seconds => seconds === Number(value)) ?? sketch.seconds } })}>
-          {sketchTimes.map(seconds => <option key={seconds} value={seconds}>{formatPlayTime(seconds)}</option>)}
-        </SettingsSelect>
-        <SettingsSelect label={t('sketchCycles')} value={sketch.cycles} change={value =>
-          change({ ...settings, sketch: { ...sketch, cycles: sketchCycles.find(cycles => cycles === Number(value)) ?? sketch.cycles } })}>
-          {sketchCycles.map(cycles => <option key={cycles} value={cycles}>{cycles}</option>)}
-        </SettingsSelect>
-      </>}
-    </SettingsSection>;
-  }
+  if (game === 'sketch') return <SketchSettingsFields value={settings.sketch} online={online} onValidity={onValidity}
+    change={sketch => change({ ...settings, sketch })} />;
   if (game === 'sichuan') return <>
     {online && <SichuanModePicker value={settings.puzzle.mode} change={mode => change({ ...settings, puzzle: { ...settings.puzzle, mode } })} />}
     <SichuanSettingsFields value={settings.puzzle.settings} onValidity={onValidity}
@@ -134,7 +160,8 @@ export function GameRulesSummary({ game, settings }: { game: GameId; settings: M
       [t('liarGuessTime'), formatPlayTime(liarGuessSeconds)]);
   } else if (game === 'sketch') {
     entries.push([t('sketchLanguage'), settings.sketch.language === 'ko' ? '한국어' : 'English'],
-      [t('sketchTime'), formatPlayTime(settings.sketch.seconds)], [t('sketchCycles'), String(settings.sketch.cycles)]);
+      [t('sketchTime'), formatPlayTime(settings.sketch.seconds)], [t('sketchCycles'), String(settings.sketch.cycles)],
+      [t('sketchMap'), t('sketchMap_' + settings.sketch.map)], [t('sketchHintInterval'), formatPlayTime(settings.sketch.hintSeconds)]);
   } else if (game === 'sichuan') {
     const { mode, settings: puzzle } = settings.puzzle;
     const obstacleDensity = Math.min(puzzle.obstacleDensity ?? defaultObstacleDensity, maxSichuanObstacleDensity(puzzle.size, puzzle.density));

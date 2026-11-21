@@ -1,28 +1,84 @@
 import type Phaser from 'phaser';
 import type { SceneFactory } from '../scene-loader.ts';
 import { tableSize } from '../table.ts';
-import { inkBatch, inkColors, inkWidths } from './rules.ts';
-import type { Ink } from './rules.ts';
+import { eraserBrush, inkBatch } from './ink.ts';
+import type { Ink } from './ink.ts';
+import type { SketchMap } from './rules.ts';
+import { createSketchHud, loadSketchHud, sketchMapTop } from './hud.ts';
+import laptop from '../../assets/sketch-maps/laptop.webp';
+import notebook from '../../assets/sketch-maps/notebook.webp';
+import chalkboard from '../../assets/sketch-maps/chalkboard.webp';
+import easel from '../../assets/sketch-maps/easel.webp';
+import postcard from '../../assets/sketch-maps/postcard.webp';
 
-const paper = 0xfffcf3;
-const unit = tableSize / 1000;
+const maps = { laptop, notebook, chalkboard, easel, postcard };
+const inset = 62;
+const unit = (tableSize - inset * 2) / 1000;
+const mapTexture = (map: SketchMap) => 'sketch-map-' + map;
+const inkTexture = 'sketch-ink-layer';
+const rasterScale = 2;
+const rasterSize = tableSize * rasterScale;
 
-function lineOn(graphics: Phaser.GameObjects.Graphics, [x, y, endX, endY, color, width]: Ink) {
-  const radius = inkWidths[width] / 2;
-  graphics.lineStyle(radius * 2, inkColors[color]).lineBetween(x * unit, y * unit, endX * unit, endY * unit);
-  graphics.fillStyle(inkColors[color]).fillCircle(endX * unit, endY * unit, radius);
+function dab(context: CanvasRenderingContext2D, x: number, y: number, radius: number) {
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  context.fill();
+}
+
+function lineOn(context: CanvasRenderingContext2D, [x, y, endX, endY, color, width, brush]: Ink) {
+  const startX = inset + x * unit, startY = inset + y * unit, stopX = inset + endX * unit, stopY = inset + endY * unit;
+  const length = Math.hypot(stopX - startX, stopY - startY);
+  const ink = '#' + color.toString(16).padStart(6, '0');
+  context.globalCompositeOperation = brush === eraserBrush ? 'destination-out' : 'source-over';
+  context.fillStyle = ink;
+  context.strokeStyle = ink;
+  if (brush === 2) {
+    const count = Math.max(4, Math.min(36, Math.ceil(length * 1.4)));
+    for (let i = 0; i < count; i++) {
+      const scatter = ((x * 23 + y * 41 + endX * 7 + endY * 47 + i * 179) % 113) / 113;
+      const angle = i * 2.39996 + scatter;
+      const radius = scatter * width * .53;
+      const px = startX + (stopX - startX) * i / count + Math.cos(angle) * radius;
+      const py = startY + (stopY - startY) * i / count + Math.sin(angle) * radius;
+      context.globalAlpha = .33 + scatter * .46;
+      dab(context, px, py, Math.max(.5, width * (.055 + scatter * .045)));
+    }
+    return;
+  }
+  const lineWidth = brush === 1 ? width * Math.max(.48, 1 - length / 90) : width;
+  context.globalAlpha = brush === 3 ? .34 : 1;
+  if (length === 0) {
+    dab(context, stopX, stopY, lineWidth / 2);
+    return;
+  }
+  context.lineWidth = lineWidth;
+  context.lineCap = 'round';
+  context.beginPath();
+  context.moveTo(startX, startY);
+  context.lineTo(stopX, stopY);
+  context.stroke();
 }
 
 export const sketchScene: SceneFactory = current => {
-  let canvas: Phaser.GameObjects.Graphics;
-  let preview: Phaser.GameObjects.Graphics;
+  let texture: Phaser.Textures.CanvasTexture;
+  let hud: ReturnType<typeof createSketchHud>;
+  const ink = document.createElement('canvas');
+  ink.width = rasterSize;
+  ink.height = rasterSize;
+  const committed = ink.getContext('2d')!;
+  committed.scale(rasterScale, rasterScale);
   let last: [number, number] | undefined;
   let pointerId: number | undefined;
   let queued: Ink[] = [];
   let displayed: readonly Ink[] = [];
   let previewInk: { line: Ink; expires: number }[] = [];
+  let redraw = true;
   let nextSend = 0;
   let epoch: string | undefined;
+  let stroke = 0;
+  let background: Phaser.GameObjects.Image;
+  let map: SketchMap | undefined;
+  let loading: SketchMap | undefined;
 
   function flush(now: number) {
     if (!queued.length) return;
@@ -31,39 +87,52 @@ export const sketchScene: SceneFactory = current => {
   }
 
   function point(pointer: Phaser.Input.Pointer): [number, number] {
-    const bound = (position: number) => Math.max(0, Math.min(1000, Math.round(position / unit)));
-    return [bound(pointer.worldX), bound(pointer.worldY)];
+    const bound = (position: number) => Math.max(0, Math.min(1000, Math.round((position - inset) / unit)));
+    return [bound(pointer.worldX), bound(pointer.worldY - sketchMapTop)];
   }
 
   function add(position: [number, number]) {
     const view = current().sketch;
     if (!view || !current().canMove || !last) return;
-    const line: Ink = [...last, ...position, view.color, view.width];
+    const line: Ink = [...last, ...position, view.brush === eraserBrush ? 0 : view.color, view.width, view.brush, stroke];
     queued.push(line);
     previewInk.push({ line, expires: performance.now() + 230 });
+    redraw = true;
     last = position;
     if (queued.length >= inkBatch) flush(performance.now());
   }
 
   return {
+    preload() {
+      loadSketchHud(this);
+      const first = current().sketch?.map;
+      if (first) this.load.image(mapTexture(first), maps[first]);
+    },
     create() {
-      this.add.graphics().fillStyle(paper).fillRect(0, 0, tableSize, tableSize);
-      const grid = this.add.graphics().fillStyle(0xe4dece);
-      for (let y = 14; y < tableSize; y += 16) for (let x = 14; x < tableSize; x += 16) grid.fillCircle(x, y, .63);
-      canvas = this.add.graphics();
-      preview = this.add.graphics();
+      this.add.graphics().fillStyle(0xfffcf3).fillRect(0, sketchMapTop, tableSize, tableSize);
+      background = this.add.image(0, sketchMapTop, '__MISSING').setOrigin(0).setVisible(false);
+      const layer = this.textures.createCanvas(inkTexture, rasterSize, rasterSize);
+      if (!layer) throw new Error('Could not create sketch ink texture');
+      texture = layer;
+      texture.getContext().scale(rasterScale, rasterScale);
+      this.add.image(0, sketchMapTop, inkTexture).setOrigin(0).setDisplaySize(tableSize, tableSize);
+      hud = createSketchHud(this);
       this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-        if (!current().canMove || pointerId !== undefined || !pointer.leftButtonDown()) return;
+        if (!pointer.leftButtonDown() || hud.down(pointer) || !current().canMove || pointerId !== undefined) return;
+        if ([pointer.worldX, pointer.worldY - sketchMapTop].some(coordinate => coordinate < inset || coordinate > tableSize - inset)) return;
+        stroke = Math.max(stroke, current().sketch?.board.at(-1)?.[7] ?? 0) + 1;
         last = point(pointer);
         pointerId = pointer.id;
         add(last);
       });
       this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+        hud.move(pointer);
         if (pointer.id !== pointerId || !pointer.isDown || !last) return;
         const position = point(pointer);
         if (Math.hypot(position[0] - last[0], position[1] - last[1]) >= 3) add(position);
       });
       const up = (pointer: Phaser.Input.Pointer) => {
+        hud.up(pointer);
         if (pointer.id !== pointerId) return;
         pointerId = undefined;
         last = undefined;
@@ -75,27 +144,56 @@ export const sketchScene: SceneFactory = current => {
     update() {
       const view = current().sketch;
       if (!view) return;
+      hud.update(view.hud);
+      if (map !== view.map) {
+        const texture = mapTexture(view.map);
+        if (this.textures.exists(texture)) {
+          background.setTexture(texture).setDisplaySize(tableSize, tableSize).setVisible(true);
+          map = view.map;
+        } else if (loading !== view.map) {
+          loading = view.map;
+          this.load.image(texture, maps[view.map]).start();
+        }
+      }
       if (epoch !== view.epoch) {
         epoch = view.epoch;
         queued = [];
         previewInk = [];
+        redraw = true;
         pointerId = undefined;
         last = undefined;
       }
       const board = view.board;
       if (board !== displayed) {
         let start = displayed.length;
-        if (board.length < start || board[0] !== displayed[0]) { canvas.clear(); start = 0; }
-        for (let i = start; i < board.length; i++) lineOn(canvas, board[i]);
+        if (board.length < start || board[0] !== displayed[0] || board[Math.max(0, start - 1)] !== displayed[Math.max(0, start - 1)]) {
+          committed.clearRect(0, 0, tableSize, tableSize);
+          start = 0;
+        }
+        for (let i = start; i < board.length; i++) lineOn(committed, board[i]);
+        if (previewInk.length) {
+          const accepted = new Set(board.slice(-inkBatch * 2).map(line => line.join()));
+          previewInk = previewInk.filter(({ line }) => !accepted.has(line.join()));
+        }
         displayed = board;
+        redraw = true;
       }
       const now = performance.now();
       if (current().canMove && now >= nextSend) flush(now);
-      if (previewInk.length) {
-        preview.clear();
+      if (previewInk.length && (!current().canMove || previewInk[0].expires <= now)) {
         previewInk = previewInk.filter(entry => entry.expires > now && current().canMove);
-        for (const entry of previewInk) lineOn(preview, entry.line);
-      } else preview.clear();
+        redraw = true;
+      }
+      if (redraw) {
+        const context = texture.getContext();
+        context.clearRect(0, 0, tableSize, tableSize);
+        context.globalCompositeOperation = 'source-over';
+        context.globalAlpha = 1;
+        context.drawImage(ink, 0, 0, tableSize, tableSize);
+        for (const entry of previewInk) lineOn(context, entry.line);
+        texture.refresh();
+        redraw = false;
+      }
     },
   };
 };

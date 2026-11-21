@@ -188,6 +188,16 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .filter { display: flex; flex-wrap: wrap; max-width: 100%; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); align-self: end; }
 .filter button { min-height: 37px; border: 0; border-radius: 8px; padding-inline: 13px; color: var(--muted); background: transparent; font-size: .9rem; font-weight: 700; white-space: nowrap; transition: background .18s, color .18s; }
 .filter button[aria-pressed="true"], .filter button:hover { color: var(--primary); background: var(--active); }
+.catalog-filters { position: relative; align-self: end; }
+.catalog-filters summary { list-style: none; }
+.catalog-filters summary::-webkit-details-marker { display: none; }
+.catalog-filter-panel { position: absolute; inset: calc(100% + 7px) 0 auto auto; z-index: 5; display: grid; gap: 12px;
+  padding: 12px; width: min(256px, calc(100vw - 28px)); box-shadow: 0 9px 28px #1b11234d; }
+.catalog-player-filter, .catalog-filter-panel fieldset { display: grid; gap: 6px; font-size: .86rem; font-weight: 720; }
+.catalog-player-filter select { min-height: 38px; min-width: 0; border-radius: 8px; background: var(--surface); color: var(--text); border: 1px solid var(--line); padding: 5px 8px; }
+.catalog-filter-panel fieldset { min-width: 0; margin: 0; padding: 0; border: none; }
+.catalog-tag-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.catalog-tag-filters .button[aria-pressed="true"], .sketch-eraser[aria-pressed="true"] { color: var(--primary); background: var(--active); border-color: var(--primary); }
 .catalog-layout { min-width: 0; }
 .catalog-preview-slot { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .34s var(--ease); }
 .catalog-preview-slot[data-open="true"] { grid-template-rows: 1fr; }
@@ -737,10 +747,6 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 @media (max-height: 540px) and (min-width: 560px) and (orientation: landscape) {
   .liar-page .stage:not(.stage-expanded, :fullscreen) .liar-interaction { grid-column: 2; }
 }
-.sketch-interaction { display: grid; gap: 8px; width: min(100%, 680px); margin: 8px auto 2px; justify-items: center; text-align: center; }
-.sketch-word { display: flex; justify-content: center; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0; }
-.sketch-word span { color: var(--muted); font-size: .78rem; }
-.sketch-word strong { color: var(--primary); font-size: 1rem; overflow-wrap: anywhere; }
 .sketch-toolbar, .sketch-tools, .sketch-colors { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 5px; }
 .sketch-toolbar .button, .sketch-tools select { min-height: 36px; padding: 5px 8px; font-size: .8rem; }
 .sketch-tools select, .sketch-guess input { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
@@ -757,10 +763,6 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .sketch-score li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sketch-score strong { color: var(--primary); font-variant-numeric: tabular-nums; }
 .sketch-page .stage-turn { max-width: min(29vw, 145px); overflow: hidden; text-overflow: ellipsis; }
-.sketch-page :is(.stage-expanded, .stage:fullscreen) { grid-template-rows: auto minmax(0, 1fr) auto auto; }
-@media (max-height: 540px) and (min-width: 560px) and (orientation: landscape) {
-  .sketch-page .stage:not(.stage-expanded, :fullscreen) .sketch-interaction { grid-column: 2; }
-}
 .name-input { position: relative; }
 .name-input input { width: 100%; padding-right: 51px; }
 .dice-button { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); width: 37px; height: 35px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; color: var(--primary); background: var(--active); }
@@ -872,9 +874,11 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
   .hero-actions { margin-top: 15px; }
   .catalog, .catalog-index { margin-top: 30px; }
   .catalog-heading { align-items: stretch; flex-direction: column; gap: 12px; margin-bottom: 14px; }
-  .catalog-controls { justify-content: start; }
+  .catalog-controls { justify-content: start; position: relative; }
   .library-search { width: 100%; }
   .filter { align-self: start; }
+  .catalog-filters { position: static; }
+  .catalog-filter-panel { inset-inline: 0 auto; }
   .game-grid { grid-template-columns: repeat(auto-fill,minmax(min(100%,130px),1fr)); gap: 12px; }
   .create-room-page .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-layout, .setup-layout { grid-template-columns: 1fr; gap: 13px; }

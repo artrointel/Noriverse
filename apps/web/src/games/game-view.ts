@@ -3,7 +3,9 @@ import type { TargetMark } from './board-marks.ts';
 import type { Tile, TilePoint } from './sichuan/rules.ts';
 import type { SichuanSize, SichuanTheme } from './sichuan/options.ts';
 import type { SichuanHudView } from './sichuan/hud.ts';
-import type { Ink } from './sketch/rules.ts';
+import type { Ink } from './sketch/ink.ts';
+import type { SketchMap } from './sketch/rules.ts';
+import type { SketchHudView } from './sketch/hud.ts';
 
 export interface GameView {
   history: number[];
@@ -22,7 +24,8 @@ export interface GameView {
   onAlkkagi: (status: AlkkagiStatus) => void;
   localFlick?: FlickRound;
   onlineFlick?: FlickRound & { host: boolean; send: (shot: Flick) => void; settle: (layout: StonePosition[], revision: number) => void };
-  sketch?: { board: readonly Ink[]; color: number; width: number; epoch: string; send: (lines: Ink[]) => void };
+  sketch?: { board: readonly Ink[]; color: number; width: number; brush: number; map: SketchMap; epoch: string;
+    send: (lines: Ink[]) => void; hud: SketchHudView };
   sichuan?: { board: readonly Tile[]; size: SichuanSize; theme: SichuanTheme; selected?: number;
     hint?: readonly [number, number]; match?: { path: readonly TilePoint[]; combo: number }; rejected?: { index: number };
     flip?: 'backs' | 'faces'; hud: SichuanHudView };

@@ -14,6 +14,7 @@ import type { RenderResolution } from '../games/render-resolution.ts';
 import { tableSize } from '../games/table.ts';
 import { sichuanSceneHeight } from '../games/sichuan/options.ts';
 import { liarSceneHeight } from '../games/liar/rules.ts';
+import { sketchSceneHeight } from '../games/sketch/hud.ts';
 import { boardSize as omokSize } from '../games/omok/rules.ts';
 import { othelloSize, othelloState } from '../games/othello/rules.ts';
 import { chessSize } from '../games/chess/rules.ts';
@@ -44,7 +45,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const field = useRef<HTMLDivElement>(null);
   const mount = useRef<HTMLDivElement>(null);
   const engine = useRef<ReturnType<typeof mountGame>>(null);
-  const sceneHeight = id === 'sichuan' ? sichuanSceneHeight : id === 'liar' ? liarSceneHeight : tableSize;
+  const sceneHeight = id === 'sichuan' ? sichuanSceneHeight : id === 'liar' ? liarSceneHeight : id === 'sketch' ? sketchSceneHeight : tableSize;
   const requestedSize = useRef({ frame: { width: tableSize, height: sceneHeight }, buffer: { width: tableSize, height: sceneHeight } });
   const [actualSize, setActualSize] = useState(requestedSize.current);
   const resultButton = useRef<HTMLButtonElement>(null);

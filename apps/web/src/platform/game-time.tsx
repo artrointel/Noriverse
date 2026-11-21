@@ -9,10 +9,13 @@ export function formatPlayTime(seconds: number) {
   return minutes >= 60 ? Math.floor(minutes / 60) + ':' + String(minutes % 60).padStart(2, '0') + ':' + tail : minutes + ':' + tail;
 }
 
-export function PlayTime({ startedAt }: { startedAt: number }) {
-  const { t } = useTranslation();
-  const [seconds, setSeconds] = useState(() => elapsedPlaySeconds(startedAt, Date.now()));
+export function useElapsedPlayTime(startedAt: number, finishedAt = 0) {
+  const [seconds, setSeconds] = useState(() => startedAt ? elapsedPlaySeconds(startedAt, finishedAt || Date.now()) : 0);
   useEffect(() => {
+    if (!startedAt || finishedAt) {
+      setSeconds(startedAt ? elapsedPlaySeconds(startedAt, finishedAt) : 0);
+      return;
+    }
     let timeout: number;
     function update() {
       const now = Date.now();
@@ -22,7 +25,13 @@ export function PlayTime({ startedAt }: { startedAt: number }) {
     }
     update();
     return () => window.clearTimeout(timeout);
-  }, [startedAt]);
+  }, [startedAt, finishedAt]);
+  return seconds;
+}
+
+export function PlayTime({ startedAt }: { startedAt: number }) {
+  const { t } = useTranslation();
+  const seconds = useElapsedPlayTime(startedAt);
   return <p className="match-time"><span>{t('playTime')}</span><time dateTime={'PT' + seconds + 'S'}>{formatPlayTime(seconds)}</time></p>;
 }
 
