@@ -27,3 +27,7 @@ export const defaultMatchSettings: MatchSettings = {
   turnLimit: 0, allowDoubleThree: true, overline: defaultOmokOverline,
   power: 1, flick: defaultFlickSettings, puzzle: defaultSichuanRoomSettings, memory: defaultMemorySettings, sketch: defaultSketchSettings, liar: defaultLiarSettings,
 };
+
+export function matchSettingsForLanguage(language: SketchSettings['language']): MatchSettings {
+  return { ...defaultMatchSettings, sketch: { ...defaultSketchSettings, language }, liar: { ...defaultLiarSettings, language } };
+}

@@ -5,7 +5,7 @@ import type { RoomGame } from '../../../../packages/protocol/rooms.ts';
 const prefix = 'noriverse.guest-seat.';
 const resumeKey = 'noriverse.active-guest-room';
 const recentKey = 'noriverse.recent-rooms';
-const lifetime = 30 * 60 * 1000;
+const savedSeatLimit = 16;
 export type GuestRoom = { code: string; game: RoomGame };
 
 export function readRecentRooms(): GuestRoom[] {
@@ -44,18 +44,20 @@ export function readGuestSeat(code: string) {
   try {
     const raw = localStorage.getItem(prefix + code);
     if (!raw) return;
-    const [token, expires] = raw.split(':');
-    if (profileIdPattern.test(token) && Number(expires) > Date.now()) return token;
+    const [token] = raw.split(':');
+    if (profileIdPattern.test(token)) return token;
     forgetGuestSeat(code);
   } catch { /* Storage may be disabled. */ }
 }
 
 export function saveGuestSeat(code: string, token: string) {
   try {
-    for (const key of Object.keys(localStorage)) {
-      if (key.startsWith(prefix)) readGuestSeat(key.slice(prefix.length));
-    }
-    localStorage.setItem(prefix + code, token + ':' + (Date.now() + lifetime));
+    const seatKey = prefix + code;
+    const previous = Object.keys(localStorage).filter(key => key.startsWith(prefix) && key !== seatKey)
+      .map(key => ({ key, savedAt: Number(localStorage.getItem(key)?.split(':')[1]) || 0 }))
+      .sort((left, right) => right.savedAt - left.savedAt);
+    localStorage.setItem(seatKey, token + ':' + Date.now());
+    for (const { key } of previous.slice(savedSeatLimit - 1)) localStorage.removeItem(key);
   } catch { /* The live connection still retains its seat. */ }
 }
 

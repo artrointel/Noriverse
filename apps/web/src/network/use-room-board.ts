@@ -19,7 +19,7 @@ import type { TimeoutChoice } from '../games/turn-clock.ts';
 import { defaultSichuanRoomSettings } from '../games/sichuan/options.ts';
 import { applyPuzzleAction, makePuzzleRound, puzzleEnd, readyPuzzle, resignPuzzle } from '../games/sichuan/multiplayer.ts';
 import type { PuzzleAction, PuzzleRound } from '../games/sichuan/multiplayer.ts';
-import { defaultMatchSettings } from '../games/match-settings.ts';
+import { matchSettingsForLanguage } from '../games/match-settings.ts';
 import type { MatchSettings } from '../games/match-settings.ts';
 import { mergeRoomHistory, readRoomResult, roomHistoryBatchSize } from '../../../../packages/protocol/room-history.ts';
 import type { RoomResult } from '../../../../packages/protocol/room-history.ts';
@@ -44,7 +44,7 @@ const matchDeadline = (match: Match) => (match.slime ? nextOrbitAt(match.slime) 
   ?? (match.sketch && match.sketchConfig ? nextSketchEvent(match.sketch, match.sketchConfig) : undefined)
   ?? (match.puzzle ? puzzleEnd(match.puzzle) : match.deadline);
 
-export function useRoomBoard(profile?: ProfileSummary) {
+export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko' | 'en') {
   const [code, setCode] = useState<string>();
   const [title, setTitle] = useState<string>();
   const [role, setRole] = useState<Role>();
@@ -79,6 +79,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   const orbitBroadcast = useRef({ sentAt: -Infinity, timer: 0 });
   const operation = useRef(0);
   const ready = useRef(false);
+  const sentTimeoutChoice = useRef<{ id: string; at: number; choice: TimeoutChoice }>(undefined);
   const readyForPlay = () => ready.current || Boolean(import.meta.env.DEV && seat.current?.role === 'host' && match.current.mockSeats?.length);
   const mockSeats = role === 'host' && import.meta.env.DEV ? mockSeatsFor(game, participants, mockCount) : [];
   const visibleMocks = (started && (!finishedAt || role !== 'host') ? round.mockSeats ?? [] : mockSeats)
@@ -415,6 +416,23 @@ export function useRoomBoard(profile?: ProfileSummary) {
     return () => window.clearTimeout(timer);
   }, [role, matchId, activeDeadline, finishedAt]);
 
+  const displayDeadline = deadline ? deadline + (round.clockOffset ?? 0) : 0;
+  const pendingAt = timeoutPending?.at;
+  useEffect(() => {
+    const at = pendingAt ?? deadline;
+    if (!role || role === 'host' || state !== 'connected' || !started || finishedAt || !at) return;
+    let timer = window.setTimeout(requestClock, pendingAt ? 1000 : Math.max(1000, displayDeadline + 1000 - Date.now()));
+    function requestClock() {
+      const current = match.current;
+      if (current.id !== matchId || current.finishedAt || (current.timeoutPending?.at ?? current.deadline) !== at) return;
+      const sent = sentTimeoutChoice.current;
+      link.current?.send(sent?.id === matchId && sent.at === at ? { type: 'timeout-choice', ...sent }
+        : { type: 'timeout-sync', id: matchId });
+      timer = window.setTimeout(requestClock, 1000);
+    }
+    return () => window.clearTimeout(timer);
+  }, [role, state, started, matchId, finishedAt, deadline, displayDeadline, pendingAt]);
+
   function finishBySurrender(color: FlickPlayer, actor: Role) {
     const current = match.current;
     if (current.sketch) return commitSketch(actor, { kind: 'resign' });
@@ -450,6 +468,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
     setState('joining');
     setConnectedPeers([]);
     link.current = connectToRoom(target, token, {
+      retryWithoutSeat: token && seat.current?.role !== 'host' ? () => {
+        forgetGuestSeat(target);
+        rememberGuestRoom(target);
+        resetRoom();
+        connect(target);
+      } : undefined,
       state(next) {
         if (next === 'closed' || next === 'missing') {
           forgetGuestSeat(target);
@@ -537,7 +561,16 @@ export function useRoomBoard(profile?: ProfileSummary) {
             setRematchNotice(previous => previous?.id === current.id ? previous : { id: current.id, kind: 'incoming' });
             return;
           }
-          if (!('id' in raw) || raw.id !== current.id || !current.startedAt || current.finishedAt) return;
+          if (!('id' in raw) || raw.id !== current.id || !current.startedAt) return;
+          if (current.turnLimit && (raw.type === 'timeout-sync' || raw.type === 'timeout-choice')) {
+            const color = matchColor(current, peer);
+            if (raw.type === 'timeout-choice' && 'choice' in raw && (raw.choice === 'claim' || raw.choice === 'extend') && 'at' in raw
+              && (color === 1 || color === 2) && decideTimeout(raw.choice, raw.at, color)) return;
+            if (!current.finishedAt && expireTurn(Date.now())) return;
+            snapshot(peer);
+            return;
+          }
+          if (current.finishedAt) return;
           if (raw.type === 'sketch-sync' && current.sketch) { snapshot(peer); return; }
           if (raw.type === 'round-ready' || raw.type === 'puzzle-ready') { markRoundReady(peer); return; }
           if (!matchInProgress(current, Date.now())) return;
@@ -558,10 +591,6 @@ export function useRoomBoard(profile?: ProfileSummary) {
           if (!guestColor) return;
           if (raw.type === 'surrender') {
             finishBySurrender(guestColor, peer);
-            return;
-          }
-          if (raw.type === 'timeout-choice' && 'choice' in raw && (raw.choice === 'claim' || raw.choice === 'extend') && 'at' in raw) {
-            if (guestColor === 1 || guestColor === 2) decideTimeout(raw.choice, raw.at, guestColor);
             return;
           }
           if (raw.type === 'flick' && 'shot' in raw && 'revision' in raw) {
@@ -596,7 +625,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     });
   }
 
-  async function create(game: RoomGame, settings = defaultMatchSettings, roomTitle?: string) {
+  async function create(game: RoomGame, settings = matchSettingsForLanguage(language), roomTitle?: string) {
     const attempt = ++operation.current;
     link.current?.close();
     link.current = undefined;
@@ -656,7 +685,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
       if (!response.ok || operation.current !== attempt || seat.current !== host) return false;
       const { allowDoubleThree, overline, power, turnLimit } = match.current;
       previousMatch.current = undefined;
-      update(lobbyMatch(game, { ...defaultMatchSettings, allowDoubleThree, overline, power: power ?? 1, turnLimit }));
+      update(lobbyMatch(game, { ...matchSettingsForLanguage(language), allowDoubleThree, overline, power: power ?? 1, turnLimit }));
       snapshot();
       return true;
     } catch { return false; }
@@ -760,7 +789,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
     physicsSeats: round.physicsSeats,
     colorFor: (player: Role) => matchColor(round, player),
     guestRoom, changeGame, changingGame, rematchNotice: rematchNotice?.id === matchId ? rematchNotice.kind : undefined,
-    displayDeadline: deadline ? deadline + (round.clockOffset ?? 0) : 0,
+    displayDeadline,
     playStartedAt: matchBeginsAt(round),
     displayStart: matchBeginsAt(round) ? matchBeginsAt(round) + (round.clockOffset ?? 0) : 0,
     roundOutcome: role ? matchOutcome(round, role) : undefined,
@@ -852,8 +881,11 @@ export function useRoomBoard(profile?: ProfileSummary) {
       const current = match.current;
       const pending = current.timeoutPending;
       if (!pending || !playerColor || playerColor === pending.color) return false;
-      return role === 'host' ? decideTimeout(choice, pending.at, current.hostColor)
-        : ready.current && Boolean(link.current?.send({ type: 'timeout-choice', id: current.id, at: pending.at, choice }));
+      if (role === 'host') return decideTimeout(choice, pending.at, current.hostColor);
+      if (!ready.current) return false;
+      const request = { id: current.id, at: pending.at, choice };
+      sentTimeoutChoice.current = request;
+      return Boolean(link.current?.send({ type: 'timeout-choice', ...request }));
     },
     start() { return startRound(false); },
     rematch() { startRound(true); },

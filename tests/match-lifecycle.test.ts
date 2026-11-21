@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createLocalBoard, decideLocalBoard, endLocalBoard, moveLocalBoard, rematchLocalBoard } from '../apps/web/src/games/local-round.ts';
 import { blankMatch, matchInProgress, readMatchSnapshot } from '../apps/web/src/network/room-match.ts';
 import { countdownCue, countdownDuration, outcomeDuration, resultDelay } from '../apps/web/src/games/round-cues.ts';
+import { resolveTurnTimeout } from '../apps/web/src/games/turn-clock.ts';
 
 test('legacy snapshots retain defaults and a rejoin cannot roll the same round back', () => {
   const legacy = { type: 'snapshot', id: 'round-one', history: [112], startedAt: 10_000, finishedAt: 0, allowDoubleThree: false, sentAt: 10_150 };
@@ -52,4 +53,20 @@ test('a synchronized round waits through all four cues and starts the turn clock
   assert.equal(readMatchSnapshot(snapshot, scheduled, beginsAt), undefined);
   assert.equal(outcomeDuration, 1500);
   assert.equal(resultDelay, 2000);
+});
+
+test('late clock snapshots cannot restore an expired deadline after an online extension', () => {
+  const first = { ...blankMatch, type: 'snapshot', id: 'timed-round', startedAt: 1000, beginsAt: 5000, turnLimit: 10, deadline: 15_000 };
+  const pending = { color: 1 as const, at: first.deadline };
+  const expired = { ...first, deadline: 0, timeoutPending: pending };
+  const waiting = readMatchSnapshot(expired, blankMatch, 15_000);
+  assert(waiting);
+  assert.equal(readMatchSnapshot(first, waiting, 15_010), undefined);
+  const extended = readMatchSnapshot({ ...expired, ...resolveTurnTimeout(pending, 'extend', 16_000) }, waiting, 16_050);
+  assert(extended);
+  assert.equal(extended.deadline, 31_000);
+  assert.equal(readMatchSnapshot(expired, extended, 16_100), undefined);
+  const moved = readMatchSnapshot({ ...first, history: [112], deadline: 27_000 }, extended, 17_010);
+  assert.deepEqual(moved?.history, [112]);
+  assert.equal(moved?.deadline, 27_000);
 });

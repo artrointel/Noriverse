@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, ProfileSummary, TouchEffect } from '../../../../packages/protocol/profile.ts';
+import { isRoomRole } from '../../../../packages/protocol/rooms.ts';
 import type { Role } from '../../../../packages/protocol/rooms.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
@@ -290,8 +291,11 @@ export function SichuanPage({ game, settings, room, ownProfile, dark, antialias,
     setFeedback('sichuanHinted');
   }
 
+  const wonByForfeit = isRoomRole(onlineResult) && room?.puzzle.boards[onlineResult]?.tiles.some(isMatchTile);
+  const raceStatus = resigned ? 'puzzleResignedLoss' : wonByForfeit ? 'puzzleForfeitWin'
+    : outcome === 'win' ? 'sichuanRaceWin' : 'sichuanRaceLoss';
   const status = onlineResult ? t(onlineResult === 'timeout' ? 'sichuanTimedOut' : onlineResult === 'abandoned' ? 'sichuanAbandoned'
-    : onlineResult === 'team' ? 'sichuanTeamWin' : outcome === 'win' ? 'sichuanRaceWin' : 'sichuanRaceLoss')
+    : onlineResult === 'team' ? 'sichuanTeamWin' : raceStatus)
     : resultState ? t(resultState.reason === 'clear' ? memory ? 'memoryClear' : 'sichuanClear' : resultState.reason === 'timeout' ? 'sichuanTimedOut'
       : resultState.reason === 'stopped' ? 'gameFinished' : 'sichuanStuck')
     : resigned ? t('roundResigned') : !roundStart.started ? t('roundWaiting') : previewing ? t('memoryMemorize', { count: previewSeconds }) : t('sichuanRemaining', { count: remaining / 2 });

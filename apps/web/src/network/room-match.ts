@@ -106,6 +106,10 @@ function followsSnapshot(current: Match, next: Match) {
   if (next.id !== current.id) return true;
   const previousRevision = matchRevision(current);
   const nextRevision = matchRevision(next);
+  const previousClock = current.timeoutPending?.at ?? current.deadline;
+  const nextClock = next.timeoutPending?.at ?? next.deadline;
+  if (previousRevision === nextRevision && previousClock && nextClock
+    && (nextClock < previousClock || (nextClock === previousClock && current.timeoutPending && !next.timeoutPending))) return false;
   return nextRevision >= previousRevision && next.finishedAt >= current.finishedAt
     && (current.beginsAt === undefined || (next.beginsAt !== undefined && (!current.beginsAt || next.beginsAt === current.beginsAt)))
     && next.hostColor === current.hostColor && next.game === current.game

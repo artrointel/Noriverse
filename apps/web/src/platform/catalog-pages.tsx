@@ -1,4 +1,4 @@
-﻿import { useDeferredValue, useLayoutEffect, useRef, useState } from 'react';
+﻿import { useDeferredValue, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import heroArt from '../assets/hero-orbit.jpg';
 import { apiAvailable } from '../network/api.ts';
@@ -29,13 +29,17 @@ function GameCard({ id, selected, preview, selectable, disabled, onSelect, favor
 }) {
   const { t } = useTranslation();
   const game = games[id];
+  const subtitle = 'cardSubtitle' in game ? t(game.cardSubtitle) : undefined;
+  const subtitleId = useId();
   return (
     <article className="game-card" data-selected={selected}>
       <button type="button" className="card-link" aria-label={t(id)} aria-pressed={preview || selectable ? selected : undefined} disabled={disabled}
+        aria-describedby={subtitle ? subtitleId : undefined}
         aria-controls={preview && selected ? 'catalog-preview' : undefined} onClick={event => onSelect(id, event.currentTarget)}>
         <span className={'card-art card-art-' + id}><img src={game.art} alt="" width="880" height="587" decoding="async" /></span>
         <span className="card-copy">
           <strong>{t(id)}</strong>
+          {subtitle && <small className="card-subtitle" id={subtitleId}>{subtitle}</small>}
           <small>{t(game.category)} · {t(game.players)}</small>
         </span>
       </button>

@@ -23,7 +23,7 @@ import type { GameMode } from './platform/navigation.tsx';
 import { PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
 import { SketchPage } from './platform/sketch-page.tsx';
-import { defaultMatchSettings } from './games/match-settings.ts';
+import { defaultMatchSettings, matchSettingsForLanguage } from './games/match-settings.ts';
 import type { MatchSettings } from './games/match-settings.ts';
 import { CreateRoomPage, RoomPage } from './platform/room-page.tsx';
 import { FriendRequestToast, FriendsPage, useFriends } from './platform/friends.tsx';
@@ -43,7 +43,8 @@ function App() {
   const preferences = usePreferences();
   const { route, path, navigate, backNavigation } = useNavigation();
   const profile = useProfile(route.page === 'profile');
-  const room = useRoomBoard(profile.profile);
+  const language = i18n.resolvedLanguage === 'ko' ? 'ko' : 'en';
+  const room = useRoomBoard(profile.profile, language);
   const friends = useFriends(profile.profile?.id, route.page === 'friends' ? 'full' : route.page === 'profile' ? 'summary' : false, route.page === 'room');
   const presence = profile.profile?.presence ?? 'online';
   const invitations = useInvitations(profile.profile?.id, presence, profile.syncPresence, profile.syncBadges);
@@ -53,10 +54,7 @@ function App() {
     const boards = Object.fromEntries(Object.keys(boardRules).map(id => [id, createLocalBoard()]));
     return boards as Record<BoardGame, LocalBoard>;
   });
-  const [settings, setSettings] = useState<MatchSettings>(() => {
-    const language = i18n.resolvedLanguage === 'ko' ? 'ko' : 'en';
-    return { ...defaultMatchSettings, sketch: { ...defaultMatchSettings.sketch, language }, liar: { ...defaultMatchSettings.liar, language } };
-  });
+  const [settings, setSettings] = useState<MatchSettings>(() => matchSettingsForLanguage(language));
   const [selectedRoomGame, selectRoomGame] = useState<GameId>();
   const { power, flick: flickSettings, allowDoubleThree, puzzle: { settings: sichuanSettings }, overline, turnLimit } = settings;
   const roomOpen = room.active;

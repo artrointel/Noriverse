@@ -1,4 +1,4 @@
-import { isRoomRole, maxRelayMessageLength, readRelayData, roomRoles } from '../../../../packages/protocol/rooms.ts';
+import { isRoomRole, maxRelayMessageLength, readRelayData, roomHeartbeat, roomRoles } from '../../../../packages/protocol/rooms.ts';
 import type { RoomResult } from '../../../../packages/protocol/room-history.ts';
 import { readRoomTitle } from '../../../../packages/protocol/room-titles.ts';
 import type { Participant, Role, RoomMessage, Signal } from '../../../../packages/protocol/rooms.ts';
@@ -8,6 +8,7 @@ export type ConnectionState = 'joining' | 'waiting' | 'connecting' | 'connected'
 
 interface RoomEvents {
   state: (state: ConnectionState) => void;
+  retryWithoutSeat?: () => void;
   seat: (role: Role, token: string, title?: string) => void;
   open: (peer: Role) => void;
   receive: (message: unknown, peer: Role) => void;
@@ -33,6 +34,13 @@ export function connectToRoom(code: string, token: string | undefined, events: R
   let role: Role | undefined;
   let currentState: ConnectionState = 'joining';
   let disposed = false;
+  let heartbeat: number | undefined;
+
+  socket.onopen = () => {
+    heartbeat = window.setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(roomHeartbeat.ping);
+    }, 30_000);
+  };
 
   function state(next: ConnectionState) {
     if (disposed || next === currentState) return;
@@ -134,7 +142,11 @@ export function connectToRoom(code: string, token: string | undefined, events: R
   }
 
   async function handle(message: RoomMessage) {
-    if (message.type === 'error') { state(message.reason === 'full' ? 'full' : 'missing'); return; }
+    if (message.type === 'error') {
+      if (message.reason === 'token' && events.retryWithoutSeat) events.retryWithoutSeat();
+      else state(message.reason === 'full' ? 'full' : 'missing');
+      return;
+    }
     if (message.type === 'room-closed') { closePeers(); state('closed'); return; }
     if (message.type === 'welcome') {
       role = message.role;
@@ -199,11 +211,13 @@ export function connectToRoom(code: string, token: string | undefined, events: R
 
   let queue = Promise.resolve();
   socket.onmessage = (event: MessageEvent<string>) => {
+    if (event.data === roomHeartbeat.pong) return;
     queue = queue.then(async () => {
       if (!disposed) await handle(JSON.parse(event.data) as RoomMessage);
     }).catch(() => { if (!disposed) refreshState('failed'); });
   };
   socket.onclose = () => {
+    window.clearInterval(heartbeat);
     if (disposed || currentState === 'full' || currentState === 'missing' || currentState === 'closed') return;
     if (role === 'host') { closePeers(); state('closed'); return; }
     if (peers.get('host')?.channel?.readyState !== 'open') { closePeers(); refreshState('disconnected'); }
@@ -237,6 +251,7 @@ export function connectToRoom(code: string, token: string | undefined, events: R
     close(leave = false) {
       if (leave && role !== 'host' && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'leave' }));
       disposed = true;
+      window.clearInterval(heartbeat);
       closePeers();
       socket.close();
     },

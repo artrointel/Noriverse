@@ -57,7 +57,7 @@ export default {
       ]);
       if (!profile || !room) return cors(new Response(null, { status: 409 }));
       const received = await env.PROFILES.getByName(body.friend).receiveInvite({ id: crypto.randomUUID(), sender: profile.id, name: profile.name,
-        game: room.game, code: inviteCode, expires: Math.min(Date.now() + 180_000, room.expires) });
+        game: room.game, code: inviteCode, expires: Date.now() + 180_000 });
       return cors(new Response(null, { status: received ? 204 : 409 }));
     }
 

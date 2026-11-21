@@ -221,6 +221,7 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .card-copy strong, .card-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-copy strong { font-size: 1.06rem; font-weight: 800; }
 .card-copy small { color: var(--muted); font-size: .81rem; }
+.card-copy .card-subtitle { white-space: normal; overflow-wrap: anywhere; }
 .game-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--primary); font-size: .83rem; font-weight: 720; }
 .game-tags span { padding: 4px 8px; border-radius: 6px; background: var(--active); }
 .game-tags span + span { background: var(--raised); color: var(--muted); }
