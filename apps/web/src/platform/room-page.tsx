@@ -253,14 +253,15 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
       <div className="lobby-feature-rules"><GameRulesSummary game={activeGame} settings={room.settings} /></div>
     </GameFeature>
     <div className="surface lobby-toolbar">
-      {room.state && <p id="lobby-connection" className="connection lobby-connection" role="status">{t(room.role === 'host' && !room.started && connected && !room.canStart ? 'waitingAllConnections' : connected && room.role !== 'host'
+      {room.state && <p id="lobby-connection" className="connection lobby-connection" role="status">{t(activeGame === 'liar' && !room.started && participants.length < 3 ? 'liarNeedPlayers'
+        : room.role === 'host' && !room.started && connected && !room.canStart ? 'waitingAllConnections' : connected && room.role !== 'host'
         ? room.started && !room.inMatch ? 'waitingNextRound' : !room.started ? 'waitingStart' : room.state : room.state)}</p>}
       <div className="panel-actions">
         {canEdit && <button type="button" className="button button-secondary" disabled={room.changingGame || !room.matchId}
           onClick={() => setSettingsOpen(true)}><GearIcon />{t('settings')}</button>}
         {room.role === 'host' && gameChoices.length > 0 && <button type="button" className="button button-secondary"
           onClick={() => setGamesOpen(true)}>{t('changeRoomGame')}</button>}
-        {(room.needsReconnect || (connected && room.role === 'host' && !room.canStart)) &&
+        {(room.needsReconnect || (connected && room.role === 'host' && !room.canStart && (activeGame !== 'liar' || participants.length >= 3))) &&
           <button type="button" className="button button-secondary" onClick={room.reconnect}>{t('retry')}</button>}
       </div>
       {room.rematchNotice === 'incoming' && <p role="status">{t('rematchIncoming')}</p>}
@@ -275,7 +276,8 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           const color = room.colorFor(role) ?? (role === 'host' ? room.hostColor : oppositeStone(room.hostColor));
           const own = room.role === role;
           const participant = own ? ownProfile ?? profile : profile;
-          const seatInfo = [t(role === 'host' ? 'host' : 'guest'), activeGame === 'sichuan' || activeGame === 'sketch' || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)),
+          const seatInfo = [t(role === 'host' ? 'host' : 'guest'), activeGame === 'sichuan' || activeGame === 'sketch' || activeGame === 'liar'
+            || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)),
             own ? t('me') : undefined, participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
           return <li key={role}>
             {participant ? <>

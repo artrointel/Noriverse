@@ -12,6 +12,7 @@ import { games } from './game-catalog.ts';
 import { formatPlayTime } from './game-time.tsx';
 import { SettingsSection, SettingsSelect } from './settings-fields.tsx';
 import { sketchCycles, sketchTimes } from '../games/sketch/rules.ts';
+import { liarGuessSeconds, liarHintTimes, liarVoteSeconds } from '../games/liar/rules.ts';
 
 export function GameFeature({ game, heading, children }: { game: GameId; heading: string; children?: ReactNode }) {
   const { t } = useTranslation();
@@ -69,6 +70,19 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
   online: boolean; onValidity: (valid: boolean) => void;
 }) {
   const { t } = useTranslation();
+  if (game === 'liar') {
+    const liar = settings.liar;
+    return <SettingsSection title={t('setupBoardRules')}>
+      <SettingsSelect label={t('sketchLanguage')} value={liar.language} change={language =>
+        change({ ...settings, liar: { ...liar, language: language === 'en' ? 'en' : 'ko' } })}>
+        <option value="ko">한국어</option><option value="en">English</option>
+      </SettingsSelect>
+      <SettingsSelect label={t('liarHintTime')} value={liar.seconds} change={value =>
+        change({ ...settings, liar: { ...liar, seconds: liarHintTimes.find(seconds => seconds === Number(value)) ?? liar.seconds } })}>
+        {liarHintTimes.map(seconds => <option key={seconds} value={seconds}>{formatPlayTime(seconds)}</option>)}
+      </SettingsSelect>
+    </SettingsSection>;
+  }
   if (game === 'sketch') {
     const sketch = settings.sketch;
     return <SettingsSection title={t('setupBoardRules')}>
@@ -114,7 +128,11 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
 export function GameRulesSummary({ game, settings }: { game: GameId; settings: MatchSettings }) {
   const { t } = useTranslation();
   const entries: [string, string][] = [];
-  if (game === 'sketch') {
+  if (game === 'liar') {
+    entries.push([t('sketchLanguage'), settings.liar.language === 'ko' ? '한국어' : 'English'],
+      [t('liarHintTime'), formatPlayTime(settings.liar.seconds)], [t('liarVoteTime'), formatPlayTime(liarVoteSeconds)],
+      [t('liarGuessTime'), formatPlayTime(liarGuessSeconds)]);
+  } else if (game === 'sketch') {
     entries.push([t('sketchLanguage'), settings.sketch.language === 'ko' ? '한국어' : 'English'],
       [t('sketchTime'), formatPlayTime(settings.sketch.seconds)], [t('sketchCycles'), String(settings.sketch.cycles)]);
   } else if (game === 'sichuan') {

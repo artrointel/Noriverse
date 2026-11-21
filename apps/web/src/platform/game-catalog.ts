@@ -4,6 +4,7 @@ import othelloArt from '../assets/othello.jpg';
 import chessArt from '../assets/chess.jpg';
 import sichuanArt from '../assets/sichuan-cover.webp';
 import sketchArt from '../assets/sketch-cover.webp';
+import liarArt from '../assets/liar-cover.webp';
 import type { GameId } from '../../../../packages/protocol/games.ts';
 export { gameIds } from '../../../../packages/protocol/games.ts';
 
@@ -14,6 +15,7 @@ export const games = {
   chess: { art: chessArt, category: 'strategy', players: 'twoPlayers', description: 'chessCopy', rules: 'chessRules', searchNames: '체스 chess checkmate' },
   sichuan: { art: sichuanArt, category: 'strategy', players: 'upToFourPlayers', description: 'sichuanCopy', rules: 'sichuanRules', searchNames: '사천성 sichuan shisen-sho shisensho tile matching' },
   sketch: { art: sketchArt, category: 'action', players: 'upToFourPlayers', description: 'sketchCopy', rules: 'sketchRules', searchNames: '스케치 퀴즈 캐치마인드 그림 단어 sketch drawing guess' },
+  liar: { art: liarArt, category: 'strategy', players: 'liarPlayers', description: 'liarCopy', rules: 'liarRules', searchNames: '라이어 게임 추리 거짓말 liar hidden role deduction' },
 } as const satisfies Record<GameId, { art: string; category: string; players: string; description: string; rules: string; searchNames: string }>;
 
 export function matchesGame(id: GameId, query: string, title: string) {

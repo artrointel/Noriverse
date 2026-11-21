@@ -112,11 +112,12 @@ export async function profileRequest(request: Request, env: Env, url: URL, exter
       await Promise.allSettled([store.sendSocialChange(), other.sendSocialChange()]);
       return json(null, 200);
     }
-    const presence = url.searchParams.get('presence') === '1';
+    const presence = url.searchParams.get('presence');
+    const showPresence = presence === '1' || presence === 'summary';
     const summaries = async (ids: string[], full = false) => (await Promise.all(ids.map(id => full
-      ? env.PROFILES.getByName(id).friendSummary(auth.id) : env.PROFILES.getByName(id).summary()))).filter(friend => friend !== null);
-    if (path.endsWith('/friends')) return json(await summaries(links.friends, presence), 200);
-    const [friends, incoming, outgoing] = await Promise.all([summaries(links.friends, presence), summaries(links.incoming), summaries(links.outgoing)]);
+      ? env.PROFILES.getByName(id).friendSummary(auth.id, presence === '1') : env.PROFILES.getByName(id).summary()))).filter(friend => friend !== null);
+    if (path.endsWith('/friends')) return json(await summaries(links.friends, showPresence), 200);
+    const [friends, incoming, outgoing] = await Promise.all([summaries(links.friends, showPresence), summaries(links.incoming), summaries(links.outgoing)]);
     return json({ friends, incoming, outgoing }, 200);
   }
   if (path === '/api/profiles/me/presence' && request.method === 'POST') {
@@ -205,13 +206,14 @@ export class ProfileStore extends DurableObject<Env> {
     return { id: identity.id, name: identity.name, ...avatarLayers(identity), level: levelFromPlayTime(seconds) };
   }
 
-  async friendSummary(viewer: string) {
+  async friendSummary(viewer: string, includeRoom: boolean) {
     const identity = await this.ctx.storage.get<Identity>('identity');
     if (!identity) return null;
     const profile = this.profileSummary(identity);
     const lastOnlineAt = this.ctx.storage.kv.get<number>('lastOnlineAt');
     if (identity.presence === 'offline') return { ...profile, online: false, lastOnlineAt };
     const online = Boolean(this.presenceUntil());
+    if (!includeRoom) return { ...profile, online, lastOnlineAt };
     const code = await this.ctx.storage.get<string>('currentRoom');
     const room = code && await this.env.ROOMS.getByName(code).friendRoom(profile.id, viewer);
     return { ...profile, online, lastOnlineAt, room: room && code ? { code, ...room } : undefined };

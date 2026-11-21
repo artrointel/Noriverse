@@ -302,6 +302,9 @@ export function ProfilePage({ own, id, model, friends, navigate, edit, onDeleted
   }, [id, own]);
 
   const profile = own ? model.profile : visited;
+  const friendCount = friends.friends?.length;
+  const onlineCount = friends.friends?.every(friend => typeof friend.online === 'boolean')
+    ? friends.friends.filter(friend => friend.online).length : undefined;
   const loading = own ? model.status === 'loading' : visited === undefined;
   const shareUrl = profile ? new URL(routeHref('/profiles/' + profile.id), location.origin).href : '';
   async function share() {
@@ -337,6 +340,10 @@ export function ProfilePage({ own, id, model, friends, navigate, edit, onDeleted
             {t(copied ? 'copied' : 'shareProfile')}
           </button>}
           {apiAvailable && <RouteLink className="button button-secondary" href="/friends" navigate={navigate}>{t('manageFriends')}
+            {onlineCount !== undefined && friendCount !== undefined && <small className="profile-friend-count">
+              <span aria-hidden="true">({onlineCount}/{friendCount})</span>
+              <span className="visually-hidden">{t('friendPresenceCount', { online: onlineCount, total: friendCount })}</span>
+            </small>}
             {friends.incoming.length > 0 && <span className="lobby-count" aria-label={t('incomingFriends')}>{friends.incoming.length}</span>}
           </RouteLink>}
         </div>}

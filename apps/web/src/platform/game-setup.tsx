@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { apiAvailable } from '../network/api.ts';
 import type { GameId } from '../../../../packages/protocol/games.ts';
+import { isOnlineOnlyGame } from '../../../../packages/protocol/games.ts';
 import type { MatchSettings } from '../games/match-settings.ts';
 import { BackLink, gamePath } from './navigation.tsx';
 import type { GameMode, Navigate } from './navigation.tsx';
@@ -14,11 +15,13 @@ export function GameSetup({ id, online, settings, change, onStart, navigate, act
   onStart: (mode: GameMode) => Promise<boolean>; navigate: Navigate; activeGame?: GameId;
 }) {
   const { t } = useTranslation();
-  const [mode, setMode] = useState<GameMode>(online && apiAvailable ? 'online' : 'local');
+  const onlineOnly = isOnlineOnlyGame(id);
+  const [mode, setMode] = useState<GameMode>(onlineOnly || (online && apiAvailable) ? 'online' : 'local');
   const [starting, setStarting] = useState(false);
   const [failed, setFailed] = useState(false);
   const [valid, setValid] = useState(true);
   const useLobby = mode === 'online' && Boolean(activeGame);
+  const blocked = mode === 'online' && !apiAvailable;
 
   return <div className="site-width subpage game-setup">
     <BackLink fallback={gamePath(id)} fallbackLabel={id} navigate={navigate} />
@@ -28,7 +31,7 @@ export function GameSetup({ id, online, settings, change, onStart, navigate, act
     </header>
     <form className="setup-form-layout" onSubmit={async event => {
       event.preventDefault();
-      if (starting || (!useLobby && !valid)) return;
+      if (starting || blocked || (!useLobby && !valid)) return;
       setStarting(true);
       setFailed(false);
       try { setFailed(!await onStart(mode)); }
@@ -38,7 +41,7 @@ export function GameSetup({ id, online, settings, change, onStart, navigate, act
       <div className="surface setup-panel">
         <SettingsSection title={t('gameMode')}>
           <fieldset className="setup-options" aria-label={t('gameMode')} aria-describedby="setup-mode-help">
-            {(['online', 'local'] as const).map(value => <label className="setup-option" key={value}>
+            {(['online', 'local'] as const).filter(value => !onlineOnly || value === 'online').map(value => <label className="setup-option" key={value}>
               <input type="radio" name="mode" value={value} checked={mode === value} disabled={value === 'online' && !apiAvailable}
                 onChange={() => { setMode(value); setFailed(false); setValid(true); }} />
               <span>{t(value === 'online' ? 'newRoom' : 'local')}</span>
@@ -46,13 +49,14 @@ export function GameSetup({ id, online, settings, change, onStart, navigate, act
           </fieldset>
           <p className="setup-help" id="setup-mode-help">{useLobby
             ? t(activeGame === id ? 'editRulesInLobby' : 'otherGameRoom', { game: t(activeGame!) })
-            : t(mode === 'online' ? 'onlineCopy' : id === 'sketch' ? 'sketchPractice' : !apiAvailable ? 'roomUnavailable' : id === 'sichuan' ? 'sichuanSolo' : 'localCopy')}</p>
+            : t(blocked ? 'roomUnavailable' : onlineOnly ? 'liarOnlineOnly'
+              : mode === 'online' ? 'onlineCopy' : id === 'sketch' ? 'sketchPractice' : !apiAvailable ? 'roomUnavailable' : id === 'sichuan' ? 'sichuanSolo' : 'localCopy')}</p>
         </SettingsSection>
         {!useLobby && <GameRulesEditor key={mode} game={id} settings={settings} change={change} online={mode === 'online'} onValidity={setValid} />}
       </div>
       <div className="setup-actions">
         {mode === 'online' && failed && <p role="alert" className="setup-error">{t('createRoomError')}</p>}
-        <button type="submit" className="button button-primary" disabled={starting || (!useLobby && !valid)}>
+        <button type="submit" className="button button-primary" disabled={starting || blocked || (!useLobby && !valid)}>
           {t(starting ? 'loading' : mode === 'online' ? useLobby ? 'goToRoom' : 'newRoom' : 'start')}
         </button>
       </div>

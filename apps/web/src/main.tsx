@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState } from 'react';
+import { lazy, StrictMode, Suspense, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../packages/protocol/profile.ts';
@@ -12,7 +12,6 @@ import type { BoardGame } from './games/board-rules.ts';
 import { useRoomBoard } from './network/use-room-board.ts';
 import { apiAvailable } from './network/api.ts';
 import type { GameId } from '../../../packages/protocol/games.ts';
-import { oppositeStone } from './games/table.ts';
 import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setLobbyMusic } from './platform/audio.ts';
 import type { AudioLevels } from './platform/audio.ts';
 import { CatalogPage, GameDetail } from './platform/catalog-pages.tsx';
@@ -23,10 +22,8 @@ import type { GameMode } from './platform/navigation.tsx';
 import { PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
 import { SketchPage } from './platform/sketch-page.tsx';
-import { sketchOutcome } from './games/sketch/rules.ts';
 import { defaultMatchSettings } from './games/match-settings.ts';
 import type { MatchSettings } from './games/match-settings.ts';
-import { puzzleOutcome } from './games/sichuan/multiplayer.ts';
 import { CreateRoomPage, RoomPage } from './platform/room-page.tsx';
 import { FriendRequestToast, FriendsPage, useFriends } from './platform/friends.tsx';
 import { InvitationToasts, useInvitations } from './platform/invitations.tsx';
@@ -36,13 +33,15 @@ import { NameDialog, ProfileNav, ProfilePage } from './platform/profiles.tsx';
 import { useProfile } from './platform/use-profile.ts';
 import './styles.css';
 
+const LiarPage = lazy(() => import('./platform/liar-page.tsx').then(module => ({ default: module.LiarPage })));
+
 function App() {
   const { t, i18n } = useTranslation();
   const preferences = usePreferences();
   const { route, path, navigate, backNavigation } = useNavigation();
   const profile = useProfile(route.page === 'profile');
   const room = useRoomBoard(profile.profile);
-  const friends = useFriends(profile.profile?.id, route.page === 'friends', route.page === 'room');
+  const friends = useFriends(profile.profile?.id, route.page === 'friends' ? 'full' : route.page === 'profile' ? 'summary' : false, route.page === 'room');
   const presence = profile.profile?.presence ?? 'online';
   const invitations = useInvitations(profile.profile?.id, presence, profile.syncPresence);
   const playGame = route.page === 'play' && (!route.online || (room.code && room.inMatch && room.started && room.game === route.id
@@ -51,8 +50,10 @@ function App() {
     const boards = Object.fromEntries(Object.keys(boardRules).map(id => [id, createLocalBoard()]));
     return boards as Record<BoardGame, LocalBoard>;
   });
-  const [settings, setSettings] = useState<MatchSettings>(() => ({ ...defaultMatchSettings,
-    sketch: { ...defaultMatchSettings.sketch, language: i18n.resolvedLanguage === 'ko' ? 'ko' : 'en' } }));
+  const [settings, setSettings] = useState<MatchSettings>(() => {
+    const language = i18n.resolvedLanguage === 'ko' ? 'ko' : 'en';
+    return { ...defaultMatchSettings, sketch: { ...defaultMatchSettings.sketch, language }, liar: { ...defaultMatchSettings.liar, language } };
+  });
   const [selectedRoomGame, selectRoomGame] = useState<GameId>();
   const { power, flick: flickSettings, allowDoubleThree, puzzle: { settings: sichuanSettings }, overline, turnLimit } = settings;
   const roomOpen = room.active;
@@ -82,11 +83,7 @@ function App() {
   useEffect(() => {
     if (!profile.profile || !room.inMatch || !room.playerColor || !room.finishedAt || !room.matchId || lastAwayResult.current === room.matchId
       || (route.page === 'play' && route.id === room.game && route.online)) return;
-    const loser = room.surrendered ?? room.timedOut;
-    const winner = loser ? oppositeStone(loser) : room.winner;
-    const puzzleResult = room.puzzle?.result && room.role ? puzzleOutcome(room.puzzle.result, room.role) : undefined;
-    const sketchResult = room.sketch?.phase === 'done' && room.role ? sketchOutcome(room.sketch, room.role) : undefined;
-    const outcome = sketchResult ?? puzzleResult ?? (winner ? winner === 'draw' ? 'draw' : winner === room.playerColor ? 'win' : 'loss' : undefined);
+    const outcome = room.roundOutcome;
     if (!outcome) return;
     const matchId = room.matchId;
     lastAwayResult.current = matchId;
@@ -94,7 +91,7 @@ function App() {
       id: matchId, game: room.game, mode: 'online', outcome,
       seconds: elapsedPlaySeconds(room.playStartedAt, room.finishedAt),
     }).then(saved => { if (!saved && lastAwayResult.current === matchId) lastAwayResult.current = ''; });
-  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.playStartedAt, room.puzzle, room.sketch, room.role, room.inMatch, route]);
+  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.roundOutcome, room.playStartedAt, room.inMatch, route]);
 
   useEffect(() => {
     const view = route.id ? t(route.id) : route.page === 'room' ? t('room') : route.page === 'createRoom' ? t('newRoom')
@@ -232,6 +229,19 @@ function App() {
         const local = board ? localBoards[board] : undefined;
         if (online && playGame !== id) {
           return <RoomPage room={room} friends={friends} ownProfile={profile.profile} invite="" navigate={navigate} onPlay={enterRoomGame} />;
+        }
+        if (id === 'liar') {
+          if (!online) return <div className="site-width subpage">
+            <p>{t('liarOnlineOnly')}</p><RouteLink href={gamePath(id, 'setup', 'online')} navigate={navigate} className="button button-primary">{t('settings')}</RouteLink>
+          </div>;
+          if (!room.liar || !room.role) return <p role="status">{t('loading')}</p>;
+          return <Suspense fallback={<div className="surface stage-loading" role="status">{t('loading')}</div>}>
+            <LiarPage room={{ ...room, liar: room.liar, role: room.role }} ownProfile={profile.profile} navigate={navigate}
+            dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
+            onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias}
+            showTouches={preferences.showTouches} onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
+            record={apiAvailable && profile.profile ? profile.record : undefined} />
+          </Suspense>;
         }
         if (id === 'sketch') {
           const sketchRoom = online && room.sketch && room.role ? { ...room, sketch: room.sketch, role: room.role } : undefined;

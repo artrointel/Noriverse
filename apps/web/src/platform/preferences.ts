@@ -5,6 +5,21 @@ import { readResolution } from '../games/render-resolution.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 
 const ko = {
+  friendPresenceCount: '친구 {{total}}명 중 {{online}}명 온라인',
+  liar: '라이어 게임', liarPlayers: '3~4인', liarCopy: '제시어를 아는 척하는 한 사람을 힌트로 찾아내세요.',
+  liarRules: '시민은 같은 제시어를 보고, 라이어는 주제만 봅니다. 힌트를 한 번씩 낸 뒤 비밀 투표로 라이어를 지목하세요. 동률이나 오지목이면 라이어가 승리합니다. 지목된 라이어는 제시어를 한 번 맞힐 수 있습니다.',
+  liarOnlineOnly: '친구 방에 3~4명이 모이면 시작할 수 있습니다.', liarNeedPlayers: '시작하려면 최소 3명이 필요합니다.',
+  liarTable: '라이어 게임 테이블', liarHelp: '내 카드를 눌러 역할을 확인하고, 다른 사람의 힌트를 보고 투표하세요.',
+  liarHintTime: '힌트 제한 시간', liarVoteTime: '투표 제한 시간', liarGuessTime: '제시어 추측 시간',
+  liarTopic: '주제', liarTopic_food: '음식', liarTopic_animals: '동물', liarTopic_places: '장소', liarTopic_objects: '물건',
+  liarRole: '라이어', liarRevealCard: '내 카드 열기', liarPrivateCard: '나에게만 보이는 카드', liarCitizenCard: '시민 · 다시 눌러 숨기기',
+  liarNoWord: '주제만 보고 힌트를 생각하세요', liarPhase: '게임 진행', liarYourHint: '내가 힌트를 낼 차례', liarTheirHint: '{{player}}님의 힌트를 기다리는 중',
+  liarHintEntry: '힌트 입력', liarSendHint: '힌트 제출', liarHints: '공개된 힌트', liarSkipped: '건너뜀', liarSpeaking: '힌트 차례',
+  liarVoteStage: '라이어라고 생각하는 사람을 고르세요', liarVoteCount: '{{count}}/{{total}}명 투표', liarVoteSaved: '{{player}}님에게 투표했습니다.',
+  liarGuessStage: '라이어의 마지막 추측', liarAccused: '{{player}}님이 라이어였습니다. 제시어를 맞힐 기회가 한 번 남았습니다.',
+  liarGuessLabel: '제시어 추측', liarSubmitGuess: '추측 제출', liarWins: '라이어 승리', liarCitizensWin: '시민 승리',
+  liarWho: '라이어', liarWord: '제시어', liarFinalGuess: '라이어의 답', liarTally: '최종 득표',
+  liarClueStep: '힌트', liarVoteStep: '투표', liarGuessStep: '추측',
   lastOnlineAt: '마지막 접속 {{time}}', lastOnlineUnknown: '마지막 접속 기록 없음',
   sketch: '스케치 퀴즈', sketchParty: '그림 대전', sketchLanguage: '제시어 언어', sketchTime: '한 차례 제한 시간', sketchCycles: '1인당 출제 횟수',
   sketchCopy: '돌아가며 그림을 그리고, 친구가 그리는 동안 제시어를 맞히세요.',
@@ -223,6 +238,21 @@ const ko = {
 };
 
 const en: Record<keyof typeof ko, string> = {
+  friendPresenceCount: '{{online}} of {{total}} friends online',
+  liar: 'Liar Game', liarPlayers: '3–4 players', liarCopy: 'Read the clues to uncover the player bluffing about the secret word.',
+  liarRules: 'Citizens share a secret word. The liar sees only its category. Give one clue each, then vote privately. A tie or a wrong accusation lets the liar win. A caught liar has one chance to guess the word.',
+  liarOnlineOnly: 'Start a friend room with three or four players.', liarNeedPlayers: 'At least three players are needed to start.',
+  liarTable: 'Liar Game table', liarHelp: 'Open your card to see your role. Read the clues before casting a vote.',
+  liarHintTime: 'Clue time', liarVoteTime: 'Voting time', liarGuessTime: 'Final guess time',
+  liarTopic: 'Category', liarTopic_food: 'Food', liarTopic_animals: 'Animals', liarTopic_places: 'Places', liarTopic_objects: 'Objects',
+  liarRole: 'Liar', liarRevealCard: 'Open my card', liarPrivateCard: 'Only you can see your card', liarCitizenCard: 'Citizen · click again to hide',
+  liarNoWord: 'Use the category to come up with a clue', liarPhase: 'Game progress', liarYourHint: 'Your turn to give a clue', liarTheirHint: 'Waiting for {{player}}’s clue',
+  liarHintEntry: 'Write a clue', liarSendHint: 'Submit clue', liarHints: 'Clues on the table', liarSkipped: 'Skipped', liarSpeaking: 'Giving a clue',
+  liarVoteStage: 'Vote for the liar', liarVoteCount: '{{count}}/{{total}} voted', liarVoteSaved: 'You voted for {{player}}.',
+  liarGuessStage: 'The liar’s last guess', liarAccused: '{{player}} was the liar and has one chance to guess the word.',
+  liarGuessLabel: 'Guess the secret word', liarSubmitGuess: 'Submit guess', liarWins: 'The liar wins', liarCitizensWin: 'The citizens win',
+  liarWho: 'Liar', liarWord: 'Secret word', liarFinalGuess: 'Liar’s guess', liarTally: 'Final vote count',
+  liarClueStep: 'Clues', liarVoteStep: 'Vote', liarGuessStep: 'Guess',
   lastOnlineAt: 'Last signed in {{time}}', lastOnlineUnknown: 'No sign-in history yet',
   sketch: 'Sketch Quiz', sketchParty: 'Drawing party', sketchLanguage: 'Word language', sketchTime: 'Time per turn', sketchCycles: 'Turns per player',
   sketchCopy: 'Take turns sketching a secret word and guessing what your friends are drawing.',

@@ -17,20 +17,23 @@ import { oppositeStone, rematchPlayerColor } from '../games/table.ts';
 import { nextDeadline, resolveTurnTimeout } from '../games/turn-clock.ts';
 import type { TimeoutChoice } from '../games/turn-clock.ts';
 import { defaultSichuanRoomSettings } from '../games/sichuan/options.ts';
-import { applyPuzzleAction, makePuzzleRound, puzzleEnd, puzzleOutcome, readyPuzzle, resignPuzzle } from '../games/sichuan/multiplayer.ts';
+import { applyPuzzleAction, makePuzzleRound, puzzleEnd, readyPuzzle, resignPuzzle } from '../games/sichuan/multiplayer.ts';
 import type { PuzzleAction, PuzzleRound } from '../games/sichuan/multiplayer.ts';
 import { defaultMatchSettings } from '../games/match-settings.ts';
 import type { MatchSettings } from '../games/match-settings.ts';
 import { mergeRoomHistory, readRoomResult, roomHistoryBatchSize } from './room-history.ts';
 import type { RoomResult } from './room-history.ts';
-import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchTurn, matchWinner, readMatchSnapshot, roundSeats } from './room-match.ts';
+import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchOutcome, matchTurn, matchWinner, readMatchSnapshot, roundSeats } from './room-match.ts';
 import type { Match } from './room-match.ts';
 import { countdownDuration } from '../games/round-cues.ts';
-import { advanceSketch, applySketchAction, defaultSketchSettings, inkBatch, inkLimit, makeSketchRound, readInk, sketchDeck, sketchOutcome, visibleSketch } from '../games/sketch/rules.ts';
+import { advanceSketch, applySketchAction, defaultSketchSettings, inkBatch, inkLimit, makeSketchRound, readInk, sketchDeck, visibleSketch } from '../games/sketch/rules.ts';
 import type { SketchAction, SketchRound } from '../games/sketch/rules.ts';
+import { advanceLiar, applyLiarAction, defaultLiarSettings, isLiarRound, makeLiarRound, visibleLiar } from '../games/liar/rules.ts';
+import type { LiarAction, LiarRound } from '../games/liar/rules.ts';
 
 type Seat = { code: string; role: Role; token: string };
 const lobbySlots = assignReactionSlots(roomRoles);
+const matchDeadline = (match: Match) => match.liar?.deadline ?? match.sketch?.deadline ?? (match.puzzle ? puzzleEnd(match.puzzle) : match.deadline);
 
 export function useRoomBoard(profile?: ProfileSummary) {
   const [code, setCode] = useState<string>();
@@ -106,15 +109,14 @@ export function useRoomBoard(profile?: ProfileSummary) {
       rememberGuestRoom(currentSeat.code, next.startedAt && !next.finishedAt && inRound(next, currentSeat.role) ? next.game : undefined);
     }
     if (currentSeat?.role === 'host' && next.finishedAt && !previous.finishedAt && matchRoster.current) {
-      const loser = next.surrendered ?? next.timedOut;
-      const winner = loser ? oppositeStone(loser) : matchWinner(next);
-      const puzzleResult = next.puzzle?.result;
-      if (winner || puzzleResult || next.sketch?.phase === 'done') {
+      const players = matchRoster.current.seats.flatMap(role => {
+        const outcome = matchOutcome(next, role);
+        return outcome ? [{ role, name: role === 'host' ? ownProfile.current?.name : matchRoster.current?.names.get(role), outcome }] : [];
+      });
+      if (players.length) {
         const entry: RoomResult = { id: next.id, game: next.game, endedAt: next.finishedAt,
           seconds: elapsedPlaySeconds(matchBeginsAt(next), next.finishedAt),
-          players: matchRoster.current.seats.map(role => ({ role, name: role === 'host' ? ownProfile.current?.name : matchRoster.current?.names.get(role),
-            outcome: next.sketch ? sketchOutcome(next.sketch, role) : puzzleResult ? puzzleOutcome(puzzleResult, role)
-              : winner === 'draw' ? 'draw' : winner === matchColor(next, role) ? 'win' : 'loss' })),
+          players,
         };
         results.current = [...results.current, entry];
         setRoomHistory(previous => mergeRoomHistory(previous, [entry]));
@@ -128,10 +130,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function snapshot(target?: Role) {
     const current = match.current;
     const sentAt = Date.now();
-    if (current.sketch) {
+    if (current.sketch || current.liar) {
       const sketch = current.sketch;
+      const liar = current.liar;
       for (const peer of target ? [target] : link.current?.connectedPeers() ?? []) {
-        link.current?.send({ type: 'snapshot', ...current, sketch: visibleSketch(sketch, peer), sentAt }, peer);
+        link.current?.send({ type: 'snapshot', ...current, sketch: sketch && visibleSketch(sketch, peer),
+          liar: liar && isLiarRound(liar) ? visibleLiar(liar, peer) : undefined, sentAt }, peer);
       }
     } else link.current?.send({ type: 'snapshot', ...current, sentAt }, target);
   }
@@ -201,7 +205,8 @@ export function useRoomBoard(profile?: ProfileSummary) {
     const beginsAt = Date.now() + countdownDuration;
     const sketch = current.sketch && current.sketchConfig
       ? { ...current.sketch, deadline: beginsAt + current.sketchConfig.seconds * 1000 } : undefined;
-    update({ ...current, beginsAt, deadline: nextDeadline(current.turnLimit, beginsAt), sketch });
+    const liar = current.liar && current.liarConfig ? { ...current.liar, deadline: beginsAt + current.liarConfig.seconds * 1000 } : undefined;
+    update({ ...current, beginsAt, deadline: nextDeadline(current.turnLimit, beginsAt), sketch, liar });
     snapshot();
   }
 
@@ -216,6 +221,21 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function syncSketch(sketch: SketchRound, now: number) {
     update({ ...match.current, sketch, finishedAt: sketch.phase === 'done' ? now : 0 });
     snapshot();
+  }
+
+  function syncLiar(liar: LiarRound, now: number) {
+    update({ ...match.current, liar, finishedAt: liar.result ? now : 0 });
+    snapshot();
+  }
+
+  function commitLiar(actor: Role, action: unknown) {
+    const current = match.current;
+    const now = Date.now();
+    if (!current.liar || !isLiarRound(current.liar) || !current.liarConfig || !matchInProgress(current, now) || expireTurn(now)) return false;
+    const next = applyLiarAction(current.liar, actor, action, current.liarConfig, now);
+    if (!next) return false;
+    syncLiar(next, now);
+    return true;
   }
 
   function commitSketch(actor: Role, action: unknown) {
@@ -276,6 +296,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
 
   function expireTurn(now: number) {
     const current = match.current;
+    if (current.liar && isLiarRound(current.liar) && current.liarConfig) {
+      const next = advanceLiar(current.liar, current.liarConfig, now);
+      if (!next) return false;
+      syncLiar(next, now);
+      return true;
+    }
     if (current.sketch && current.sketchConfig) {
       const next = advanceSketch(current.sketch, current.sketchConfig, drawingDeck.current, now);
       if (!next) return false;
@@ -307,12 +333,12 @@ export function useRoomBoard(profile?: ProfileSummary) {
     return true;
   }
 
-  const activeDeadline = round.sketch?.deadline ?? (round.puzzle ? puzzleEnd(round.puzzle) : deadline);
+  const activeDeadline = matchDeadline(round);
   useEffect(() => {
     if (role !== 'host' || !activeDeadline || finishedAt) return;
     const timer = window.setTimeout(() => {
       const current = match.current;
-      if (current.id === matchId && (current.sketch?.deadline ?? (current.puzzle ? puzzleEnd(current.puzzle) : current.deadline)) === activeDeadline) expireTurn(Date.now());
+      if (current.id === matchId && matchDeadline(current) === activeDeadline) expireTurn(Date.now());
     }, Math.max(0, activeDeadline - Date.now()));
     return () => window.clearTimeout(timer);
   }, [role, matchId, activeDeadline, finishedAt]);
@@ -320,6 +346,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
   function finishBySurrender(color: FlickPlayer, actor: Role) {
     const current = match.current;
     if (current.sketch) return commitSketch(actor, { kind: 'resign' });
+    if (current.liar) return commitLiar(actor, { kind: 'resign' });
     const now = Date.now();
     if (!matchInProgress(current, now) || expireTurn(now)) return false;
     if ((current.physics?.players ?? 2) > 2) return eliminateFlick(color, now);
@@ -429,6 +456,10 @@ export function useRoomBoard(profile?: ProfileSummary) {
           if (raw.type === 'round-ready' || raw.type === 'puzzle-ready') { markRoundReady(peer); return; }
           if (!matchInProgress(current, Date.now())) return;
           if (raw.type === 'puzzle-action' && 'action' in raw) { commitPuzzle(peer, raw.action); return; }
+          if (raw.type === 'liar-action' && current.liar && 'phase' in raw && raw.phase === current.liar.phase && 'action' in raw) {
+            commitLiar(peer, raw.action);
+            return;
+          }
           if (raw.type === 'sketch-action' && current.sketch && 'turn' in raw && raw.turn === current.sketch.turn && 'action' in raw) {
             const accepted = commitSketch(peer, raw.action);
             if (current.sketch && raw.action && typeof raw.action === 'object' && 'kind' in raw.action && raw.action.kind === 'guess') {
@@ -611,6 +642,7 @@ export function useRoomBoard(profile?: ProfileSummary) {
       history: [], surrendered: undefined, timedOut: undefined, timeoutPending: undefined, deadline: 0, beginsAt: current.puzzleConfig ? undefined : 0,
       puzzle: current.puzzleConfig ? makePuzzleRound(current.puzzleConfig, Math.random, seats) : undefined,
       sketch: current.sketchConfig ? makeSketchRound(seats, drawingDeck.current[0]) : undefined,
+      liar: current.liarConfig ? makeLiarRound(seats, current.liarConfig.language, Math.random, previous?.liar?.result?.word) : undefined,
       physicsSeats, physics: physicsSeats ? createFlickRound(current.flickSettings ?? defaultFlickSettings, physicsSeats.length) : undefined });
     snapshot();
     return true;
@@ -623,13 +655,23 @@ export function useRoomBoard(profile?: ProfileSummary) {
     inMatch: Boolean(role && inRound(round, role)),
     canStart: Boolean(roundSeats(game, connectedPeers, participants)),
     settings: { allowDoubleThree, overline, power: round.power ?? 1, turnLimit, flick: round.flickSettings ?? defaultFlickSettings,
-      puzzle: round.puzzleConfig ?? defaultSichuanRoomSettings, sketch: round.sketchConfig ?? defaultSketchSettings } satisfies MatchSettings,
+      puzzle: round.puzzleConfig ?? defaultSichuanRoomSettings, sketch: round.sketchConfig ?? defaultSketchSettings,
+      liar: round.liarConfig ?? defaultLiarSettings } satisfies MatchSettings,
     physicsSeats: round.physicsSeats,
     colorFor: (player: Role) => matchColor(round, player),
     guestRoom, changeGame, changingGame, rematchNotice: rematchNotice?.id === matchId ? rematchNotice.kind : undefined,
     displayDeadline: deadline ? deadline + (round.clockOffset ?? 0) : 0,
     playStartedAt: matchBeginsAt(round),
     displayStart: matchBeginsAt(round) ? matchBeginsAt(round) + (round.clockOffset ?? 0) : 0,
+    roundOutcome: role ? matchOutcome(round, role) : undefined,
+    liar: round.liar && isLiarRound(round.liar) ? visibleLiar(round.liar, role ?? 'host') : round.liar,
+    liarDisplayDeadline: round.liar?.deadline ? round.liar.deadline + (round.clockOffset ?? 0) : 0,
+    liarAction(action: LiarAction) {
+      const current = match.current, own = seat.current?.role;
+      if (!own || !ready.current || !current.liar || current.finishedAt) return false;
+      if (own === 'host') return commitLiar(own, action);
+      return Boolean(link.current?.send({ type: 'liar-action', id: current.id, phase: current.liar.phase, action }));
+    },
     puzzle: round.puzzle, puzzleConfig: round.puzzleConfig,
     sketch: round.sketch, sketchConfig: round.sketchConfig,
     sketchWrongGuess: sketchFeedback?.id === matchId && sketchFeedback.turn === round.sketch?.turn && sketchFeedback.wrong,

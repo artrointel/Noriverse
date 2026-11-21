@@ -12,7 +12,7 @@ import type { Navigate } from './navigation.tsx';
 
 const endpoint = '/api/profiles/me/social';
 
-export function useFriends(owner: string | undefined, presence: boolean, watchRequests = false) {
+export function useFriends(owner: string | undefined, presence: 'full' | 'summary' | false, watchRequests = false) {
   const [snapshot, setSnapshot] = useState<{ owner: string; list: FriendList }>();
   const list = snapshot?.owner === owner ? snapshot?.list : undefined;
   const [failed, setFailed] = useState(false);
@@ -20,7 +20,7 @@ export function useFriends(owner: string | undefined, presence: boolean, watchRe
   const revision = useRef(0);
 
   async function load(request: number, signal?: AbortSignal) {
-    const response = await apiFetch(endpoint + (presence ? '?presence=1' : ''), { signal });
+    const response = await apiFetch(endpoint + (presence ? '?presence=' + (presence === 'full' ? '1' : 'summary') : ''), { signal });
     if (!response.ok) throw new Error('Friends unavailable');
     const list = await response.json() as FriendList;
     if (owner && request === revision.current && !signal?.aborted) setSnapshot({ owner, list });
@@ -127,7 +127,7 @@ function FriendGroups({ friends, navigate, action, showLastOnline = false }: {
 
 export function InviteDialog({ owner, navigate, invite, close }: { owner: string | undefined; navigate: Navigate; invite: (id: string) => Promise<boolean>; close: () => void }) {
   const { t } = useTranslation();
-  const model = useFriends(owner, true);
+  const model = useFriends(owner, 'full');
   const dialog = useRef<HTMLDialogElement>(null);
   const [sent, setSent] = useState<string[]>([]);
   const [sending, setSending] = useState<string>();

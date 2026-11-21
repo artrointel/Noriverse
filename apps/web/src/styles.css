@@ -704,6 +704,39 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .profile-presence h2 { display: flex; align-items: center; flex-wrap: wrap; gap: 9px 14px; }
 .profile-presence h2 small { display: inline-flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--muted); }
 .profile-presence .settings-hint { margin: 0; }
+.profile-friend-count { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.liar-playfield { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; pointer-events: none; }
+.liar-card { display: grid; place-content: center; gap: 4px; width: min(69%, 268px); min-height: min(72%, 125px); padding: 9px 12px;
+  border: 1px solid #f4c4969c; border-radius: 13px; color: #fff2db; text-align: center; cursor: pointer; pointer-events: auto;
+  background: radial-gradient(ellipse at 50% 0%, #7b4b67, #412447 70%); box-shadow: 0 9px 28px #170e22ad, inset 0 0 0 4px #ffddaa15;
+  transition: transform .2s var(--ease), background-color .2s var(--ease); }
+.liar-card:not(:disabled):hover { transform: translateY(-2px); }
+.liar-card[data-side="citizens"] { background: radial-gradient(ellipse at 50% 0%, #47666d, #233c4a 75%); }
+.liar-card[data-side="liar"] { background: radial-gradient(ellipse at 50% 0%, #ae5d56, #6e3048 80%); }
+.liar-card span, .liar-card small { font-size: .74rem; color: #fff1dfd9; }
+.liar-card strong { overflow-wrap: anywhere; font-size: clamp(1rem, 5vw, 1.55rem); line-height: 1.17; }
+.liar-page .stage-turn { max-width: min(31vw, 165px); overflow: hidden; text-overflow: ellipsis; }
+.liar-interaction { width: min(100%, 680px); margin: 7px auto 0; }
+.liar-desk { display: grid; gap: 8px; padding: 10px 12px; min-width: 0; }
+.liar-phase { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; font-size: .88rem; }
+.liar-phase span, .liar-caught { font-size: .8rem; color: var(--muted); }
+.liar-input { display: flex; gap: 6px; }
+.liar-input input { flex: 1; min-width: 0; color: var(--text); border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 7px 9px; }
+.liar-input .button, .liar-vote-options .button { min-height: 38px; padding: 5px 8px; font-size: .8rem; }
+.liar-vote-options { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; min-width: 0; border: 0; }
+.liar-vote-options .button { max-width: 100%; overflow-wrap: anywhere; }
+.liar-hints, .liar-tally { display: grid; gap: 4px; padding: 0; margin: 0; list-style: none; font-size: .81rem; }
+.liar-hints { max-height: clamp(58px, 17dvh, 120px); overflow: auto; overscroll-behavior: contain; }
+.liar-hints li, .liar-tally li, .liar-reveal p { display: flex; gap: 8px; justify-content: space-between; padding: 4px 6px;
+  background: var(--raised); border-radius: 6px; overflow-wrap: anywhere; }
+.liar-hints li { justify-content: start; }
+.liar-hints li b { min-width: min(7rem, 35%); color: var(--primary); }
+.liar-caught, .liar-voting p, .liar-reveal p { margin: 0; }
+.liar-reveal { display: grid; gap: 4px; }
+.liar-page :is(.stage-expanded, .stage:fullscreen) { grid-template-rows: auto minmax(0, 1fr) auto auto; }
+@media (max-height: 540px) and (min-width: 560px) and (orientation: landscape) {
+  .liar-page .stage:not(.stage-expanded, :fullscreen) .liar-interaction { grid-column: 2; }
+}
 .sketch-interaction { display: grid; gap: 8px; width: min(100%, 680px); margin: 8px auto 2px; justify-items: center; text-align: center; }
 .sketch-word { display: flex; justify-content: center; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0; }
 .sketch-word span { color: var(--muted); font-size: .78rem; }
@@ -793,6 +826,7 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 [data-play-game="chess"] { --game-accent: #946954; --game-art-position: 50% 41%; }
 [data-play-game="sichuan"] { --game-accent: #7d986e; --game-art-position: 50% 44%; }
 [data-play-game="sketch"] { --game-accent: #b8798b; --game-art-position: 50% 45%; }
+[data-play-game="liar"] { --game-accent: #a97482; --game-art-position: 50% 54%; }
 .game-backdrop { position: absolute; z-index: -1; inset: 0; overflow: hidden; pointer-events: none;
   mask-image: linear-gradient(#000 0%, #000 52%, transparent 100%);
   background: radial-gradient(ellipse at 50% 20%, color-mix(in srgb, var(--game-accent) 19%, var(--bg)), var(--bg) 84%); }

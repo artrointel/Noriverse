@@ -13,6 +13,7 @@ import { fixedResolutions, readResolution, renderBufferSize, renderFrameSize } f
 import type { RenderResolution } from '../games/render-resolution.ts';
 import { tableSize } from '../games/table.ts';
 import { sichuanSceneHeight } from '../games/sichuan/options.ts';
+import { liarSceneHeight } from '../games/liar/rules.ts';
 import { boardSize as omokSize } from '../games/omok/rules.ts';
 import { othelloSize, othelloState } from '../games/othello/rules.ts';
 import { chessSize } from '../games/chess/rules.ts';
@@ -25,7 +26,8 @@ import { setMatchMusic } from './audio.ts';
 import type { RoundAnnouncement } from '../games/round-announcement.ts';
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
-  showTouches, onTouchDisplay, touchStyle, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction, stageContext, interaction }: {
+  showTouches, onTouchDisplay, touchStyle, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction,
+  stageContext, interaction, playfieldContent }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
@@ -33,7 +35,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   showTouches: boolean; onTouchDisplay: (active: boolean) => void; touchStyle: TouchEffect;
   remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
   reactions?: RoomReactions; ownProfile?: ReactionSender;
-  onReady?: () => void; progress?: ReactNode; interaction?: ReactNode;
+  onReady?: () => void; progress?: ReactNode; interaction?: ReactNode; playfieldContent?: ReactNode;
   beginsAt?: number; ending?: RoundAnnouncement['ending']; endAction?: ReactNode;
   stageContext?: { mode: string; map: string };
 }) {
@@ -42,7 +44,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const field = useRef<HTMLDivElement>(null);
   const mount = useRef<HTMLDivElement>(null);
   const engine = useRef<ReturnType<typeof mountGame>>(null);
-  const sceneHeight = id === 'sichuan' ? sichuanSceneHeight : tableSize;
+  const sceneHeight = id === 'sichuan' ? sichuanSceneHeight : id === 'liar' ? liarSceneHeight : tableSize;
   const requestedSize = useRef({ frame: { width: tableSize, height: sceneHeight }, buffer: { width: tableSize, height: sceneHeight } });
   const [actualSize, setActualSize] = useState(requestedSize.current);
   const resultButton = useRef<HTMLButtonElement>(null);
@@ -64,7 +66,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const boardSize = view.sichuan?.size ?? (id === 'othello' ? othelloSize : id === 'chess' ? chessSize : omokSize);
   const notifyReady = useEffectEvent(() => onReady?.());
   const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : id === 'sichuan' ? 'sichuanBoard'
-    : id === 'sketch' ? 'sketchCanvas' : 'board';
+    : id === 'sketch' ? 'sketchCanvas' : id === 'liar' ? 'liarTable' : 'board';
 
   useLayoutEffect(() => { current.current = view; announcement.current = announcements; });
   useEffect(() => { setMatchMusic(id, matchId); }, [id, matchId]);
@@ -328,16 +330,17 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         <GameReactions matchId={matchId} size={actualSize.frame} profile={ownProfile} room={reactions} progress={progress} action={endAction} enabled={status === 'ready'}>
           <div
             className="game-viewport" ref={mount} data-ready={status === 'ready'}
-            tabIndex={0}
+            tabIndex={id === 'liar' ? undefined : 0}
             role="group"
             aria-label={t(boardLabel)}
             aria-describedby="game-help"
             onBlur={() => setCursor(null)}
             onPointerDownCapture={handleTouch}
-            onKeyDown={id === 'physics' || id === 'sketch' ? undefined : onKeyDown}
+            onKeyDown={id === 'physics' || id === 'sketch' || id === 'liar' ? undefined : onKeyDown}
           >
             <div className="touch-layer" aria-hidden="true">{bursts.map(burst => <TouchBurst key={burst.id} effect={burst.effect} remote={burst.remote}
               style={{ left: burst.x, top: burst.y }} onEnd={() => setBursts(current => current.filter(item => item.id !== burst.id))} />)}</div>
+            {status === 'ready' && playfieldContent}
           </div>
           {result && <div className="result-layer" hidden={!resultVisible}>{result}</div>}
           {decision && <div className="result-layer decision-layer">{decision}</div>}
@@ -352,7 +355,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
       )}
       <div className="visually-hidden" aria-live="polite">{focusLabel}</div>
       <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp'
-        : id === 'sketch' ? 'sketchHelp' : 'boardHelp')}
+        : id === 'sketch' ? 'sketchHelp' : id === 'liar' ? 'liarHelp' : 'boardHelp')}
         {(id === 'omok' || id === 'chess') && <> {t('previewMoveHelp')}</>}
         {id === 'othello' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
       </p>

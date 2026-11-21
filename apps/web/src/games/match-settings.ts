@@ -7,6 +7,8 @@ import type { SichuanRoomSettings } from './sichuan/options.ts';
 import type { TurnLimit } from './turn-clock.ts';
 import { defaultSketchSettings } from './sketch/rules.ts';
 import type { SketchSettings } from './sketch/rules.ts';
+import { defaultLiarSettings } from './liar/rules.ts';
+import type { LiarSettings } from './liar/rules.ts';
 
 export type MatchSettings = {
   turnLimit: TurnLimit;
@@ -16,9 +18,10 @@ export type MatchSettings = {
   flick: FlickSettings;
   puzzle: SichuanRoomSettings;
   sketch: SketchSettings;
+  liar: LiarSettings;
 };
 
 export const defaultMatchSettings: MatchSettings = {
   turnLimit: 0, allowDoubleThree: true, overline: defaultOmokOverline,
-  power: 1, flick: defaultFlickSettings, puzzle: defaultSichuanRoomSettings, sketch: defaultSketchSettings,
+  power: 1, flick: defaultFlickSettings, puzzle: defaultSichuanRoomSettings, sketch: defaultSketchSettings, liar: defaultLiarSettings,
 };
