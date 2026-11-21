@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { readReport } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, OwnProfile, PresenceMode, ProfilePreferences, PublicProfile } from '../../../../packages/protocol/profile.ts';
 import { apiAvailable, apiFetch } from '../network/api.ts';
-import { readBrowserProfile, readBrowserTouchEffect, saveBrowserAvatar, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
+import { deleteBrowserProfile, readBrowserProfile, readBrowserTouchEffect, saveBrowserAvatar, saveBrowserProfile, saveBrowserTouchEffect } from './browser-profile.ts';
 
 const recordCount = (profile: PublicProfile) => Object.values(profile.games).reduce((sum, game) => sum + game.sessions, 0);
 const applyBrowserTouchEffect = (profile: OwnProfile): OwnProfile => ({ ...profile,
@@ -29,6 +29,7 @@ function updatePendingMatch(owner: string, match: MatchReport, keep: boolean) {
 export function useProfile(profileOpen: boolean) {
   const [profile, setProfile] = useState<OwnProfile>();
   const owner = profile?.id;
+  const deletingOwner = useRef<string>(null);
   const [status, setStatus] = useState<'loading' | 'missing' | 'ready' | 'error'>('loading');
   useEffect(() => {
     if (!apiAvailable) {
@@ -61,21 +62,42 @@ export function useProfile(profileOpen: boolean) {
       return;
     }
     const response = await apiFetch('/api/profiles/me', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, id: owner }),
     });
     if (!response.ok) throw new Error();
     const next = await response.json() as OwnProfile;
+    if (next.id === deletingOwner.current) throw new Error();
     setProfile(current => applyBrowserTouchEffect(current?.id === next.id ? { ...next, presence: current.presence ?? next.presence } : next));
     setStatus('ready');
   }
 
+  async function deleteProfile() {
+    if (!owner || owner === deletingOwner.current) throw new Error();
+    deletingOwner.current = owner;
+    try {
+      if (apiAvailable) {
+        const response = await apiFetch('/api/profiles/me', {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: owner }),
+        });
+        if (response.status !== 204) throw new Error();
+      } else deleteBrowserProfile(owner);
+    } catch (error) {
+      deletingOwner.current = null;
+      throw error;
+    }
+    saveBrowserTouchEffect(owner);
+    try { localStorage.removeItem(matchQueueKey(owner)); } catch { /* Storage can be disabled. */ }
+    setProfile(undefined);
+    setStatus('missing');
+  }
+
   async function setPreferences(preferences: ProfilePreferences) {
+    if (owner === deletingOwner.current) throw new Error();
     if (!apiAvailable && 'avatar' in preferences) {
       setProfile(saveBrowserAvatar(preferences));
       return;
     }
     const touchEffect = 'touchEffect' in preferences ? preferences.touchEffect : undefined;
-    const id = profile?.id;
     let next: OwnProfile;
     try {
       const response = await apiFetch('/api/profiles/me/preferences', {
@@ -83,19 +105,21 @@ export function useProfile(profileOpen: boolean) {
       });
       if (!response.ok) throw new Error();
       next = await response.json() as OwnProfile;
+      if (owner && next.id !== owner) throw new Error();
       if (touchEffect && next.touchEffect !== touchEffect) throw new Error();
       if ('presence' in preferences && next.presence !== preferences.presence) throw new Error();
       if ('avatar' in preferences && (next.avatar !== preferences.avatar
         || (preferences.avatarBackground !== undefined && (next.avatarBackground ?? null) !== preferences.avatarBackground))) throw new Error();
     } catch (error) {
-      if (!touchEffect || !id || !saveBrowserTouchEffect(id, touchEffect)) throw error;
-      setProfile(current => current?.id === id ? { ...current, touchEffect } : current);
+      if (!touchEffect || !owner || owner === deletingOwner.current || !saveBrowserTouchEffect(owner, touchEffect)) throw error;
+      setProfile(current => current?.id === owner ? { ...current, touchEffect } : current);
       return;
     }
+    if (owner === deletingOwner.current) throw new Error();
     if (touchEffect) saveBrowserTouchEffect(next.id);
     next = applyBrowserTouchEffect(next);
     setProfile(current => {
-      if (current?.id !== next.id) return next;
+      if (current?.id !== next.id) return current;
       const presence = 'presence' in preferences ? next.presence : current.presence ?? next.presence;
       return recordCount(current) > recordCount(next)
         ? { ...current, avatar: next.avatar, avatarBackground: next.avatarBackground, favorites: next.favorites, touchEffect: next.touchEffect, presence }
@@ -108,7 +132,7 @@ export function useProfile(profileOpen: boolean) {
   }
 
   const record = useCallback(async (match: MatchReport) => {
-    if (!apiAvailable || !owner) return false;
+    if (!apiAvailable || !owner || owner === deletingOwner.current) return false;
     if (match.mode === 'local') {
       updatePendingMatch(owner, match, false);
       return true;
@@ -149,5 +173,5 @@ export function useProfile(profileOpen: boolean) {
     return () => { active = false; window.removeEventListener('online', retry); };
   }, [owner, record, profileOpen]);
 
-  return { profile, status, saveName, setPreferences, syncPresence, record };
+  return { profile, status, saveName, deleteProfile, setPreferences, syncPresence, record };
 }

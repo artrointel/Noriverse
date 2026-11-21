@@ -24,6 +24,19 @@ function readCookie() {
     .find(part => part.startsWith(cookiePrefix))?.slice(cookiePrefix.length);
 }
 
+function writeCookie(value: string, maxAge: number) {
+  document.cookie = cookiePrefix + value + '; Path=' + import.meta.env.BASE_URL
+    + '; SameSite=Lax; Max-Age=' + maxAge + (location.protocol === 'https:' ? '; Secure' : '');
+}
+
+export function deleteBrowserProfile(id: string) {
+  const profile = readBrowserProfile();
+  if (profile && profile.id !== id) throw new Error('Profile session changed');
+  writeCookie('', 0);
+  if (readCookie()) throw new Error('Profile cookie could not be deleted');
+  try { localStorage.removeItem(touchKey); } catch { /* Storage can be disabled. */ }
+}
+
 function browserProfile(id: string, name: string, appearance: AvatarLayers): PublicProfile {
   const emptyStats = (): GameStats => ({ seconds: 0, wins: 0, losses: 0, draws: 0, sessions: 0 });
   return {
@@ -46,8 +59,7 @@ export function readBrowserProfile() {
 
 function writeBrowserProfile(id: string, name: string, appearance: AvatarLayers) {
   const value = [id, encodeURIComponent(name), appearance.avatar, appearance.avatarBackground ?? ''].join(':');
-  document.cookie = cookiePrefix + value + '; Path=' + import.meta.env.BASE_URL
-    + '; SameSite=Lax; Max-Age=31536000' + (location.protocol === 'https:' ? '; Secure' : '');
+  writeCookie(value, 31536000);
   if (readCookie() !== value) throw new Error('Profile cookie could not be saved');
   return browserProfile(id, name, appearance);
 }

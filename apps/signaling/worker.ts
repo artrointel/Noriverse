@@ -27,7 +27,7 @@ export default {
     };
     if (external && request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
       return cors(new Response(null, { status: 204, headers: {
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Authorization, Content-Type',
         'Access-Control-Max-Age': '600',
       } }));

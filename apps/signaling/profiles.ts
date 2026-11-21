@@ -34,6 +34,10 @@ function json(data: unknown, status: number, headers?: HeadersInit) {
   return Response.json(data, { status, headers: responseHeaders });
 }
 
+function sessionCookie(value: string, maxAge: number, url: URL) {
+  return `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${url.protocol === 'https:' ? '; Secure' : ''}`;
+}
+
 export function profileSession(request: Request, external: boolean) {
   const cookie = external ? request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1]
     : request.headers.get('Cookie')?.split(';').map(value => value.trim())
@@ -50,21 +54,31 @@ export async function profileRequest(request: Request, env: Env, url: URL, exter
     const profile = store && await store.readOwn(auth.secret);
     return profile ? json(profile, 200) : json(null, 404);
   }
+  if (path === '/api/profiles/me' && request.method === 'DELETE') {
+    if (!store) return json(null, 401);
+    const input = await readBody(request) as { id?: unknown } | undefined;
+    if (input?.id !== auth.id) return json(null, 409);
+    if (!await store.deleteProfile(auth.secret)) return json(null, 401);
+    const headers = new Headers({ 'Cache-Control': 'no-store' });
+    if (!external) headers.set('Set-Cookie', sessionCookie('', 0, url));
+    return new Response(null, { status: 204, headers });
+  }
   if (path === '/api/profiles/me' && request.method === 'POST') {
-    const input = await readBody(request) as { name?: unknown } | undefined;
+    const input = await readBody(request) as { name?: unknown; id?: unknown } | undefined;
     const name = readName(input?.name);
     if (!name) return json(null, 400);
+    if (input?.id !== undefined && (!auth || input.id !== auth.id)) return json(null, 409);
     if (store) {
       const updated = await store.rename(auth.secret, name);
       if (updated) return json(updated, 200);
     }
+    if (input?.id !== undefined) return json(null, 401);
     const id = crypto.randomUUID();
     const secret = crypto.randomUUID();
     const profile = await env.PROFILES.getByName(id).create({ id, secret, name });
     if (external) return json(profile, 201, { 'X-Noriverse-Session': id + '.' + secret });
-    const secure = url.protocol === 'https:' ? '; Secure' : '';
     return json(profile, 201, {
-      'Set-Cookie': cookieName + '=' + id + '.' + secret + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000' + secure,
+      'Set-Cookie': sessionCookie(id + '.' + secret, 31536000, url),
     });
   }
   if (path === '/api/profiles/me/preferences' && request.method === 'POST') {
@@ -148,6 +162,27 @@ export class ProfileStore extends DurableObject<Env> {
     });
   }
 
+  async deleteProfile(secret: string) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const identity = await this.ctx.storage.get<Identity>('identity');
+      if (!identity) return true;
+      if (identity.secret !== secret) return false;
+      const contacts = await friendGraph(this.env).removeProfile(identity.id);
+      this.ctx.waitUntil(Promise.allSettled(contacts.map(id => this.env.PROFILES.getByName(id).sendSocialChange())));
+      this.ctx.storage.transactionSync(() => {
+        this.ctx.storage.sql.exec('DELETE FROM matches; DELETE FROM presence_tickets;');
+        this.ctx.storage.kv.delete('currentRoom');
+        this.ctx.storage.kv.delete('invites');
+        this.ctx.storage.kv.delete('identity');
+      });
+      await this.ctx.storage.deleteAlarm();
+      for (const socket of this.ctx.getWebSockets()) {
+        if (socket.readyState === WebSocket.OPEN) socket.close(1000, 'Profile deleted');
+      }
+      return true;
+    });
+  }
+
   async readOwn(secret: string) {
     const identity = await this.ctx.storage.get<Identity>('identity');
     return identity?.secret === secret ? this.ownView(identity) : null;
@@ -181,7 +216,7 @@ export class ProfileStore extends DurableObject<Env> {
   }
 
   async setCurrentRoom(code: string) {
-    await this.ctx.storage.put('currentRoom', code);
+    if (this.ctx.storage.kv.get<Identity>('identity')) this.ctx.storage.kv.put('currentRoom', code);
   }
 
   sendSocialChange() {

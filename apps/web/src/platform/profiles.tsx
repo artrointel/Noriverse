@@ -247,8 +247,41 @@ function TouchEffectDialog({ selected, save, close }: { selected: TouchEffect; s
   </dialog>;
 }
 
-export function ProfilePage({ own, id, model, friends, navigate, edit }: {
-  own: boolean; id?: string; model: ReturnType<typeof useProfile>; friends: Friends; navigate: Navigate; edit: () => void;
+function DeleteProfileDialog({ confirm, close }: { confirm: () => Promise<void>; close: () => void }) {
+  const { t } = useTranslation();
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const modal = dialog.current;
+    modal?.showModal();
+    return () => { modal?.close(); };
+  }, []);
+
+  async function submit() {
+    if (busy) return;
+    setBusy(true);
+    setFailed(false);
+    try { await confirm(); close(); }
+    catch { setFailed(true); setBusy(false); }
+  }
+
+  return <dialog className="surface profile-dialog" ref={dialog} aria-labelledby="delete-profile-title"
+    aria-describedby="delete-profile-help" onCancel={event => { event.preventDefault(); if (!busy) close(); }}>
+    <form onSubmit={event => { event.preventDefault(); void submit(); }}>
+      <h2 id="delete-profile-title">{t('deleteProfile')}</h2>
+      <p id="delete-profile-help">{t(apiAvailable ? 'deleteProfileHelp' : 'deleteBrowserProfileHelp')}</p>
+      {failed && <p role="alert">{t('deleteProfileError')}</p>}
+      <div className="panel-actions">
+        <button type="button" className="button button-secondary" onClick={close} disabled={busy} autoFocus>{t('cancel')}</button>
+        <button type="submit" className="button profile-delete-confirm" disabled={busy}>{t(busy ? 'deletingProfile' : 'deleteProfile')}</button>
+      </div>
+    </form>
+  </dialog>;
+}
+
+export function ProfilePage({ own, id, model, friends, navigate, edit, onDeleted }: {
+  own: boolean; id?: string; model: ReturnType<typeof useProfile>; friends: Friends; navigate: Navigate; edit: () => void; onDeleted: () => void;
 }) {
   const { t } = useTranslation();
   const [visited, setVisited] = useState<PublicProfile | null>();
@@ -256,6 +289,7 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
   const [showLink, setShowLink] = useState(false);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [touchOpen, setTouchOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   useEffect(() => {
     if (!id || own) return;
@@ -327,6 +361,15 @@ export function ProfilePage({ own, id, model, friends, navigate, edit }: {
           <GameHistory profile={profile} />
         </>
       )}
+      {own && profile && <div className="profile-delete-actions">
+        <button type="button" className="button button-secondary" onClick={() => setDeleteOpen(true)}>{t('deleteProfile')}</button>
+      </div>}
+      {own && profile && deleteOpen && <DeleteProfileDialog confirm={async () => {
+        await model.deleteProfile();
+        setCopied(false);
+        setShowLink(false);
+        onDeleted();
+      }} close={() => setDeleteOpen(false)} />}
     </div>
   );
 }

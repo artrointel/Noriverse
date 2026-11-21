@@ -24,9 +24,9 @@ function readSession() {
 }
 
 function saveSession(value: string) {
-  if (!validSession(value)) return;
+  if (value && !validSession(value)) return;
   document.cookie = sessionCookie + '=' + value + '; Path=' + import.meta.env.BASE_URL
-    + '; SameSite=Lax; Max-Age=31536000' + (location.protocol === 'https:' ? '; Secure' : '');
+    + '; SameSite=Lax; Max-Age=' + (value ? '31536000' : '0') + (location.protocol === 'https:' ? '; Secure' : '');
 }
 
 export async function apiFetch(path: string, init?: RequestInit) {
@@ -34,14 +34,15 @@ export async function apiFetch(path: string, init?: RequestInit) {
   if (!external) return fetch(path, init);
   const headers = new Headers(init?.headers);
   const profilePath = path === '/api/profiles/me' || path.startsWith('/api/profiles/me/');
+  const session = readSession();
   if (profilePath || path === '/api/rooms' || /^\/api\/rooms\/[A-Z0-9]{8}\/(?:participants|invites)$/.test(path)) {
-    const session = readSession();
     if (session) headers.set('Authorization', 'Bearer ' + session);
   }
   const response = await fetch(apiUrl(path), { ...init, headers, credentials: 'omit', redirect: 'error' });
   if (profilePath && response.ok) {
-    const session = response.headers.get('X-Noriverse-Session');
-    if (session) saveSession(session);
+    const issued = response.headers.get('X-Noriverse-Session');
+    if (issued) saveSession(issued);
+    else if (path === '/api/profiles/me' && init?.method === 'DELETE' && response.status === 204 && readSession() === session) saveSession('');
   }
   return response;
 }

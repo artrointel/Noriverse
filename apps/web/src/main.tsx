@@ -195,7 +195,10 @@ function App() {
       case 'profile':
       case 'publicProfile':
         return <ProfilePage own={route.page === 'profile'} id={route.profileId} model={profile} friends={friends} navigate={navigate}
-          edit={() => setEditName(true)} />;
+          edit={() => setEditName(true)} onDeleted={() => {
+            if (room.active) room.leave();
+            setNameDismissed(false);
+          }} />;
       case 'friends':
         return <FriendsPage model={friends} navigate={navigate} openProfile={() => setEditName(true)} follow={target => {
           if (room.code === target.code && room.state === 'connected' && room.started) {
