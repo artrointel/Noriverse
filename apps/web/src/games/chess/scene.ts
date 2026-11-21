@@ -4,7 +4,7 @@ import type { GameView } from '../game-view.ts';
 import { chessIndex, chessPieceFrames, chessPosition, chessSize } from './rules.ts';
 import { bindBoardInput } from '../board-input.ts';
 import { addStoneShadow, createStoneShadow } from '../board-art.ts';
-import { paintTargetMark, paintTileMark, revealMoveMarks } from '../board-marks.ts';
+import { createMoveGhost, paintTargetMark, paintTileMark, revealMoveMarks } from '../board-marks.ts';
 import { createPieceSelection } from '../piece-selection.ts';
 import { playSound } from '../../platform/audio.ts';
 import boardArt from '../../assets/chess-walnut-board.jpg';
@@ -27,6 +27,7 @@ export function chessScene(view: () => GameView) {
   let recentMarks: Phaser.GameObjects.Graphics;
   let hints: Phaser.GameObjects.Graphics;
   let showSelection: ReturnType<typeof createPieceSelection>;
+  let showGhost: ReturnType<typeof createMoveGhost>;
   let previous: GameView | undefined;
   const pieces = new Map<number, RenderedPiece>();
   const departing = new Set<RenderedPiece>();
@@ -108,8 +109,8 @@ export function chessScene(view: () => GameView) {
     const last = history.at(-1);
     if (last !== undefined) {
       const pair = Math.floor(last / 5);
-      paintTileMark(recentMarks, ...squareCenter(Math.floor(pair / 64)), cell, 'origin');
-      paintTileMark(recentMarks, ...squareCenter(pair % 64), cell, 'arrival');
+      paintTileMark(recentMarks, ...squareCenter(Math.floor(pair / 64)), cell, 'origin', 'green');
+      paintTileMark(recentMarks, ...squareCenter(pair % 64), cell, 'arrival', 'green');
     }
     const position = chessPosition(history);
     if (position.inCheck()) {
@@ -118,11 +119,15 @@ export function chessScene(view: () => GameView) {
     }
   }
 
-  function paintHints({ canMove, chessTargets, cursor }: GameView) {
+  function paintHints({ canMove, canInspect, chessTargets, cursor, movePreview }: GameView) {
     hints.clear();
-    if (!canMove) return;
-    for (const [index, kind] of chessTargets) paintTargetMark(hints, ...squareCenter(index), cell, kind);
-    if (cursor !== null) paintTileMark(hints, ...squareCenter(cursor), cell, 'focus');
+    if (!canMove && !canInspect) return;
+    const palette = canMove ? 'green' : 'muted';
+    for (const [index, kind] of chessTargets) {
+      if (index !== movePreview) paintTargetMark(hints, ...squareCenter(index), cell, kind, palette);
+    }
+    const focus = movePreview ?? cursor;
+    if (focus !== null) paintTileMark(hints, ...squareCenter(focus), cell, 'focus', palette);
   }
 
   return {
@@ -136,6 +141,7 @@ export function chessScene(view: () => GameView) {
       recentMarks = this.add.graphics().setDepth(-.5);
       hints = this.add.graphics().setDepth(.25);
       showSelection = createPieceSelection(this);
+      showGhost = createMoveGhost(this, 51);
       createStoneShadow(this);
       for (let i = 0; i < 8; i++) {
         const style = { color: '#fff0d4', fontSize: '10px', fontStyle: 'bold' };
@@ -161,10 +167,15 @@ export function chessScene(view: () => GameView) {
         paintRecent(current.history);
         revealMoveMarks(this, recentMarks, animate);
       }
-      if (!previous || current.canMove !== previous.canMove || current.chessTargets !== previous.chessTargets || current.cursor !== previous.cursor) {
+      const selected = current.chessSelected === undefined ? undefined : pieces.get(current.chessSelected)?.art;
+      if (!previous || current.canMove !== previous.canMove || current.canInspect !== previous.canInspect
+        || current.chessTargets !== previous.chessTargets || current.cursor !== previous.cursor
+        || current.movePreview !== previous.movePreview || current.history !== previous.history) {
         paintHints(current);
+        const preview = current.canMove && selected ? current.movePreview : undefined;
+        showGhost(preview === undefined ? undefined : squareCenter(preview), pieceTexture, selected?.frame.name);
       }
-      showSelection(current.canMove && current.chessSelected !== undefined ? pieces.get(current.chessSelected)?.art : undefined);
+      showSelection(current.canMove || current.canInspect ? selected : undefined, current.canMove ? 'green' : 'muted');
       previous = current;
     },
   };

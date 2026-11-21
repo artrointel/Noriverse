@@ -16,8 +16,10 @@ export function readAvatarBackground(value: unknown) {
   if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
 }
 
-export const touchEffects = ['soft', 'none'] as const;
+export const touchEffects = ['soft', 'ripple', 'petals', 'pixelDrift', 'pixelBurst', 'none'] as const;
 export type TouchEffect = typeof touchEffects[number];
+export type TouchParticle = Exclude<TouchEffect, 'none'>;
+export const isTouchEffect = (value: unknown): value is TouchEffect => touchEffects.includes(value as TouchEffect);
 export type PresenceMode = 'online' | 'offline';
 export const avatarLevel: Record<AvatarId, number> = {
   mint: 1, amber: 1, lunar: 1, ink: 1, violet: 1, die: 1, heart: 1, star: 1, clover: 1, cloud: 1,
@@ -87,7 +89,7 @@ export function readProfilePreferences(value: unknown): ProfilePreferences | und
     if (avatarBackground !== undefined) return { avatar: value.avatar, avatarBackground };
     return;
   }
-  if ('touchEffect' in value && (value.touchEffect === 'soft' || value.touchEffect === 'none')) return { touchEffect: value.touchEffect };
+  if ('touchEffect' in value && isTouchEffect(value.touchEffect)) return { touchEffect: value.touchEffect };
   if ('presence' in value && (value.presence === 'online' || value.presence === 'offline')) return { presence: value.presence };
   if (!('favorite' in value) || !value.favorite || typeof value.favorite !== 'object') return;
   const favorite = value.favorite as { game?: unknown; selected?: unknown };

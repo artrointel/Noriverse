@@ -3,6 +3,7 @@ import type { KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { touchResolution } from '../../../../packages/protocol/rooms.ts';
 import type { TouchPoint } from '../../../../packages/protocol/rooms.ts';
+import type { TouchEffect, TouchParticle } from '../../../../packages/protocol/profile.ts';
 import type { ReactionSender } from '../../../../packages/protocol/reactions.ts';
 import type { GameId } from '../../../../packages/protocol/games.ts';
 import type { GameView } from '../games/game-view.ts';
@@ -24,19 +25,19 @@ import { setMatchMusic } from './audio.ts';
 import type { RoundAnnouncement } from '../games/round-announcement.ts';
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
-  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction, stageContext }: {
+  showTouches, onTouchDisplay, touchStyle, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction, stageContext }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
   resultVisible: boolean; resultPending: boolean; onShowResult: () => void;
-  showTouches: boolean; onTouchDisplay: (active: boolean) => void; localTouch: boolean;
+  showTouches: boolean; onTouchDisplay: (active: boolean) => void; touchStyle: TouchEffect;
   remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
   reactions?: RoomReactions; ownProfile?: ReactionSender;
   onReady?: () => void; progress?: ReactNode;
   beginsAt?: number; ending?: RoundAnnouncement['ending']; endAction?: ReactNode;
   stageContext?: { mode: string; map: string };
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const shell = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLDivElement>(null);
   const mount = useRef<HTMLDivElement>(null);
@@ -48,9 +49,9 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const gameSettings = useRef<HTMLDetailsElement>(null);
   const gameInfo = useRef<HTMLDetailsElement>(null);
   const burstId = useRef(0);
-  const [bursts, setBursts] = useState<{ id: number; x: number; y: number; remote: boolean }[]>([]);
+  const [bursts, setBursts] = useState<{ id: number; x: number; y: number; remote: boolean; effect: TouchParticle }[]>([]);
   const current = useRef(view);
-  const announcements: RoundAnnouncement = { beginsAt, ending, labels: { '3': '3', '2': '2', '1': '1', go: 'GO!',
+  const announcements: RoundAnnouncement = { beginsAt, ending, language: i18n.resolvedLanguage === 'ko' ? 'ko' : 'en', labels: { '3': '3', '2': '2', '1': '1', go: 'GO!',
     victory: t('roundVictory'), defeat: t('roundDefeat'), success: t('roundSuccess'), finished: t('roundFinished') } };
   const announcement = useRef(announcements);
   const wasDeciding = useRef(false);
@@ -142,7 +143,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     const bounds = mount.current?.getBoundingClientRect();
     const canvas = mount.current?.querySelector('canvas')?.getBoundingClientRect();
     if (!showTouches || !bounds || !canvas) return;
-    const burst = { id: ++burstId.current, remote,
+    const burst = { id: ++burstId.current, remote, effect: point.effect ?? 'soft' as const,
       x: canvas.left - bounds.left + canvas.width * point.x / touchResolution,
       y: canvas.top - bounds.top + canvas.height * point.y / touchResolution };
     setBursts(previous => [...previous.slice(-15), burst]);
@@ -153,12 +154,12 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   useEffect(() => { setBursts([]); }, [showTouches, matchId]);
 
   function handleTouch(event: PointerEvent<HTMLDivElement>) {
-    if (!localTouch || status !== 'ready' || view.finished || (beginsAt && Date.now() < beginsAt) || !event.isPrimary || event.button !== 0
+    if (touchStyle === 'none' || status !== 'ready' || view.finished || (beginsAt && Date.now() < beginsAt) || !event.isPrimary || event.button !== 0
       || !(event.target instanceof HTMLCanvasElement)) return;
     const bounds = event.target.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
     const coordinate = (value: number) => Math.max(0, Math.min(touchResolution, Math.round(value * touchResolution)));
-    const point = { x: coordinate((event.clientX - bounds.left) / bounds.width), y: coordinate((event.clientY - bounds.top) / bounds.height) };
+    const point = { x: coordinate((event.clientX - bounds.left) / bounds.width), y: coordinate((event.clientY - bounds.top) / bounds.height), effect: touchStyle };
     addBurst(point, false);
     onTouch?.(point);
   }
@@ -174,9 +175,9 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     let canceled = false;
     let instance: ReturnType<typeof mountGame> | undefined;
     setStatus('loading');
-    void Promise.all([import('../games/scenes.ts'), sceneLoaders[id]()]).then(async ([{ mountGame, loadRoundAnnouncementFont }, createScene]) => {
+    void Promise.all([import('../games/scenes.ts'), sceneLoaders[id]()]).then(async ([{ mountGame, loadRoundAnnouncementAssets }, createScene]) => {
       if (canceled) return;
-      await loadRoundAnnouncementFont();
+      await loadRoundAnnouncementAssets();
       if (canceled) return;
       instance = mountGame(element, id, roundAntialias, requestedSize.current.buffer, () => current.current, createScene, () => announcement.current, () => {
         if (!canceled) { setStatus('ready'); notifyReady(); }
@@ -249,7 +250,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     const index = view.cursor ?? first ?? center * (boardSize + 1);
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      if (view.canMove) {
+      if (view.canMove || view.canInspect) {
         if (id === 'sichuan') setCursor(index);
         view.move(index);
       }
@@ -334,7 +335,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
             onPointerDownCapture={handleTouch}
             onKeyDown={id === 'physics' ? undefined : onKeyDown}
           >
-            <div className="touch-layer" aria-hidden="true">{bursts.map(burst => <TouchBurst key={burst.id} remote={burst.remote}
+            <div className="touch-layer" aria-hidden="true">{bursts.map(burst => <TouchBurst key={burst.id} effect={burst.effect} remote={burst.remote}
               style={{ left: burst.x, top: burst.y }} onEnd={() => setBursts(current => current.filter(item => item.id !== burst.id))} />)}</div>
           </div>
           {result && <div className="result-layer" hidden={!resultVisible}>{result}</div>}
@@ -349,7 +350,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
       )}
       <div className="visually-hidden" aria-live="polite">{focusLabel}</div>
       <p className="stage-help" id="game-help">{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp' : 'boardHelp')}
-        {id !== 'physics' && id !== 'sichuan' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
+        {(id === 'omok' || id === 'chess') && <> {t('previewMoveHelp')}</>}
+        {id === 'othello' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
       </p>
     </section>
   );

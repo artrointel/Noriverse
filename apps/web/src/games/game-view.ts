@@ -7,8 +7,10 @@ import type { SichuanHudView } from './sichuan/hud.ts';
 export interface GameView {
   history: number[];
   cursor: number | null;
+  movePreview?: number;
   chessSelected?: number;
   chessTargets: ReadonlyMap<number, TargetMark>;
+  canInspect?: boolean;
   dark: boolean;
   force: number;
   allowDoubleThree: boolean;

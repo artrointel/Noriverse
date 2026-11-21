@@ -1,4 +1,4 @@
-import { defaultAvatar, isAvatarId, profileIdPattern, readAvatarBackground, readName } from '../../../../packages/protocol/profile.ts';
+import { defaultAvatar, isAvatarId, isTouchEffect, profileIdPattern, readAvatarBackground, readName } from '../../../../packages/protocol/profile.ts';
 import type { AvatarLayers, GameStats, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
 
 const cookiePrefix = 'noriverse_browser_profile=';
@@ -7,7 +7,7 @@ const touchKey = 'noriverse.browser-profile-touch';
 export function readBrowserTouchEffect(id?: string): TouchEffect | undefined {
   try {
     const value = localStorage.getItem(id ? touchKey + '.' + id : touchKey);
-    return value === 'soft' || value === 'none' ? value : undefined;
+    return isTouchEffect(value) ? value : undefined;
   } catch { return undefined; }
 }
 

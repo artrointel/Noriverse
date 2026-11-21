@@ -60,6 +60,12 @@ test('touch and invite messages validate only supported public fields', () => {
   assert.deepEqual(readTouch({ x: 0, y: 1000 }), { x: 0, y: 1000 });
   for (const [x, y] of [[-1, 0], [0, 1001], [0.5, 0], ['0', 0]]) assert.equal(readTouch({ x, y }), undefined);
   assert.deepEqual(readProfilePreferences({ touchEffect: 'soft' }), { touchEffect: 'soft' });
+  for (const effect of ['ripple', 'petals', 'pixelDrift', 'pixelBurst']) {
+    assert.deepEqual(readProfilePreferences({ touchEffect: effect }), { touchEffect: effect });
+    assert.deepEqual(readTouch({ x: 100, y: 200, effect }), { x: 100, y: 200, effect });
+  }
+  assert.equal(readTouch({ x: 100, y: 200, effect: 'none' }), undefined);
+  assert.equal(readTouch({ x: 100, y: 200, effect: 'unknown' }), undefined);
   assert.equal(readProfilePreferences({ touchEffect: 'unknown' }), undefined);
 
   const invite = { id: crypto.randomUUID(), sender: crypto.randomUUID(), name: 'Noriverse', game: 'chess', code: '23456789', expires: Date.now() + 60000 };

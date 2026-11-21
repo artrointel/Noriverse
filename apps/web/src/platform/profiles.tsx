@@ -211,7 +211,6 @@ function TouchEffectDialog({ selected, save, close }: { selected: TouchEffect; s
   const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const [effect, setEffect] = useState(selected);
-  const [preview, setPreview] = useState(0);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -229,14 +228,16 @@ function TouchEffectDialog({ selected, save, close }: { selected: TouchEffect; s
     }}>
       <h2 id="touch-effect-title">{t('touchEffects')}</h2>
       <p className="muted">{t('touchProfileHelp')}</p>
-      {touchEffects.map(value => <label className="choice" key={value}>
-        <input type="radio" name="profile-touch-effect" value={value} checked={value === effect} disabled={saving}
-          onChange={() => { setEffect(value); setPreview(key => key + 1); }} />
-        {t(value === 'soft' ? 'touchSoft' : 'disabled')}
-      </label>)}
-      <button className="button button-secondary touch-preview" type="button" onClick={() => setPreview(key => key + 1)}>
-        {t('previewTouch')}{effect === 'soft' && preview > 0 && <TouchBurst key={preview} />}
-      </button>
+      <fieldset className="touch-effect-options" aria-labelledby="touch-effect-title">
+        {touchEffects.map(value => <label className="choice touch-effect-option" key={value} data-selected={value === effect}>
+          <input type="radio" name="profile-touch-effect" value={value} checked={value === effect} disabled={saving}
+            onChange={() => setEffect(value)} />
+          <span>{t(value === 'none' ? 'disabled' : 'touchEffect_' + value)}</span>
+          {value === effect && value !== 'none' && <span className="touch-effect-sample" aria-hidden="true">
+            <TouchBurst effect={value} repeat />
+          </span>}
+        </label>)}
+      </fieldset>
       {failed && <p role="alert">{t('profileError')}</p>}
       <div className="panel-actions">
         <button className="button button-primary" type="submit" disabled={saving}>{t('saveSettings')}</button>

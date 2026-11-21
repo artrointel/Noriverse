@@ -1,5 +1,5 @@
-import { profileIdPattern, readName } from './profile.ts';
-import type { ProfileSummary } from './profile.ts';
+import { isTouchEffect, profileIdPattern, readName } from './profile.ts';
+import type { ProfileSummary, TouchParticle } from './profile.ts';
 import { isGameId } from './games.ts';
 import type { GameId } from './games.ts';
 
@@ -12,14 +12,17 @@ export const roomRoles = ['host', 'guest', 'guest2', 'guest3'] as const;
 export type Role = (typeof roomRoles)[number];
 export const isRoomRole = (value: unknown): value is Role => roomRoles.some(role => role === value);
 export interface Participant { role: Role; profile?: ProfileSummary }
-export type TouchPoint = { x: number; y: number };
+export type TouchPoint = { x: number; y: number; effect?: TouchParticle };
 export const touchResolution = 1000;
 
 export function readTouch(value: unknown): TouchPoint | undefined {
   if (!value || typeof value !== 'object' || !('x' in value) || !('y' in value)) return;
   const { x, y } = value;
-  if (typeof x === 'number' && typeof y === 'number' && Number.isInteger(x) && Number.isInteger(y)
-    && x >= 0 && x <= touchResolution && y >= 0 && y <= touchResolution) return { x, y };
+  if (typeof x !== 'number' || typeof y !== 'number' || !Number.isInteger(x) || !Number.isInteger(y)
+    || x < 0 || x > touchResolution || y < 0 || y > touchResolution) return;
+  const effect = 'effect' in value ? value.effect : undefined;
+  if (effect === undefined) return { x, y };
+  if (isTouchEffect(effect) && effect !== 'none') return { x, y, effect };
 }
 
 export type RoomInvite = { id: string; sender: string; name: string; game: RoomGame; code: string; expires: number };

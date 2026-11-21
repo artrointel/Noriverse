@@ -1,12 +1,12 @@
 import type Phaser from 'phaser';
 import { playSound } from '../../platform/audio.ts';
 import { addStoneShadow, createBoardArt, preloadBoard, stoneTexture } from '../board-art.ts';
-import { paintStoneImprint, paintTileMark, revealMoveMarks } from '../board-marks.ts';
+import { createMoveGhost, paintStoneImprint, paintTileMark, revealMoveMarks } from '../board-marks.ts';
 import type { GameView } from '../game-view.ts';
 import { bindBoardInput } from '../board-input.ts';
 import { tableSize } from '../table.ts';
 import type { Stone } from '../table.ts';
-import { boardSize, doubleThreeAxes } from './rules.ts';
+import { boardSize, doubleThreeAxes, nextStone } from './rules.ts';
 
 const edge = 9;
 const inset = 24;
@@ -17,6 +17,7 @@ export function omokScene(view: () => GameView) {
   let board: ReturnType<typeof createBoardArt>;
   let markers: Phaser.GameObjects.Graphics;
   let focus: Phaser.GameObjects.Graphics;
+  let showGhost: ReturnType<typeof createMoveGhost>;
   let previous: GameView | undefined;
   const pieces: { index: number; stone: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image }[] = [];
 
@@ -31,15 +32,20 @@ export function omokScene(view: () => GameView) {
       board.paint(view().dark);
       markers = this.add.graphics().setDepth(3);
       focus = this.add.graphics().setDepth(.5);
+      showGhost = createMoveGhost(this, 28);
       bindBoardInput(this, view, boardSize, edge + inset, pitch, Math.round);
     },
     update(this: Phaser.Scene) {
       const current = view();
       const history = current.history;
       if (previous && current.dark !== previous.dark) board.paint(current.dark);
-      if (!previous || current.cursor !== previous.cursor || current.canMove !== previous.canMove) {
+      if (!previous || current.cursor !== previous.cursor || current.canMove !== previous.canMove
+        || current.movePreview !== previous.movePreview || history !== previous.history) {
         focus.clear();
-        if (current.canMove && current.cursor !== null) paintTileMark(focus, ...position(current.cursor), pitch, 'focus');
+        const preview = current.canMove ? current.movePreview : undefined;
+        const cursor = preview ?? current.cursor;
+        if (current.canMove && cursor !== null) paintTileMark(focus, ...position(cursor), pitch, 'focus', 'green');
+        showGhost(preview === undefined ? undefined : position(preview), stoneTexture(nextStone(history)));
       }
       if (history === previous?.history) {
         previous = current;
@@ -82,10 +88,10 @@ export function omokScene(view: () => GameView) {
         if (doubleThree) {
           for (const [dx, dy] of forks) {
             const scale = 28 / Math.hypot(dx, dy);
-            markers.lineStyle(5, 0x5c2399, .54).lineBetween(x - dx * scale, y - dy * scale, x + dx * scale, y + dy * scale);
-            markers.lineStyle(1.8, 0xffe29a, .98).lineBetween(x - dx * scale, y - dy * scale, x + dx * scale, y + dy * scale);
+            markers.lineStyle(5, 0x154d39, .54).lineBetween(x - dx * scale, y - dy * scale, x + dx * scale, y + dy * scale);
+            markers.lineStyle(1.8, 0xb8f5cf, .98).lineBetween(x - dx * scale, y - dy * scale, x + dx * scale, y + dy * scale);
           }
-          markers.lineStyle(2, 0xffeaaa).strokeCircle(x, y, 17);
+          markers.lineStyle(2, 0xc0f6d5).strokeCircle(x, y, 17);
         }
       }
       revealMoveMarks(this, markers, animate);

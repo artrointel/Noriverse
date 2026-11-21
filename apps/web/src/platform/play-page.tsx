@@ -64,7 +64,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
 }) {
   const { t } = useTranslation();
   const [cursor, setCursor] = useState<number | null>(null);
-  const [tapPreview, setTapPreview] = useState<{ index: number; matchId: string; history: number[]; at: number }>();
+  const [tapPreview, setTapPreview] = useState<{ index: number; matchId: string; history: number[]; at: number; from?: number }>();
   const [chessChoice, setChessChoice] = useState<{ matchId: string; revision: number; last?: number; from: number; to?: number }>();
   const [localFlick, setLocalFlick] = useState(() => id === 'physics' && !room ? createFlickRound(flickSettings) : undefined);
   const [alkkagi, setAlkkagi] = useState(() => localFlick ? settledStatus(localFlick) : initialAlkkagi);
@@ -110,6 +110,10 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const eliminated = multiplayerFlick && !flickStatus.remaining[playerColor - 1];
   const localTurn = turn === 2 ? 2 : 1;
   const canMove = roundStart.started && !outcome && !pending && !waitingSurrender && (room ? room.canMove : !busy);
+  const canInspect = Boolean(chess && room?.state === 'connected' && roundStart.started && !outcome && !pending
+    && room.playerColor !== undefined && room.playerColor !== turn);
+  const preview = canMove && tapPreview?.matchId === matchId && tapPreview.history === history
+    && tapPreview.from === choice?.from ? tapPreview : undefined;
   const yourTurn = Boolean(room && canMove);
   const status = outcome ? t('gameFinished') : pending ? t('turnTimeout', { stone: t(sideLabel(id, pending.color)) })
     : eliminated ? t('flickEliminated') : busy ? t('settling') : waitingSurrender ? t('surrenderPending')
@@ -144,28 +148,29 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   }, [matchId, room?.state, room?.physics?.revision, eliminated]);
 
   useEffect(() => {
-    if (!tapPreview) return;
+    if (id !== 'othello' || !tapPreview) return;
     const timer = window.setTimeout(() => setTapPreview(undefined), Math.max(0, 650 - (performance.now() - tapPreview.at)));
     return () => window.clearTimeout(timer);
-  }, [tapPreview]);
+  }, [id, tapPreview]);
 
-  function confirmTap(index: number, touch: boolean) {
+  function confirmMove(index: number, touch: boolean | undefined) {
     const at = performance.now();
-    if (!touch || (tapPreview?.index === index && tapPreview.matchId === matchId && tapPreview.history === history && at - tapPreview.at <= 650)) {
+    const requiresConfirmation = touch !== undefined && (id !== 'othello' || touch);
+    if (!requiresConfirmation || (preview?.index === index && (id !== 'othello' || at - preview.at <= 650))) {
       setTapPreview(undefined);
       return true;
     }
-    setTapPreview({ index, matchId, history, at });
+    setTapPreview({ index, matchId, history, at, from: choice?.from });
     return false;
   }
 
-  function tryMove(index: number, touch = false) {
-    if (!canMove) return;
+  function tryMove(index: number, touch?: boolean) {
+    if (!canMove && !canInspect) return;
     if (chess) {
       if (choice?.to !== undefined) return;
       const target = chessMoves.find(move => chessIndex(move.to) === index);
       if (target && choice) {
-        if (!confirmTap(index, touch)) return;
+        if (!canMove || !confirmMove(index, touch)) return;
         if (target.promotion) setChessChoice({ ...choice, to: index });
         else { move(encodeChessMove(choice.from, index)); setChessChoice(undefined); }
       } else {
@@ -175,10 +180,12 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
       }
       return;
     }
-    if (!confirmTap(index, touch)) return;
+    if (isOmok && history.includes(index)) { setTapPreview(undefined); return; }
+    if (!isOmok && !confirmMove(index, touch)) return;
     const forbidden = isOmok ? isForbiddenDoubleThree(history, index, allowDoubleThree, overline) : Boolean(othello && !othello.legal.includes(index));
     setRejected(forbidden);
-    if (!forbidden) move(index);
+    if (forbidden) { setTapPreview(undefined); return; }
+    if (!isOmok || confirmMove(index, touch)) move(index);
   }
 
   function updateAlkkagi(next: AlkkagiStatus) {
@@ -309,12 +316,13 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
           endAction={!outcome && !eliminated && <EndRoundAction key={matchId} online={Boolean(room)} end={surrender}
             disabled={!roundStart.started || waitingSurrender || (multiplayerFlick && busy) || Boolean(room && room.state !== 'connected')} />}
           infoStatus={status} yourTurn={yourTurn} timer={roundStart.started && !outcome && <TurnClock key={deadline} deadline={deadline} enabled={Boolean(limit)} compact />}
-          showTouches={showTouches} onTouchDisplay={onTouchDisplay} localTouch={touchStyle === 'soft'}
+          showTouches={showTouches} onTouchDisplay={onTouchDisplay} touchStyle={touchStyle}
           remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch} reactions={room?.reactions} ownProfile={ownProfile} result={resultPanel} resultVisible={resultVisible}
           resultPending={resultPending} decision={deadlineDecision || promotion}
           onShowResult={() => setClosedResult('')} view={{
-            history, cursor: canMove && tapPreview?.matchId === matchId && tapPreview.history === history ? tapPreview.index : cursor,
-            chessSelected: choice?.from, chessTargets, dark, allowDoubleThree, onAlkkagi: updateAlkkagi,
+            history, cursor: id === 'othello' ? preview?.index ?? cursor : cursor,
+            movePreview: id === 'othello' ? undefined : preview?.index,
+            chessSelected: choice?.from, chessTargets, canInspect, dark, allowDoubleThree, onAlkkagi: updateAlkkagi,
             force: room?.power ?? power,
             localFlick,
             onlineFlick: room?.physics && { ...room.physics, host: room.role === 'host', send: room.flick, settle: room.settleFlick },

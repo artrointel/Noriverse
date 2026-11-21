@@ -306,7 +306,7 @@ export function SichuanPage({ settings, room, ownProfile, dark, antialias, resol
         setCursor={setCursor} info={info} infoStatus={status} yourTurn={false} result={result} resultVisible={resultVisible}
         resultPending={resultPending} onShowResult={() => setClosedResult('')} showTouches={showTouches} onTouchDisplay={onTouchDisplay}
         remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch} reactions={room?.reactions} ownProfile={ownProfile}
-        localTouch={touchStyle === 'soft'} view={{ history: [], cursor, chessTargets: new Map(), dark, allowDoubleThree: true, force: 1,
+        touchStyle={touchStyle} view={{ history: [], cursor, chessTargets: new Map(), dark, allowDoubleThree: true, force: 1,
           canMove, deadline, finished, move: pick, onAlkkagi: () => {},
           sichuan: { board: flip?.phase === 'backs' && flip.previous ? flip.previous : round.board, size: round.options.size, theme: round.options.theme,
             selected, hint, match: room ? onlineMatch : match, rejected, flip: flip?.phase,

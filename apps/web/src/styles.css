@@ -403,14 +403,52 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 [data-play-game="sichuan"] .game-viewport { color-scheme: only light; }
 .game-viewport[data-ready="true"] canvas { animation: view-in .23s var(--ease) both; }
 .touch-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; overflow: hidden; }
-.touch-burst { position: absolute; inset: 50% auto auto 50%; width: 1px; height: 1px; color: #f5dfb4; pointer-events: none; opacity: 0; animation: touch-fade .5s ease-out forwards; }
-.touch-burst[data-remote="true"] { color: #c7b5fa; }
-.touch-burst::before { content: ''; position: absolute; inset: -7px; border: 1px solid currentColor; opacity: .65; border-radius: 50%; animation: touch-ring .5s ease-out forwards; }
-.touch-burst i { position: absolute; width: 4px; height: 4px; border-radius: 100%; background: currentColor; box-shadow: 0 0 5px currentColor; animation: touch-particle .5s ease-out forwards; }
-.touch-preview { position: relative; justify-self: start; }
+.round-announcement { position: absolute; z-index: 3; inset: 50% auto auto 50%; width: min(78%, 480px); pointer-events: none;
+  background-repeat: no-repeat; image-rendering: pixelated; transform: translate(-50%, calc(-50% + var(--cue-shift, 0%))) scale(var(--cue-scale, 1)); }
+.touch-burst { position: absolute; inset: 50% auto auto 50%; width: 1px; height: 1px; color: #f5dfb4; pointer-events: none; opacity: 0; animation: touch-fade var(--burst-duration) ease-out forwards; }
+.touch-burst[data-effect="soft"][data-remote="true"] { color: #c7b5fa; }
+.touch-burst::before { content: ''; position: absolute; inset: -7px; border: 1px solid currentColor; opacity: .65; border-radius: 50%; animation: touch-ring var(--burst-duration) ease-out forwards; }
+.touch-burst i { position: absolute; width: 4px; height: 4px; border-radius: 100%; background: currentColor; box-shadow: 0 0 5px currentColor; animation: touch-particle var(--burst-duration) ease-out forwards; }
+.touch-burst[data-effect="ripple"] { color: #70e9f1; }
+.touch-burst[data-effect="ripple"]::before, .touch-burst[data-effect="ripple"]::after {
+  content: ''; position: absolute; inset: -11px; border: 2px solid currentColor; border-radius: 50%;
+  box-shadow: inset 0 0 5px #78dff488; animation: touch-ring var(--burst-duration) ease-out forwards; }
+.touch-burst[data-effect="ripple"]::after { inset: -8px; border-color: #cdfbff; opacity: .55; animation-delay: 95ms; }
+.touch-burst[data-effect="ripple"] i { width: 3px; height: 5px; background: #dcfcff; }
+.touch-burst[data-effect="petals"] { color: #ff9dc1; }
+.touch-burst[data-effect="petals"]::before { inset: -4px; border: 0; background: #ffd6e6; opacity: .48; }
+.touch-burst[data-effect="petals"] i { width: 8px; height: 5px; border-radius: 85% 10% 80% 20%; box-shadow: 0 1px 1px #ad4c7566;
+  background: linear-gradient(100deg,#ffe0ea,currentColor); animation: touch-petal var(--burst-duration) cubic-bezier(.12,.73,.39,1) forwards; }
+.touch-burst[data-effect="petals"] i:nth-child(odd) { color: #c597fb; }
+.touch-burst[data-effect="pixelDrift"] { color: #9ce9c7; }
+.touch-burst[data-effect="pixelDrift"]::before { inset: -2px; border: 0; border-radius: 0; background: currentColor; animation: touch-pixel-glint var(--burst-duration) steps(4,end) forwards; }
+.touch-burst[data-effect="pixelDrift"] i, .touch-burst[data-effect="pixelBurst"] i { border-radius: 0; box-shadow: none; }
+.touch-burst[data-effect="pixelDrift"] i { width: 3px; height: 3px; animation: touch-pixel-drift var(--burst-duration) steps(7,end) forwards; }
+.touch-burst[data-effect="pixelDrift"] i:nth-child(2n) { color: #cebbff; }
+.touch-burst[data-effect="pixelBurst"] { color: #ffc466; animation-name: touch-impact-fade; }
+.touch-burst[data-effect="pixelBurst"]::before { inset: -10px; border-radius: 0; border: 2px solid #ff8c6b; animation: touch-pixel-shock var(--burst-duration) steps(5,end) forwards; }
+.touch-burst[data-effect="pixelBurst"]::after { content: ''; position: absolute; inset: -7px; background: #fff0b7;
+  clip-path: polygon(37% 0,63% 0,63% 37%,100% 37%,100% 63%,63% 63%,63% 100%,37% 100%,37% 63%,0 63%,0 37%,37% 37%);
+  animation: touch-pixel-glint .28s steps(4,end) forwards; }
+.touch-burst[data-effect="pixelBurst"] i { width: 6px; height: 6px; background: currentColor; box-shadow: 2px 2px #8a305b90;
+  animation: touch-pixel-burst var(--burst-duration) steps(5,end) forwards; }
+.touch-burst[data-effect="pixelBurst"] i:nth-child(2n) { color: #ff777a; }
+.touch-burst[data-effect="pixelBurst"] i:nth-child(3n) { color: #fff0b7; }
+.touch-effect-options { min-width: 0; display: grid; gap: 5px; padding: 0; margin: 0; border: 0; }
+.touch-effect-option { position: relative; min-height: 49px; padding: 6px 76px 6px 12px; }
+.touch-effect-option[data-selected="true"] { border-color: var(--primary); background: var(--active); }
+.touch-effect-sample { position: absolute; inset: 4px 5px 4px auto; width: 66px; overflow: hidden; pointer-events: none;
+  border-radius: 8px; background: radial-gradient(ellipse at center, #534464, #342943); }
+.touch-effect-sample .touch-burst { transform: scale(.78); }
 @keyframes touch-fade { 0% { opacity: .9; } 35% { opacity: .7; } 100% { opacity: 0; } }
 @keyframes touch-ring { from { transform: scale(.4); } to { transform: scale(2); } }
 @keyframes touch-particle { to { transform: translate(var(--dx),var(--dy)) scale(.45); } }
+@keyframes touch-petal { from { transform: rotate(-20deg) scale(.35); } 56% { transform: translate(calc(var(--dx) * .5 + 7px), calc(var(--dy) * .8)) rotate(55deg); } to { transform: translate(var(--dx),var(--dy)) rotate(var(--spin)) scale(.48); } }
+@keyframes touch-pixel-drift { from { transform: scale(.5); } 32% { transform: translate(calc(var(--dx) * .45),calc(var(--dy) * .2)); } to { transform: translate(var(--dx),var(--dy)) scale(.7); } }
+@keyframes touch-pixel-glint { from { opacity: .9; transform: scale(.5); } 37% { opacity: .65; transform: scale(1.12); } to { opacity: 0; transform: scale(.85); } }
+@keyframes touch-pixel-burst { from { transform: scale(1.1); } 45% { transform: translate(var(--dx),var(--dy)) scale(1); } to { transform: translate(calc(var(--dx) * 1.1),calc(var(--dy) * 1.12)) scale(.35); } }
+@keyframes touch-pixel-shock { from { transform: rotate(45deg) scale(.3); opacity: .9; } to { transform: rotate(45deg) scale(2.05); opacity: 0; } }
+@keyframes touch-impact-fade { 0%, 45% { opacity: 1; } 100% { opacity: 0; } }
 .stage-help { color: var(--muted); font-size: .89rem; padding: 10px 2px 2px; width: 0; min-width: 100%; }
 .sichuan-score { display: grid; gap: 5px; }
 .sichuan-score > div { display: grid; grid-template-columns: minmax(0, 1.2fr) repeat(2,minmax(0, 1fr)); gap: 5px; align-items: center;
@@ -811,6 +849,7 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
   .stage-reaction { animation: stage-reaction-fade var(--reaction-duration) both !important; }
   .button.stage-result-trigger, .stage-result-trigger::after { animation: none; }
   .touch-burst { animation: touch-fade .16s ease-out forwards !important; }
+  .touch-burst::before, .touch-burst::after { animation: none !important; }
   .touch-burst i { display: none; }
   .game-card:hover, .game-card:hover img { transform: none; }
 }
