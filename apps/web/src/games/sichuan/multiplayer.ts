@@ -1,5 +1,6 @@
 ﻿import { isRoomRole } from '../../../../../packages/protocol/rooms.ts';
 import type { Role } from '../../../../../packages/protocol/rooms.ts';
+import { countdownDuration } from '../round-cues.ts';
 import { defaultHints, motifCount, readSichuanRoomSettings, resolveSichuanSettings, sichuanTileCount } from './options.ts';
 import type { SichuanMode, SichuanRoomSettings } from './options.ts';
 import { availableTileMatches, connectTiles, createSichuanBoard, isMatchTile, nextSichuanCombo, obstacle, shuffleTiles } from './rules.ts';
@@ -13,7 +14,7 @@ export type PuzzleResult = Role | 'team' | 'timeout' | 'abandoned';
 type Seats<T> = Partial<Record<Role, T>>;
 export type PuzzleRound = {
   options: Options; players: readonly Role[]; ready: Seats<boolean>; beginsAt: number; revision: number;
-  boards: Seats<PuzzleBoard>; stats: Seats<PuzzleStats>; event?: PuzzleEvent; result?: PuzzleResult;
+  boards: Seats<PuzzleBoard>; stats: Seats<PuzzleStats>; event?: PuzzleEvent; result?: PuzzleResult; resigned?: readonly Role[];
 };
 
 const defaultPlayers = ['host', 'guest'] as const;
@@ -39,16 +40,24 @@ export function makePuzzleRound(config: SichuanRoomSettings, random = Math.rando
 export function readyPuzzle(round: PuzzleRound, role: Role, now: number): PuzzleRound | undefined {
   if (!round.players.includes(role) || round.ready[role]) return;
   const ready = { ...round.ready, [role]: true };
-  return { ...round, ready, beginsAt: round.players.every(player => ready[player]) ? now + 1100 : 0, revision: round.revision + 1 };
+  return { ...round, ready, beginsAt: round.players.every(player => ready[player]) ? now + countdownDuration : 0, revision: round.revision + 1 };
 }
 
 export type PuzzleAction = { kind: 'pair'; first: number; second: number; generation: number }
   | { kind: 'shuffle'; generation: number }
   | { kind: 'hint'; generation: number; hintsLeft: number };
 
+export function resignPuzzle(round: PuzzleRound, mode: SichuanMode, actor: Role): PuzzleRound | undefined {
+  if (round.result || !round.players.includes(actor) || round.resigned?.includes(actor)) return;
+  const resigned = [...(round.resigned ?? []), actor];
+  const active = round.players.filter(role => !resigned.includes(role));
+  return { ...round, resigned, event: undefined, revision: round.revision + 1,
+    result: mode === 'coop' ? 'abandoned' : active.length === 1 ? active[0] : undefined };
+}
+
 export function applyPuzzleAction(round: PuzzleRound, mode: SichuanMode, actor: Role, raw: unknown, now: number, random = Math.random): PuzzleRound | undefined {
   if (!raw || typeof raw !== 'object' || !round.players.includes(actor) || round.result || !round.beginsAt
-    || now < round.beginsAt || now >= puzzleEnd(round)) return;
+    || round.resigned?.includes(actor) || now < round.beginsAt || now >= puzzleEnd(round)) return;
   const action = raw as Partial<PuzzleAction>;
   const key = mode === 'coop' ? 'host' : actor;
   const board = round.boards[key];
@@ -110,6 +119,8 @@ export function readPuzzleRound(value: unknown, config: SichuanRoomSettings): Pu
     boards[role] = { ...board, hintsLeft: board.hintsLeft ?? 0 };
   }
   if (r.result !== undefined && !players.includes(r.result as Role) && !['team', 'timeout', 'abandoned'].includes(r.result)) return;
+  if (r.resigned !== undefined && (!Array.isArray(r.resigned) || r.resigned.length >= players.length
+    || new Set(r.resigned).size !== r.resigned.length || !r.resigned.every(role => players.includes(role)) || r.resigned.some(role => role === r.result))) return;
   const event = r.event;
   if (event !== undefined) {
     if (!event || !players.includes(event.actor)) return;

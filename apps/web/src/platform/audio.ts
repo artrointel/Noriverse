@@ -4,7 +4,7 @@ import type { ProfileGame } from '../../../../packages/protocol/profile.ts';
 import type { Emoji } from '../../../../packages/protocol/reactions.ts';
 import { playReactionCue } from './reaction-sounds.ts';
 
-type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'distantCombo' | 'paper';
+type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'distantCombo' | 'paper' | 'countdown' | 'go';
 type Channel = 'music' | 'effects';
 type VoiceBus = Channel | 'distantEffects';
 export type AudioLevels = Record<Channel, number>;
@@ -301,6 +301,13 @@ export function playSound(effect: Effect, strength = 1) {
     case 'tick':
       texture(time, .028, .16, strength % 2 ? 2450 : 1750);
       tone(time, strength % 2 ? 1150 : 890, .044, .08, 'effects', 'triangle');
+      break;
+    case 'countdown':
+      tone(time, frequency(72 + strength * 3), .12, .16, 'effects', 'triangle');
+      tone(time + .015, frequency(84 + strength * 3), .085, .065, 'effects');
+      break;
+    case 'go':
+      [72, 79, 84].forEach((note, index) => tone(time + index * .041, frequency(note), .2, .14, 'effects', 'triangle'));
       break;
     case 'finish':
       tone(time, frequency(57), .31, .12, 'effects', 'triangle');

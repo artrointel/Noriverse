@@ -3,6 +3,15 @@ import type { DefaultEmoji, Emoji } from '../../../../packages/protocol/reaction
 type Note = [at: number, length: number, start: number, end: number, gain: number, voice?: 'coo' | 'bell'];
 type Noise = [at: number, length: number, gain: number, center: number];
 type Cue = { notes: Note[]; noise?: Noise[] };
+type Strike = [at: number, tone: [length: number, start: number, end: number, gain: number],
+  texture: [length: number, gain: number, center: number]];
+
+function strikeCue(strikes: Strike[]): Cue {
+  return {
+    notes: strikes.map(([at, tone]): Note => [at, ...tone]),
+    noise: strikes.map(([at, , texture]): Noise => [at, ...texture]),
+  };
+}
 
 const cues: Record<DefaultEmoji, Cue> = {
   smile: { notes: [[0, .11, 495, 570, .09, 'coo'], [.102, .19, 625, 738, .10, 'coo']] },
@@ -13,7 +22,11 @@ const cues: Record<DefaultEmoji, Cue> = {
     noise: [[0, .064, .055, 2140]] },
   tease: { notes: [[0, .13, 606, 470, .107, 'coo'], [.113, .102, 762, 603, .107, 'coo'], [.223, .19, 598, 485, .093, 'coo']],
     noise: [[.104, .029, .029, 1130], [.217, .042, .041, 1210]] },
-  slap: { notes: [[.02, .063, 225, 154, .08], [.06, .11, 770, 1020, .065, 'bell']], noise: [[0, .03, .065, 740], [.024, .082, .23, 2550]] },
+  slap: strikeCue([
+    [0, [.038, 225, 154, .095], [.043, .24, 2420]],
+    [.066, [.036, 256, 170, .09], [.039, .22, 2700]],
+    [.132, [.048, 239, 141, .113], [.055, .28, 2520]],
+  ]),
   thinking: { notes: [[0, .22, 391, 365, .10, 'coo'], [.22, .22, 365, 486, .082, 'coo'], [.34, .11, 728, 705, .038, 'bell']] },
   sad: { notes: [[0, .17, 525, 680, .091, 'coo'], [.126, .27, 680, 465, .11, 'coo'],
     [.34, .23, 470, 348, .065, 'coo']], noise: [[0, .068, .018, 1290], [.35, .105, .016, 1000]] },
@@ -21,8 +34,11 @@ const cues: Record<DefaultEmoji, Cue> = {
   angry: { notes: [[0, .10, 320, 382, .09, 'coo'], [.105, .133, 360, 501, .11, 'coo'], [.235, .18, 493, 378, .097, 'coo']],
     noise: [[.226, .14, .077, 1850]] },
   hearts: { notes: [[0, .21, 660, 668, .083, 'bell'], [.091, .24, 831, 831, .084, 'bell'], [.19, .33, 990, 989, .075, 'bell'], [.253, .25, 1320, 1316, .044, 'bell']] },
-  clap: { notes: [[0, .047, 602, 410, .055], [.107, .046, 660, 445, .055], [.214, .049, 640, 445, .057]],
-    noise: [[0, .068, .25, 1900], [.107, .075, .24, 2100], [.214, .085, .22, 1770]] },
+  clap: strikeCue([
+    [0, [.047, 602, 410, .055], [.068, .25, 1900]],
+    [.107, [.046, 660, 445, .055], [.075, .24, 2100]],
+    [.214, [.049, 640, 445, .057], [.085, .22, 1770]],
+  ]),
   thumbsUp: { notes: [[0, .072, 275, 505, .086], [.054, .20, 755, 785, .09, 'bell'], [.098, .15, 988, 988, .051, 'bell']] },
   thumbsDown: { notes: [[0, .43, 378, 258, .10, 'coo'], [.06, .34, 306, 221, .044, 'coo'], [.31, .19, 258, 198, .071, 'coo']],
     noise: [[.26, .084, .021, 860]] },

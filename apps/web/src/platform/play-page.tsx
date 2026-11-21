@@ -1,20 +1,22 @@
-import { lazy, Suspense, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, ProfileSummary, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import { createFlickRound, flickPlayers, initialAlkkagi, settledStatus } from '../games/alkkagi/rules.ts';
 import type { AlkkagiStatus, FlickPower, FlickSettings } from '../games/alkkagi/rules.ts';
 import { boardRules, isBoardGame } from '../games/board-rules.ts';
+import { createLocalRound, setLocalStart } from '../games/local-round.ts';
+import type { LocalRound } from '../games/local-round.ts';
 import { chessIndex, chessPosition, chessSquare, encodeChessMove } from '../games/chess/rules.ts';
 import { doubleThreeAxes, isForbiddenDoubleThree } from '../games/omok/rules.ts';
 import type { OmokOverline } from '../games/omok/rules.ts';
 import { othelloState } from '../games/othello/rules.ts';
-import type { GameId } from '../games/scenes.ts';
+import type { GameId } from '../../../../packages/protocol/games.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 import type { Stone } from '../games/table.ts';
 import { oppositeStone, rematchPlayerColor, sideLabel } from '../games/table.ts';
-import { nextDeadline, resolveTurnTimeout, secondsRemaining } from '../games/turn-clock.ts';
-import type { PendingTimeout, TimeoutChoice, TurnLimit } from '../games/turn-clock.ts';
+import { nextDeadline, resolveTurnTimeout } from '../games/turn-clock.ts';
+import type { TimeoutChoice, TurnLimit } from '../games/turn-clock.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import { BackLink, gamePath } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
@@ -23,54 +25,22 @@ import { GameResult } from './game-result.tsx';
 import { TimeoutDecision } from './timeout-decision.tsx';
 import { ChessPromotion } from './chess-promotion.tsx';
 import { ChessLosses } from './chess-losses.tsx';
-import { formatPlayTime } from './profiles.tsx';
+import { PlayTime, useCountdown } from './game-time.tsx';
+import { MatchStage } from './match-stage.tsx';
 import { avatars } from './avatars.ts';
+import { useRoundEnd, useRoundStart } from './use-round-cues.ts';
+import { EndRoundAction } from './end-round-action.tsx';
 
-const GameStage = lazy(() => import('./game-stage.tsx').then(module => ({ default: module.GameStage })));
 type Room = ReturnType<typeof useRoomBoard>;
-
-export function PlayTime({ startedAt }: { startedAt: number }) {
-  const { t } = useTranslation();
-  const [seconds, setSeconds] = useState(() => elapsedPlaySeconds(startedAt, Date.now()));
-  useEffect(() => {
-    let timeout: number;
-    function update() {
-      const now = Date.now();
-      setSeconds(elapsedPlaySeconds(startedAt, now));
-      const elapsed = Math.max(0, now - startedAt);
-      timeout = window.setTimeout(update, 1000 - (elapsed % 1000));
-    }
-    update();
-    return () => window.clearTimeout(timeout);
-  }, [startedAt]);
-  return <p className="match-time"><span>{t('playTime')}</span><time dateTime={'PT' + seconds + 'S'}>{formatPlayTime(seconds)}</time></p>;
-}
 
 function TurnClock({ deadline, enabled, audible = false, onExpired, compact = false }: {
   deadline: number; enabled: boolean; audible?: boolean; onExpired?: () => void; compact?: boolean;
 }) {
   const { t } = useTranslation();
-  const [seconds, setSeconds] = useState(() => secondsRemaining(deadline, Date.now()));
-  const lastTick = useRef<number>(0);
-  const expire = useEffectEvent(() => onExpired?.());
-  const tick = useEffectEvent((left: number) => { if (audible) playSound('tick', left); });
-  useEffect(() => {
-    if (!deadline) return;
-    const update = () => {
-      const remaining = deadline - Date.now();
-      const left = secondsRemaining(deadline, Date.now());
-      setSeconds(left);
-      if (left === 0) { expire(); return; }
-      if (left <= 3 && lastTick.current !== left) {
-        lastTick.current = left;
-        tick(left);
-      }
-      timeout = window.setTimeout(update, Math.max(1, remaining - (left - 1) * 1000));
-    };
-    let timeout: number | undefined;
-    update();
-    return () => window.clearTimeout(timeout);
-  }, [deadline]);
+  const seconds = useCountdown(deadline, left => {
+    if (left === 0) onExpired?.();
+    else if (left <= 3 && audible) playSound('tick', left);
+  });
   if (compact) return deadline ? <time className="stage-clock" data-low={seconds <= 3} dateTime={'PT' + seconds + 'S'}>{t('turnSeconds', { count: seconds })}</time>
     : enabled ? <span className="stage-clock">{t('turnClockPaused')}</span> : null;
   return <p className="match-time turn-clock" data-low={Boolean(deadline && seconds <= 3)}>
@@ -80,11 +50,12 @@ function TurnClock({ deadline, enabled, audible = false, onExpired, compact = fa
   </p>;
 }
 
-export function PlayPage({ id, dark, antialias, resolution, onResolution, onAntialias, room, ownProfile, power, flickSettings, turnLimit, history, boardRound, allowDoubleThree, overline, move, reset, endLocal, decideLocal, record, navigate,
+export function PlayPage({ id, dark, antialias, resolution, onResolution, onAntialias, room, ownProfile, power, flickSettings, turnLimit, history, boardRound, allowDoubleThree, overline, move, reset, startLocal, endLocal, decideLocal, record, navigate,
   showTouches, onTouchDisplay, touchStyle }: {
   id: GameId; dark: boolean; antialias: boolean; room?: Room; ownProfile?: ProfileSummary; power: FlickPower; flickSettings: FlickSettings; turnLimit: TurnLimit; history: number[];
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
-  boardRound?: ReturnType<typeof createLocalRound>;
+  boardRound?: LocalRound;
+  startLocal: (id: string, beginsAt: number) => void;
   allowDoubleThree: boolean; overline: OmokOverline; move: (index: number) => void; reset: () => void;
   endLocal: (color: Stone, expiredDeadline?: number) => void;
   decideLocal: (choice: TimeoutChoice, at: number) => void;
@@ -98,15 +69,17 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const [localFlick, setLocalFlick] = useState(() => id === 'physics' && !room ? createFlickRound(flickSettings) : undefined);
   const [alkkagi, setAlkkagi] = useState(() => localFlick ? settledStatus(localFlick) : initialAlkkagi);
   const [localRound, setLocalRound] = useState(() => createLocalRound(turnLimit));
-  const [confirmSurrender, setConfirmSurrender] = useState(false);
   const [waitingSurrender, setWaitingSurrender] = useState(false);
   const [rejected, setRejected] = useState(false);
   const [closedResult, setClosedResult] = useState('');
-  const [revealedChessResult, setRevealedChessResult] = useState('');
   const lastTurnCue = useRef('');
   const isOmok = id === 'omok';
   const isBoard = isBoardGame(id);
   const matchId = room?.matchId ?? boardRound?.id ?? localRound.id;
+  const roundStart = useRoundStart(matchId, room, room?.displayStart ?? (boardRound?.prepared ? boardRound.startedAt : 0), at => {
+    if (isBoard) startLocal(matchId, at);
+    else setLocalRound(current => setLocalStart(current, matchId, at));
+  });
   const othello = useMemo(() => id === 'othello' ? othelloState(history) : undefined, [id, history]);
   const chess = id === 'chess' ? chessPosition(history) : undefined;
   const choice = chessChoice?.matchId === matchId && chessChoice.revision === history.length && chessChoice.last === history.at(-1)
@@ -124,7 +97,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const backLabel = room ? 'goToRoom' : 'settings';
   const busy = !isBoard && flickStatus.phase === 'moving';
   const turn = isBoardGame(id) ? boardRules[id].turn(history) ?? 1 : flickStatus.turn;
-  const startedAt = room?.startedAt ?? boardRound?.startedAt ?? localRound.startedAt;
+  const startedAt = room?.playStartedAt ?? boardRound?.startedAt ?? localRound.startedAt;
   const finishedAt = room?.finishedAt ?? boardRound?.finishedAt ?? localRound.finishedAt;
   const deadline = room?.displayDeadline ?? boardRound?.deadline ?? localRound.deadline;
   const limit = room?.turnLimit ?? boardRound?.turnLimit ?? localRound.turnLimit;
@@ -134,25 +107,25 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const multiplayerFlick = Boolean(room?.physics && (room.physics.players ?? 2) > 2);
   const eliminated = multiplayerFlick && !flickStatus.remaining[playerColor - 1];
   const localTurn = turn === 2 ? 2 : 1;
-  const canMove = !outcome && !pending && !waitingSurrender && (room ? room.canMove : !busy);
+  const canMove = roundStart.started && !outcome && !pending && !waitingSurrender && (room ? room.canMove : !busy);
   const yourTurn = Boolean(room && canMove);
   const status = outcome ? t('gameFinished') : pending ? t('turnTimeout', { stone: t(sideLabel(id, pending.color)) })
     : eliminated ? t('flickEliminated') : busy ? t('settling') : waitingSurrender ? t('surrenderPending')
-    : room && room.state !== 'connected' ? t('turnDisconnected')
+    : room && room.state !== 'connected' ? t('turnDisconnected') : !roundStart.started ? t('roundWaiting')
     : room ? t(yourTurn ? 'yourTurn' : 'opponentTurn') : t('turns', { stone: t(sideLabel(id, turn)) });
   const report = useMemo<MatchReport | undefined>(() => {
     if (!outcome || !matchId) return;
     const seconds = elapsedPlaySeconds(startedAt, finishedAt || Date.now());
     return { id: matchId, game: id, mode, seconds,
-      outcome: outcome === 'draw' ? outcome : outcome === playerColor ? 'win' : 'loss' };
-  }, [matchId, id, mode, startedAt, finishedAt, outcome, playerColor]);
+      outcome: outcome === 'draw' || (!room && surrendered) ? 'draw' : outcome === playerColor ? 'win' : 'loss' };
+  }, [matchId, id, mode, startedAt, finishedAt, outcome, playerColor, surrendered]);
+  const settleChessMove = id === 'chess' && history.length > 0 && !surrendered && !timedOut
+    && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const { ending, pending: resultPending } = useRoundEnd(matchId, report && (mode === 'local' || report.outcome === 'draw'
+    ? 'finished' : report.outcome === 'win' ? 'victory' : 'defeat'), settleChessMove ? 290 : 0);
   const latest = history.at(-1);
   const madeDoubleThree = isOmok && allowDoubleThree && latest !== undefined
     && doubleThreeAxes(history.slice(0, -1), latest).length >= 2;
-
-  useEffect(() => {
-    if (report) playSound(report.outcome === 'win' || report.outcome === 'loss' ? report.outcome : 'finish');
-  }, [report]);
 
   useEffect(() => {
     if (!canMove) return;
@@ -166,7 +139,6 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
 
   useEffect(() => {
     setWaitingSurrender(false);
-    setConfirmSurrender(false);
   }, [matchId, room?.state, room?.physics?.revision, eliminated]);
 
   useEffect(() => {
@@ -221,7 +193,6 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
 
   const restart = () => {
     setRejected(false);
-    setConfirmSurrender(false);
     if (room || isBoard) {
       reset();
       return;
@@ -234,7 +205,6 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
 
   function surrender() {
     if (outcome) return;
-    setConfirmSurrender(false);
     if (room) {
       if (room.surrender() && room.role !== 'host') setWaitingSurrender(true);
     } else if (isBoard) {
@@ -246,21 +216,13 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
     }
   }
 
-  const animateChessResult = id === 'chess' && history.length > 0 && !surrendered && !timedOut && !matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const chessResultId = animateChessResult ? report?.id : undefined;
-  useEffect(() => {
-    if (!chessResultId) return;
-    const timer = window.setTimeout(() => setRevealedChessResult(chessResultId), 290);
-    return () => window.clearTimeout(timer);
-  }, [chessResultId]);
-  const resultPending = Boolean(chessResultId && revealedChessResult !== chessResultId);
   const resultVisible = Boolean(report && closedResult !== report.id && !resultPending);
   const info = (!outcome || chess) && <>
     <div className="match-status" role="status">
       <strong>{status}</strong>{isBoard && <small>{t('played', { count: history.length })}</small>}
     </div>
-    {!outcome && <PlayTime key={matchId} startedAt={startedAt} />}
-    {!outcome && <TurnClock key={matchId + '/' + deadline} deadline={deadline} enabled={Boolean(limit)} audible={!room || turn === playerColor} onExpired={() => {
+    {roundStart.started && !outcome && <PlayTime key={matchId} startedAt={startedAt} />}
+    {roundStart.started && !outcome && <TurnClock key={matchId + '/' + deadline} deadline={deadline} enabled={Boolean(limit)} audible={!room || turn === playerColor} onExpired={() => {
       if (room) return;
       if (isBoard) endLocal(localTurn, deadline);
       else setLocalRound(current => current.finishedAt || current.deadline !== deadline ? current
@@ -293,25 +255,15 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
     {!isBoard && <p className="power-summary"><span>{t('force')}</span><strong>{t((room?.power ?? power) === 1.35 ? 'fast' : 'standard')}</strong></p>}
     {isOmok && <span className="match-rule">{t(allowDoubleThree ? 'allow33' : 'ban33')} · {t(overline)}</span>}
     {room?.state && <p className="connection" role="status">{t(room.state)}</p>}
-    {(room?.state === 'failed' || room?.state === 'disconnected') && (
+    {room?.needsReconnect && (
       <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>
     )}
-    {!outcome && !eliminated && !confirmSurrender && <button type="button" className="button button-secondary" disabled={waitingSurrender || (multiplayerFlick && busy) || Boolean(room && room.state !== 'connected')}
-      onClick={() => setConfirmSurrender(true)}>{t('surrender')}</button>}
     {waitingSurrender && <p role="status" className="muted">{t('surrenderPending')}</p>}
-    {!outcome && !eliminated && confirmSurrender && (
-      <div className="surrender-confirm">
-        <p>{t('confirmSurrender', { stone: t(sideLabel(id, room ? playerColor : turn)) })}</p>
-        <div className="panel-actions">
-          <button type="button" className="button button-primary" disabled={multiplayerFlick && busy} onClick={surrender}>{t('surrender')}</button>
-          <button type="button" className="button button-secondary" onClick={() => setConfirmSurrender(false)}>{t('cancel')}</button>
-        </div>
-      </div>
-    )}
   </>;
-  const resultPanel = outcome && report && <GameResult key={report.id} report={report} winner={outcome} surrendered={surrendered} timedOut={timedOut}
-    scores={othello?.scores} visible={resultVisible} onClose={() => setClosedResult(report.id)} record={record} rematch={restart}
-    room={room && { canRematch: canReset, reconnect: room.state === 'disconnected' || room.state === 'failed' ? room.reconnect : undefined,
+  const resultPanel = outcome && report && <GameResult key={report.id} report={report} winner={outcome} surrendered={room ? surrendered : undefined} timedOut={timedOut}
+    title={!room && surrendered ? t('gameFinished') : undefined} scores={othello?.scores} visible={resultVisible} onClose={() => setClosedResult(report.id)}
+    record={room ? record : undefined} rematch={restart}
+    room={room && { canRematch: canReset, reconnect: room.needsReconnect ? room.reconnect : undefined,
       request: room.role !== 'host' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
     back={room ? '/room' : '/games'} navigate={navigate} />;
 
@@ -319,7 +271,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
     timedPlayer={t(sideLabel(id, pending.color))} decisionPlayer={t(sideLabel(id, oppositeStone(pending.color)))}
     mayChoose={!room || (room.playerColor !== undefined && room.playerColor !== pending.color)}
     canSubmit={!room || room.role === 'host' || room.state === 'connected'}
-    reconnect={room?.state === 'failed' || room?.state === 'disconnected' ? room.reconnect : undefined}
+    reconnect={room?.needsReconnect ? room.reconnect : undefined}
     choose={choice => {
       if (room) room.chooseTimeout(choice);
       else if (isBoard) decideLocal(choice, pending.at);
@@ -349,14 +301,16 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
         {room?.code && <div className="play-room-code"><span>{t('code')}</span><code>{room.code}</code></div>}
       </div>
       <div className="play-layout">
-        <Suspense fallback={<div className="surface stage-loading" role="status">{t('loading')}</div>}>
-          <GameStage key={id === 'physics' ? matchId : id} id={id} matchId={matchId} antialias={antialias} setCursor={setCursor} info={info}
-            resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
-            infoStatus={status} yourTurn={yourTurn} timer={!outcome && <TurnClock key={deadline} deadline={deadline} enabled={Boolean(limit)} compact />}
-            showTouches={showTouches} onTouchDisplay={onTouchDisplay} localTouch={touchStyle === 'soft'}
-            remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch} reactions={room?.reactions} ownProfile={ownProfile} result={resultPanel} resultVisible={resultVisible}
-            resultPending={resultPending} decision={deadlineDecision || promotion}
-            onShowResult={() => setClosedResult('')} view={{
+        <MatchStage id={id} matchId={matchId} antialias={antialias} setCursor={setCursor} info={info}
+          resolution={resolution} onResolution={onResolution} onAntialias={onAntialias}
+          beginsAt={roundStart.beginsAt} ending={ending} onReady={roundStart.ready}
+          endAction={!outcome && !eliminated && <EndRoundAction key={matchId} online={Boolean(room)} end={surrender}
+            disabled={!roundStart.started || waitingSurrender || (multiplayerFlick && busy) || Boolean(room && room.state !== 'connected')} />}
+          infoStatus={status} yourTurn={yourTurn} timer={roundStart.started && !outcome && <TurnClock key={deadline} deadline={deadline} enabled={Boolean(limit)} compact />}
+          showTouches={showTouches} onTouchDisplay={onTouchDisplay} localTouch={touchStyle === 'soft'}
+          remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch} reactions={room?.reactions} ownProfile={ownProfile} result={resultPanel} resultVisible={resultVisible}
+          resultPending={resultPending} decision={deadlineDecision || promotion}
+          onShowResult={() => setClosedResult('')} view={{
             history, cursor: canMove && tapPreview?.matchId === matchId && tapPreview.history === history ? tapPreview.index : cursor,
             chessSelected: choice?.from, chessTargets, dark, allowDoubleThree, onAlkkagi: updateAlkkagi,
             force: room?.power ?? power,
@@ -364,7 +318,6 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
             onlineFlick: room?.physics && { ...room.physics, host: room.role === 'host', send: room.flick, settle: room.settleFlick },
             canMove, deadline, finished: Boolean(outcome), move: tryMove,
           }} />
-        </Suspense>
         {!outcome && <div className="play-feedback" aria-live="polite">
           {madeDoubleThree && <p className="double-three-badge">{t('made33')}</p>}
           {rejected && <p className="muted">{t(isOmok ? 'blocked33' : 'invalidOthello')}</p>}
@@ -374,12 +327,4 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
       </div>
     </div>
   );
-}
-
-export function createLocalRound(turnLimit: TurnLimit = 0, firstPlayerColor: Stone = 1): {
-  id: string; startedAt: number; finishedAt: number; surrendered?: Stone; timedOut?: Stone; timeoutPending?: PendingTimeout;
-  turnLimit: TurnLimit; deadline: number; firstPlayerColor: Stone;
-} {
-  const now = Date.now();
-  return { id: crypto.randomUUID(), startedAt: now, finishedAt: 0, turnLimit, deadline: nextDeadline(turnLimit, now), firstPlayerColor };
 }

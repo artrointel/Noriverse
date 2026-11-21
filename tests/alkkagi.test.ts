@@ -18,6 +18,15 @@ test('board edges count stones out on all four sides', () => {
   assert.equal(isOffBoard(alkkagiEdge, opposite), false);
 });
 
+test('all presets have a 30 percent larger collision board', () => {
+  const oldEdges = { small: 70, standard: 44, large: 23 };
+  for (const board of flickBoardSizes) {
+    const oldWidth = tableSize - 2 * oldEdges[board];
+    const newWidth = tableSize - 2 * flickEdge({ ...defaultFlickSettings, board });
+    assert(Math.abs(newWidth / oldWidth - 1.3) < 1e-10);
+  }
+});
+
 test('an empty side loses and simultaneous elimination is a draw', () => {
   assert.equal(endShot({ ...initialAlkkagi, remaining: [5, 0] }).winner, 1);
   assert.equal(endShot({ ...initialAlkkagi, remaining: [0, 2] }).winner, 2);
@@ -39,7 +48,7 @@ test('online flicks validate owner and speed, and settled layouts decide the win
   const layout = initialFlickRound.layout.map((point, index) => index % 2 === 0 ? point : null);
   const settled = readFlickRound({ layout, revision: 1 }, 1);
   assert.equal(settledStatus(settled!).winner, 1);
-  assert.equal(readFlickRound({ layout: [[10, 10], ...layout.slice(1)], revision: 1 }, 1), undefined);
+  assert.equal(readFlickRound({ layout: [[alkkagiEdge - 1, 240], ...layout.slice(1)], revision: 1 }, 1), undefined);
 });
 
 test('four players have the configured stones and non-overlapping placements on every board size', () => {

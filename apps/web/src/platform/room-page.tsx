@@ -1,5 +1,6 @@
 ﻿import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { createPortal } from 'react-dom';
 import { isRoomGame, roomCapacity, roomCodePattern } from '../../../../packages/protocol/rooms.ts';
 import type { RoomGame } from '../../../../packages/protocol/rooms.ts';
 import { oppositeStone, sideLabel } from '../games/table.ts';
@@ -17,7 +18,7 @@ import { BackLink, gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { GameSelectionGrid } from './catalog-pages.tsx';
 import { GameFeature, GameRulesEditor, GameRulesSummary } from './game-settings.tsx';
-import { formatPlayTime } from './profiles.tsx';
+import { formatPlayTime } from './game-time.tsx';
 import { GearIcon } from './gear-icon.tsx';
 import { ReactionLayer, ReactionPicker } from './game-reactions.tsx';
 
@@ -170,7 +171,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const activeGame = room.matchId ? room.game : 'omok';
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
   const connected = room.state === 'connected';
-  const hasRoom = Boolean(room.code) && room.state !== 'closed' && room.state !== 'missing' && room.state !== 'full';
+  const hasRoom = room.active;
   const participants = room.role && !room.participants.some(person => person.role === room.role)
     ? [...room.participants, { role: room.role, profile: undefined }] : room.participants;
   const capacity = roomCapacity[activeGame];
@@ -247,7 +248,8 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           onClick={() => { room.leave(); setCopyState('idle'); setInviteOpen(false); setSettingsOpen(false); setGamesOpen(false); }}>{t('leave')}</button>
       </div>
     </header>
-    <GameFeature game={activeGame} heading={t(activeGame)} overlay={<ReactionLayer events={room.lobbyReactions.events} />}>
+    {createPortal(<ReactionLayer events={room.lobbyReactions.events} viewport />, document.body)}
+    <GameFeature game={activeGame} heading={t(activeGame)}>
       <div className="lobby-feature-rules"><GameRulesSummary game={activeGame} settings={room.settings} /></div>
     </GameFeature>
     <div className="surface lobby-toolbar">
@@ -258,7 +260,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           onClick={() => setSettingsOpen(true)}><GearIcon />{t('settings')}</button>}
         {room.role === 'host' && gameChoices.length > 0 && <button type="button" className="button button-secondary"
           onClick={() => setGamesOpen(true)}>{t('changeRoomGame')}</button>}
-        {(room.state === 'failed' || room.state === 'disconnected' || (connected && room.role === 'host' && !room.canStart)) &&
+        {(room.needsReconnect || (connected && room.role === 'host' && !room.canStart)) &&
           <button type="button" className="button button-secondary" onClick={room.reconnect}>{t('retry')}</button>}
       </div>
       {room.rematchNotice === 'incoming' && <p role="status">{t('rematchIncoming')}</p>}

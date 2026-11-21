@@ -1,0 +1,137 @@
+import { isRoomGame, isRoomRole, roomCapacity } from '../../../../packages/protocol/rooms.ts';
+import type { Participant, Role, RoomGame } from '../../../../packages/protocol/rooms.ts';
+import { boardRules, isBoardGame, isTurnBasedGame } from '../games/board-rules.ts';
+import { defaultOmokOverline, isOmokOverline } from '../games/omok/rules.ts';
+import type { OmokOverline } from '../games/omok/rules.ts';
+import { createFlickRound, flickPlayers, readFlickRound, readFlickSettings, settledStatus } from '../games/alkkagi/rules.ts';
+import type { FlickPlayer, FlickPower, FlickRound, FlickSettings } from '../games/alkkagi/rules.ts';
+import { oppositeStone } from '../games/table.ts';
+import type { Stone } from '../games/table.ts';
+import { isTurnLimit, readPendingTimeout } from '../games/turn-clock.ts';
+import type { PendingTimeout, TurnLimit } from '../games/turn-clock.ts';
+import { readSichuanRoomSettings } from '../games/sichuan/options.ts';
+import type { SichuanRoomSettings } from '../games/sichuan/options.ts';
+import { readPuzzleRound } from '../games/sichuan/multiplayer.ts';
+import type { PuzzleRound } from '../games/sichuan/multiplayer.ts';
+import type { MatchSettings } from '../games/match-settings.ts';
+
+export type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: number; finishedAt: number; allowDoubleThree: boolean; overline: OmokOverline;
+  history: number[]; physics?: FlickRound; physicsSeats?: Role[]; flickSettings?: FlickSettings; power?: FlickPower;
+  surrendered?: Stone; timedOut?: Stone; timeoutPending?: PendingTimeout;
+  puzzleConfig?: SichuanRoomSettings; puzzle?: PuzzleRound;
+  turnLimit: TurnLimit; deadline: number; beginsAt?: number; clockOffset?: number };
+export const blankMatch: Match = { id: '', game: 'omok', hostColor: 1, startedAt: 0, finishedAt: 0, allowDoubleThree: true,
+  overline: defaultOmokOverline, history: [], turnLimit: 0, deadline: 0 };
+export function lobbyMatch(game: RoomGame, settings: MatchSettings): Match {
+  const { allowDoubleThree, overline, power, turnLimit, flick, puzzle } = settings;
+  return { ...blankMatch, id: crypto.randomUUID(), game, allowDoubleThree, overline, power, turnLimit: game === 'sichuan' ? 0 : turnLimit,
+    puzzleConfig: game === 'sichuan' ? puzzle : undefined, flickSettings: game === 'physics' ? flick : undefined,
+    physics: game === 'physics' ? createFlickRound(flick) : undefined };
+}
+
+export function matchColor(match: Match, role: Role): FlickPlayer | undefined {
+  if (match.physicsSeats) return flickPlayers[match.physicsSeats.indexOf(role)];
+  return role === 'host' ? match.hostColor : oppositeStone(match.hostColor);
+}
+
+export function inRound(match: Match, role: Role) {
+  return (!match.puzzle || match.puzzle.players.includes(role)) && (!match.physicsSeats || match.physicsSeats.includes(role));
+}
+
+export function roundSeats(game: RoomGame, peers: Role[], participants: Participant[]): Role[] | undefined {
+  if (!peers.length || peers.length + 1 > roomCapacity[game]
+    || participants.some(person => person.role !== 'host' && !peers.includes(person.role))) return;
+  return ['host', ...peers];
+}
+
+export function matchTurn(match: Match) {
+  if (match.physics) {
+    const status = settledStatus(match.physics);
+    return status.phase === 'aim' ? status.turn : undefined;
+  }
+  return isBoardGame(match.game) ? boardRules[match.game].turn(match.history) : undefined;
+}
+
+export function matchWinner(match: Match) {
+  return match.physics ? settledStatus(match.physics).winner : isBoardGame(match.game) ? boardRules[match.game].result(match.history, match.overline) : undefined;
+}
+
+export function matchBeginsAt(match: Match) {
+  return match.puzzle?.beginsAt ?? match.beginsAt ?? match.startedAt;
+}
+
+export function matchInProgress(match: Match, now: number) {
+  const begins = matchBeginsAt(match);
+  return begins > 0 && now >= begins && !match.finishedAt;
+}
+
+function matchRevision(match: Match) {
+  return match.puzzle?.revision ?? match.physics?.revision ?? match.history.length;
+}
+
+function followsSnapshot(current: Match, next: Match) {
+  if (next.id !== current.id) return true;
+  const previousRevision = matchRevision(current);
+  const nextRevision = matchRevision(next);
+  return nextRevision >= previousRevision && next.finishedAt >= current.finishedAt
+    && (current.beginsAt === undefined || (next.beginsAt !== undefined && (!current.beginsAt || next.beginsAt === current.beginsAt)))
+    && next.hostColor === current.hostColor && next.game === current.game
+    && next.allowDoubleThree === current.allowDoubleThree && next.overline === current.overline && next.turnLimit === current.turnLimit
+    && (nextRevision > previousRevision || !current.physics?.shot || Boolean(next.physics?.shot || next.finishedAt));
+}
+
+export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: number): Match | undefined {
+  if (!raw || typeof raw !== 'object' || !('type' in raw)) return;
+  if (!(raw.type === 'snapshot' && 'id' in raw && typeof raw.id === 'string' && raw.id.length <= 64
+    && 'history' in raw && 'startedAt' in raw && typeof raw.startedAt === 'number'
+    && Number.isSafeInteger(raw.startedAt) && raw.startedAt >= 0
+    && 'finishedAt' in raw && typeof raw.finishedAt === 'number'
+    && Number.isSafeInteger(raw.finishedAt) && (raw.finishedAt === 0 || raw.finishedAt >= raw.startedAt)
+    && 'allowDoubleThree' in raw && typeof raw.allowDoubleThree === 'boolean')) return;
+  const game = 'game' in raw ? raw.game : 'omok';
+  if (!isRoomGame(game)) return;
+  const puzzleConfig = game === 'sichuan' && 'puzzleConfig' in raw ? readSichuanRoomSettings(raw.puzzleConfig) : undefined;
+  if (game === 'sichuan' && !puzzleConfig) return;
+  const puzzle = puzzleConfig && 'puzzle' in raw ? readPuzzleRound(raw.puzzle, puzzleConfig) : undefined;
+  if (puzzleConfig && (Boolean(raw.startedAt) !== Boolean(puzzle) || Boolean(raw.finishedAt) !== Boolean(puzzle?.result))) return;
+  const power = 'power' in raw ? raw.power : 1;
+  if (power !== 1 && power !== 1.35) return;
+  const physics = game === 'physics' && 'physics' in raw ? readFlickRound(raw.physics, power) : undefined;
+  if (game === 'physics' && !physics) return;
+  const flickSettings = game === 'physics' && 'flickSettings' in raw ? readFlickSettings(raw.flickSettings) : physics?.settings;
+  if (game === 'physics' && !flickSettings) return;
+  const physicsSeats = 'physicsSeats' in raw ? raw.physicsSeats : undefined;
+  if (physicsSeats !== undefined && (!physics || !Array.isArray(physicsSeats) || physicsSeats.length !== (physics.players ?? 2)
+    || !physicsSeats.every(isRoomRole) || !physicsSeats.includes('host') || new Set(physicsSeats).size !== physicsSeats.length)) return;
+  if (physics && (physics.players ?? 2) > 2 && !physicsSeats) return;
+  const nextHostColor = 'hostColor' in raw ? raw.hostColor : 1;
+  if (nextHostColor !== 1 && (nextHostColor !== 2 || !isTurnBasedGame(game))) return;
+  const endedBySurrender = 'surrendered' in raw ? raw.surrendered : undefined;
+  if (endedBySurrender !== undefined && (endedBySurrender !== 1 && endedBySurrender !== 2 || raw.finishedAt === 0)) return;
+  const timeoutColor = 'timedOut' in raw ? raw.timedOut : undefined;
+  if (timeoutColor !== undefined && (timeoutColor !== 1 && timeoutColor !== 2 || !raw.finishedAt || endedBySurrender)) return;
+  const pending = 'timeoutPending' in raw ? readPendingTimeout(raw.timeoutPending, raw.startedAt) : undefined;
+  if ('timeoutPending' in raw && raw.timeoutPending !== undefined && (!pending || raw.finishedAt || physics?.shot)) return;
+  const nextLimit = 'turnLimit' in raw ? raw.turnLimit : 0;
+  const nextDeadlineAt = 'deadline' in raw ? raw.deadline : 0;
+  const beginsAt = 'beginsAt' in raw ? raw.beginsAt : undefined;
+  if (beginsAt !== undefined && (typeof beginsAt !== 'number' || !Number.isSafeInteger(beginsAt) || beginsAt < 0
+    || (beginsAt > 0 && (!raw.startedAt || beginsAt < raw.startedAt)))) return;
+  const playStart = beginsAt ?? raw.startedAt;
+  if (!isTurnLimit(nextLimit) || typeof nextDeadlineAt !== 'number' || !Number.isSafeInteger(nextDeadlineAt)
+    || (nextLimit && playStart && !raw.finishedAt && !physics?.shot && !pending ? nextDeadlineAt < playStart + nextLimit * 1000 : nextDeadlineAt !== 0)) return;
+  const nextOverline = 'overline' in raw ? raw.overline : 'freestyle';
+  if (!isOmokOverline(nextOverline)) return;
+  const history = isBoardGame(game) ? boardRules[game].readHistory(raw.history, raw.allowDoubleThree, nextOverline) : [];
+  if (!history) return;
+  const measuredOffset = 'sentAt' in raw && typeof raw.sentAt === 'number' && Number.isSafeInteger(raw.sentAt)
+    ? receivedAt - raw.sentAt : 0;
+  const synchronizedStart = puzzle?.beginsAt || beginsAt;
+  const clockOffset = synchronizedStart && raw.id === current.id && synchronizedStart === matchBeginsAt(current)
+    ? current.clockOffset ?? measuredOffset : measuredOffset;
+  const next: Match = { id: raw.id, game, hostColor: nextHostColor, startedAt: raw.startedAt, finishedAt: raw.finishedAt, allowDoubleThree: raw.allowDoubleThree,
+    overline: nextOverline, history, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, timeoutPending: pending,
+    turnLimit: nextLimit, deadline: nextDeadlineAt, beginsAt, clockOffset, puzzleConfig, puzzle, flickSettings, physicsSeats };
+  if (pending && (!nextLimit || pending.color !== matchTurn(next))) return;
+  if (followsSnapshot(current, next)) return next;
+}

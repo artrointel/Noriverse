@@ -1,5 +1,5 @@
 import type Phaser from 'phaser';
-import type { GameView } from '../scenes.ts';
+import type { GameView } from '../game-view.ts';
 import { tableSize } from '../table.ts';
 import { paintTileMark } from '../board-marks.ts';
 import { createSichuanEffects } from './effects.ts';

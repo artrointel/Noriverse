@@ -6,16 +6,13 @@ import { isRoomGame } from '../../../packages/protocol/rooms.ts';
 import licenseUrl from '../../../LICENSE?url&no-inline';
 import logo from './assets/noriverse-icon.png';
 import { boardRules, isBoardGame } from './games/board-rules.ts';
-import { defaultOmokOverline } from './games/omok/rules.ts';
-import type { OmokOverline } from './games/omok/rules.ts';
+import { createLocalBoard, decideLocalBoard, endLocalBoard, moveLocalBoard, rematchLocalBoard, setLocalStart } from './games/local-round.ts';
+import type { LocalBoard } from './games/local-round.ts';
 import type { BoardGame } from './games/board-rules.ts';
 import { useRoomBoard } from './network/use-room-board.ts';
 import { apiAvailable } from './network/api.ts';
-import type { GameId } from './games/scenes.ts';
-import type { Stone } from './games/table.ts';
-import { oppositeStone, rematchPlayerColor } from './games/table.ts';
-import { nextDeadline, resolveTurnTimeout } from './games/turn-clock.ts';
-import type { TimeoutChoice, TurnLimit } from './games/turn-clock.ts';
+import type { GameId } from '../../../packages/protocol/games.ts';
+import { oppositeStone } from './games/table.ts';
 import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setLobbyMusic } from './platform/audio.ts';
 import type { AudioLevels } from './platform/audio.ts';
 import { CatalogPage, GameDetail } from './platform/catalog-pages.tsx';
@@ -23,7 +20,7 @@ import { GameSetup } from './platform/game-setup.tsx';
 import { games } from './platform/game-catalog.ts';
 import { BackNavigation, gamePath, RouteLink, useNavigation } from './platform/navigation.tsx';
 import type { GameMode } from './platform/navigation.tsx';
-import { createLocalRound, PlayPage } from './platform/play-page.tsx';
+import { PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
 import { defaultMatchSettings } from './games/match-settings.ts';
 import { puzzleOutcome } from './games/sichuan/multiplayer.ts';
@@ -32,12 +29,9 @@ import { FriendRequestToast, FriendsPage, useFriends } from './platform/friends.
 import { InvitationToasts, useInvitations } from './platform/invitations.tsx';
 import { usePreferences } from './platform/preferences.ts';
 import { SettingsMenu } from './platform/settings-menu.tsx';
-import { NameDialog, ProfileNav, ProfilePage, useProfile } from './platform/profiles.tsx';
+import { NameDialog, ProfileNav, ProfilePage } from './platform/profiles.tsx';
+import { useProfile } from './platform/use-profile.ts';
 import './styles.css';
-
-function createLocalBoard(allowDoubleThree = true, firstPlayerColor: Stone = 1, turnLimit: TurnLimit = 0, overline: OmokOverline = defaultOmokOverline) {
-  return { ...createLocalRound(turnLimit, firstPlayerColor), history: [] as number[], allowDoubleThree, overline };
-}
 
 function App() {
   const { t, i18n } = useTranslation();
@@ -52,12 +46,12 @@ function App() {
     && room.state !== 'closed' && room.state !== 'missing')) ? route.id : undefined;
   const [localBoards, setLocalBoards] = useState(() => {
     const boards = Object.fromEntries(Object.keys(boardRules).map(id => [id, createLocalBoard()]));
-    return boards as Record<BoardGame, ReturnType<typeof createLocalBoard>>;
+    return boards as Record<BoardGame, LocalBoard>;
   });
   const [settings, setSettings] = useState(defaultMatchSettings);
   const [selectedRoomGame, selectRoomGame] = useState<GameId>();
   const { power, flick: flickSettings, allowDoubleThree, puzzle: { settings: sichuanSettings }, overline, turnLimit } = settings;
-  const roomOpen = Boolean(room.code && !['closed', 'missing', 'full'].includes(room.state ?? ''));
+  const roomOpen = room.active;
   const backdropGame = playGame ?? (roomOpen && (route.page === 'room' || (route.page === 'play' && route.online)) ? room.game : undefined);
   const [nameDismissed, setNameDismissed] = useState(() => Boolean(room.guestRoom));
   const [editName, setEditName] = useState(false);
@@ -93,9 +87,9 @@ function App() {
     lastAwayResult.current = matchId;
     void profile.record({
       id: matchId, game: room.game, mode: 'online', outcome,
-      seconds: elapsedPlaySeconds(room.puzzle?.beginsAt || room.startedAt, room.finishedAt),
+      seconds: elapsedPlaySeconds(room.playStartedAt, room.finishedAt),
     }).then(saved => { if (!saved && lastAwayResult.current === matchId) lastAwayResult.current = ''; });
-  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.startedAt, room.puzzle, room.role, room.inMatch, route]);
+  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.winner, room.surrendered, room.timedOut, room.playStartedAt, room.puzzle, room.role, room.inMatch, route]);
 
   useEffect(() => {
     const view = route.id ? t(route.id) : route.page === 'room' ? t('room') : route.page === 'createRoom' ? t('newRoom')
@@ -128,7 +122,7 @@ function App() {
     const id = route.id;
     if (mode === 'online' && isRoomGame(id)) {
       const setupUrl = location.href;
-      if ((!room.code || room.state === 'closed' || room.state === 'missing' || room.state === 'full') && room.state !== 'joining') {
+      if (!room.active && room.state !== 'joining') {
         if (!await room.create(id, settings)) return false;
       }
       if (location.href === setupUrl) navigate('/room');
@@ -139,49 +133,11 @@ function App() {
     return true;
   }
 
-  function rematchBoard(id: BoardGame) {
-    setLocalBoards(previous => {
-      const current = previous[id];
-      if (!current.finishedAt) return previous;
-      const firstPlayerColor = rematchPlayerColor(current.firstPlayerColor, boardRules[id].result(current.history, current.overline),
-        current.surrendered ?? current.timedOut);
-      return { ...previous, [id]: createLocalBoard(current.allowDoubleThree, firstPlayerColor, current.turnLimit, current.overline) };
-    });
-  }
-
-  function placeLocal(id: BoardGame, index: number) {
-    const time = Date.now();
-    setLocalBoards(previous => {
-      const current = previous[id];
-      if (current.finishedAt || current.timeoutPending || (current.deadline && time >= current.deadline)) return previous;
-      const rules = boardRules[id];
-      const history = rules.place(current.history, index, current.allowDoubleThree, current.overline);
-      if (!history) return previous;
-      const finishedAt = rules.result(history, current.overline) ? time : 0;
-      return { ...previous, [id]: { ...current, history, finishedAt, deadline: finishedAt ? 0 : nextDeadline(current.turnLimit, time) } };
-    });
-  }
-
-  function endLocalBoard(id: BoardGame, color: Stone, expiredDeadline?: number) {
-    const time = Date.now();
-    setLocalBoards(previous => {
-      const current = previous[id];
-      if (current.finishedAt) return previous;
-      if (expiredDeadline !== undefined) {
-        if (current.deadline !== expiredDeadline || time < expiredDeadline) return previous;
-        return { ...previous, [id]: { ...current, timeoutPending: { color, at: expiredDeadline }, deadline: 0 } };
-      }
-      if (current.deadline && time >= current.deadline) return previous;
-      return { ...previous, [id]: { ...current, finishedAt: time, surrendered: color, deadline: 0, timeoutPending: undefined } };
-    });
-  }
-
-  function decideLocalBoard(id: BoardGame, choice: TimeoutChoice, at: number) {
+  function updateLocalBoard(id: BoardGame, apply: (board: LocalBoard, now: number) => LocalBoard) {
     const now = Date.now();
     setLocalBoards(previous => {
-      const current = previous[id];
-      if (!current.timeoutPending || current.timeoutPending.at !== at || current.finishedAt) return previous;
-      return { ...previous, [id]: { ...current, ...resolveTurnTimeout(current.timeoutPending, choice, now) } };
+      const next = apply(previous[id], now);
+      return next === previous[id] ? previous : { ...previous, [id]: next };
     });
   }
 
@@ -246,7 +202,7 @@ function App() {
             navigate(gamePath(room.game, 'play', 'online'));
             return;
           }
-          if (room.code !== target.code || room.state === 'missing' || room.state === 'closed' || room.state === 'full' || room.state === 'disconnected' || room.state === 'failed') {
+          if (room.code !== target.code || !room.active || room.needsReconnect) {
             room.join(target.code);
           }
           navigate('/room?room=' + target.code);
@@ -273,11 +229,11 @@ function App() {
           const puzzleRoom = online && room.puzzle && room.puzzleConfig && room.role
             ? { ...room, puzzle: room.puzzle, puzzleConfig: room.puzzleConfig, role: room.role } : undefined;
           if (online && !puzzleRoom) return <p role="status">{t('loading')}</p>;
-          return <SichuanPage key={puzzleRoom?.matchId ?? id} settings={sichuanSettings} room={puzzleRoom} ownProfile={profile.profile}
+          return <SichuanPage settings={sichuanSettings} room={puzzleRoom} ownProfile={profile.profile}
             dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
             onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
             onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'} navigate={navigate}
-            record={apiAvailable && profile.profile ? profile.record : undefined} />;
+            record={online && apiAvailable && profile.profile ? profile.record : undefined} />;
         }
         return <PlayPage id={id} dark={preferences.dark} antialias={preferences.antialias} power={power} flickSettings={flickSettings} turnLimit={turnLimit} navigate={navigate}
           resolution={preferences.resolution} onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias}
@@ -285,11 +241,12 @@ function App() {
           room={online ? room : undefined} ownProfile={profile.profile} history={online ? room.history : local?.history ?? []}
           boardRound={online ? undefined : local}
           allowDoubleThree={online ? room.allowDoubleThree : local?.allowDoubleThree ?? true}
-          overline={online ? room.overline : local?.overline ?? defaultOmokOverline} record={apiAvailable && profile.profile ? profile.record : undefined}
-          move={online ? room.move : index => { if (board) placeLocal(board, index); }}
-          reset={online ? room.rematch : () => { if (board) rematchBoard(board); }}
-          endLocal={(color, deadline) => { if (board) endLocalBoard(board, color, deadline); }}
-          decideLocal={(choice, at) => { if (board) decideLocalBoard(board, choice, at); }} />;
+          overline={online ? room.overline : local?.overline ?? defaultMatchSettings.overline} record={online && apiAvailable && profile.profile ? profile.record : undefined}
+          move={online ? room.move : index => { if (board) updateLocalBoard(board, (current, now) => moveLocalBoard(board, current, index, now)); }}
+          reset={online ? room.rematch : () => { if (board) updateLocalBoard(board, (current, now) => rematchLocalBoard(board, current, now)); }}
+          startLocal={(matchId, at) => { if (board) updateLocalBoard(board, current => setLocalStart(current, matchId, at)); }}
+          endLocal={(color, deadline) => { if (board) updateLocalBoard(board, (current, now) => endLocalBoard(current, color, now, deadline)); }}
+          decideLocal={(choice, at) => { if (board) updateLocalBoard(board, (current, now) => decideLocalBoard(current, choice, at, now)); }} />;
       }
       default:
         return <div className="site-width subpage missing">

@@ -38,6 +38,20 @@ test('all default emojis play uniquely composed short reaction sounds', () => {
   assert.equal(new Set(signatures).size, defaultEmojiIds.length);
 });
 
+test('the slap schedules three distinct, closely spaced impacts', () => {
+  const notes: number[] = [];
+  const bursts: { at: number; length: number }[] = [];
+  playReactionCue('slap', at => notes.push(at), (at, length) => bursts.push({ at, length }));
+  assert.equal(bursts.length, 3);
+  assert.deepEqual(notes, bursts.map(({ at }) => at));
+  for (let index = 1; index < bursts.length; index++) {
+    const previous = bursts[index - 1];
+    const gap = bursts[index].at - previous.at;
+    assert(gap >= .05 && gap <= .09);
+    assert(previous.length < gap);
+  }
+});
+
 test('the new expressions are built in and round-trip as room reactions', () => {
   for (const emoji of ['angry', 'slap', 'thumbsDown', 'tease', 'astonished'] as const) {
     assert(defaultEmojiIds.includes(emoji));

@@ -4,12 +4,11 @@ import type { MatchReport } from '../../../../packages/protocol/profile.ts';
 import type { Stone } from '../games/table.ts';
 import type { AlkkagiWinner } from '../games/alkkagi/rules.ts';
 import { sideLabel } from '../games/table.ts';
-import { formatPlayTime } from './profiles.tsx';
+import { formatPlayTime } from './game-time.tsx';
 import { RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import type { ReactNode } from 'react';
 import { BlurredSurface } from './blurred-surface.tsx';
-import { isTurnBasedGame } from '../games/board-rules.ts';
 
 export function GameResult({ report, winner, title, surrendered, timedOut, scores, details, visible, onClose, room, record, rematch, back, navigate }: {
   report: MatchReport;
@@ -58,7 +57,6 @@ export function GameResult({ report, winner, title, surrendered, timedOut, score
       </div>
       {details}
       {record && <p className="muted" role="status">{t(saved === 'saved' ? 'savedResult' : saved === 'failed' ? 'failedResult' : 'savingResult')}</p>}
-      {record && report.mode === 'local' && isTurnBasedGame(report.game) && <p className="muted result-note">{t('localRecord')}</p>}
       {room?.notice && <p role="status">{t(room.notice === 'incoming' ? 'rematchIncoming' : 'rematchSent')}</p>}
       <div className="panel-actions">
         {(!room || room.canRematch) && <button type="button" className="button button-primary" onClick={rematch}>

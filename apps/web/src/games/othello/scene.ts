@@ -2,7 +2,8 @@ import type Phaser from 'phaser';
 import { playSound } from '../../platform/audio.ts';
 import { addStoneShadow, createStoneShadow, preloadStones, stoneTexture } from '../board-art.ts';
 import { paintTargetMark, paintTileMark, revealMoveMarks } from '../board-marks.ts';
-import type { GameView } from '../scenes.ts';
+import type { GameView } from '../game-view.ts';
+import { bindBoardInput } from '../board-input.ts';
 import { tableSize } from '../table.ts';
 import type { Stone } from '../table.ts';
 import { othelloSize, othelloState } from './rules.ts';
@@ -50,13 +51,7 @@ export function othelloScene(view: () => GameView) {
       field = this.add.graphics().setDepth(-1);
       recentMarks = this.add.graphics().setDepth(-.5);
       hints = this.add.graphics().setDepth(.25);
-      this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-        if (!view().canMove) return;
-        const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-        const x = Math.floor((point.x - edge) / cell);
-        const y = Math.floor((point.y - edge) / cell);
-        if (x >= 0 && x < othelloSize && y >= 0 && y < othelloSize) view().move(y * othelloSize + x, pointer.wasTouch);
-      });
+      bindBoardInput(this, view, othelloSize, edge, cell);
     },
     update(this: Phaser.Scene) {
       const current = view();

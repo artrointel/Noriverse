@@ -51,7 +51,7 @@ function ReactionBubble({ event }: { event: TimedReaction }) {
   </div>;
 }
 
-export function ReactionLayer({ events }: { events: TimedReaction[] }) {
+export function ReactionLayer({ events, viewport = false }: { events: TimedReaction[]; viewport?: boolean }) {
   const { t } = useTranslation();
   const [clock, setClock] = useState(0);
   const now = Math.max(clock, performance.now());
@@ -63,7 +63,7 @@ export function ReactionLayer({ events }: { events: TimedReaction[] }) {
     return () => window.clearTimeout(timer);
   }, [clock, expiry]);
 
-  return <div className="stage-reaction-layer" role="log" aria-label={t('gameReactions')}>
+  return <div className={viewport ? 'stage-reaction-layer viewport-reactions' : 'stage-reaction-layer'} role="log" aria-label={t('gameReactions')}>
     {visible.map(event => <ReactionBubble key={event.id} event={event} />)}
   </div>;
 }
@@ -181,10 +181,10 @@ export function ReactionPicker({ scope, enabled, send, lobby = false }: {
   </div>;
 }
 
-export function GameReactions({ matchId, room, profile, enabled, size, children, progress }: {
+export function GameReactions({ matchId, room, profile, enabled, size, children, progress, action }: {
   matchId: string;
   room?: RoomReactions; profile?: ReactionSender; enabled: boolean;
-  size: { width: number; height: number }; children: ReactNode; progress?: ReactNode;
+  size: { width: number; height: number }; children: ReactNode; progress?: ReactNode; action?: ReactNode;
 }) {
   const [local, setLocal] = useState<TimedReaction[]>([]);
   useEffect(() => { setLocal([]); }, [matchId]);
@@ -199,6 +199,7 @@ export function GameReactions({ matchId, room, profile, enabled, size, children,
       <ReactionLayer events={room?.events ?? local} />
     </div>
     <div className="stage-footer-controls">
+      {action}
       {progress}
       <ReactionPicker scope={matchId} enabled={enabled && (!room || room.enabled)} send={send} />
     </div>

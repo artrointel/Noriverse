@@ -1,11 +1,12 @@
 import { profileIdPattern, readName } from './profile.ts';
-import type { ProfileGame, ProfileSummary } from './profile.ts';
+import type { ProfileSummary } from './profile.ts';
+import { isGameId } from './games.ts';
+import type { GameId } from './games.ts';
 
 const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 export const roomCodePattern = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
-export type RoomGame = ProfileGame;
-export const roomCapacity = { omok: 2, physics: 4, othello: 2, chess: 2, sichuan: 4 } satisfies Record<RoomGame, number>;
-export const isRoomGame = (value: unknown): value is RoomGame => typeof value === 'string' && Object.hasOwn(roomCapacity, value);
+export type RoomGame = GameId;
+export { roomCapacity, isGameId as isRoomGame } from './games.ts';
 
 export const roomRoles = ['host', 'guest', 'guest2', 'guest3'] as const;
 export type Role = (typeof roomRoles)[number];
@@ -27,7 +28,7 @@ export function readInvite(value: unknown): RoomInvite | undefined {
   if (!value || typeof value !== 'object') return;
   const { id, sender, name, game, code, expires } = value as Partial<RoomInvite>;
   if (typeof id !== 'string' || !profileIdPattern.test(id) || typeof sender !== 'string' || !profileIdPattern.test(sender)
-    || typeof name !== 'string' || !readName(name) || !isRoomGame(game) || typeof code !== 'string' || !roomCodePattern.test(code)
+    || typeof name !== 'string' || !readName(name) || !isGameId(game) || typeof code !== 'string' || !roomCodePattern.test(code)
     || typeof expires !== 'number' || !Number.isSafeInteger(expires)) return;
   return { id, sender, name, game, code, expires };
 }

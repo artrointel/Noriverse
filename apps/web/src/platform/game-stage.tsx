@@ -4,7 +4,10 @@ import { useTranslation } from 'react-i18next';
 import { touchResolution } from '../../../../packages/protocol/rooms.ts';
 import type { TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import type { ReactionSender } from '../../../../packages/protocol/reactions.ts';
-import type { GameId, GameView, mountGame } from '../games/scenes.ts';
+import type { GameId } from '../../../../packages/protocol/games.ts';
+import type { GameView } from '../games/game-view.ts';
+import type { mountGame } from '../games/scenes.ts';
+import { sceneLoaders } from '../games/scene-loader.ts';
 import { fixedResolutions, readResolution, renderBufferSize, renderFrameSize } from '../games/render-resolution.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 import { tableSize } from '../games/table.ts';
@@ -18,9 +21,10 @@ import { GearIcon } from './gear-icon.tsx';
 import { GameReactions } from './game-reactions.tsx';
 import type { RoomReactions } from './game-reactions.tsx';
 import { setMatchMusic } from './audio.ts';
+import type { RoundAnnouncement } from '../games/round-announcement.ts';
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
-  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, reactions, ownProfile, onReady, progress }: {
+  showTouches, onTouchDisplay, localTouch, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
@@ -29,6 +33,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   remoteTouch?: TouchPoint; onTouch?: (point: TouchPoint) => void;
   reactions?: RoomReactions; ownProfile?: ReactionSender;
   onReady?: () => void; progress?: ReactNode;
+  beginsAt?: number; ending?: RoundAnnouncement['ending']; endAction?: ReactNode;
 }) {
   const { t } = useTranslation();
   const shell = useRef<HTMLDivElement>(null);
@@ -44,6 +49,9 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const burstId = useRef(0);
   const [bursts, setBursts] = useState<{ id: number; x: number; y: number; remote: boolean }[]>([]);
   const current = useRef(view);
+  const announcements: RoundAnnouncement = { beginsAt, ending, labels: { '3': '3', '2': '2', '1': '1', go: 'GO!',
+    victory: t('roundVictory'), defeat: t('roundDefeat'), success: t('roundSuccess'), finished: t('roundFinished') } };
+  const announcement = useRef(announcements);
   const wasDeciding = useRef(false);
   const [graphics, setGraphics] = useState({ matchId, antialias });
   if (graphics.matchId !== matchId) setGraphics({ matchId, antialias });
@@ -55,7 +63,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const notifyReady = useEffectEvent(() => onReady?.());
   const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : id === 'sichuan' ? 'sichuanBoard' : 'board';
 
-  useLayoutEffect(() => { current.current = view; }, [view]);
+  useLayoutEffect(() => { current.current = view; announcement.current = announcements; });
   useEffect(() => { setMatchMusic(id, matchId); }, [id, matchId]);
 
   useLayoutEffect(() => {
@@ -144,7 +152,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   useEffect(() => { setBursts([]); }, [showTouches, matchId]);
 
   function handleTouch(event: PointerEvent<HTMLDivElement>) {
-    if (!localTouch || status !== 'ready' || view.finished || !event.isPrimary || event.button !== 0
+    if (!localTouch || status !== 'ready' || view.finished || (beginsAt && Date.now() < beginsAt) || !event.isPrimary || event.button !== 0
       || !(event.target instanceof HTMLCanvasElement)) return;
     const bounds = event.target.getBoundingClientRect();
     if (!bounds.width || !bounds.height) return;
@@ -165,9 +173,9 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     let canceled = false;
     let instance: ReturnType<typeof mountGame> | undefined;
     setStatus('loading');
-    void import('../games/scenes.ts').then(({ mountGame }) => {
+    void Promise.all([import('../games/scenes.ts'), sceneLoaders[id]()]).then(([{ mountGame }, createScene]) => {
       if (canceled) return;
-      instance = mountGame(element, id, roundAntialias, requestedSize.current.buffer, () => current.current, () => {
+      instance = mountGame(element, id, roundAntialias, requestedSize.current.buffer, () => current.current, createScene, () => announcement.current, () => {
         if (!canceled) { setStatus('ready'); notifyReady(); }
       });
       engine.current = instance;
@@ -177,7 +185,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
       if (engine.current === instance) engine.current = null;
       instance?.destroy();
     };
-  }, [id, loadAttempt, roundAntialias]);
+  }, [id, matchId, loadAttempt, roundAntialias]);
 
   useEffect(() => {
     const onFullscreenChange = () => {
@@ -275,7 +283,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
             </summary>
             <div className="surface match-panel">{info}</div>
           </details>}
-          {resultHidden && <button ref={resultButton} className="button button-secondary" type="button" onClick={onShowResult}>{t('viewResult')}</button>}
+          {resultHidden && <button ref={resultButton} className="button stage-result-trigger" type="button" aria-label={t('viewResult')} onClick={onShowResult}>{t('viewResult')}</button>}
           <button className="button button-secondary" type="button" onClick={() => void toggleFullscreen()}>
             {t(expanded ? 'restore' : 'fullscreen')}
           </button>
@@ -310,7 +318,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         </div>
       </div>
       <div className="stage-field" ref={field}>
-        <GameReactions matchId={matchId} size={actualSize.frame} profile={ownProfile} room={reactions} progress={progress} enabled={status === 'ready' && !view.finished}>
+        <GameReactions matchId={matchId} size={actualSize.frame} profile={ownProfile} room={reactions} progress={progress} action={endAction} enabled={status === 'ready'}>
           <div
             className="game-viewport" ref={mount} data-ready={status === 'ready'}
             tabIndex={0}

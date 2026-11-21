@@ -1,7 +1,8 @@
 import type Phaser from 'phaser';
 import type { Move } from 'chess.js';
-import type { GameView } from '../scenes.ts';
-import { chessIndex, chessPieceFrames, chessPosition } from './rules.ts';
+import type { GameView } from '../game-view.ts';
+import { chessIndex, chessPieceFrames, chessPosition, chessSize } from './rules.ts';
+import { bindBoardInput } from '../board-input.ts';
 import { addStoneShadow, createStoneShadow } from '../board-art.ts';
 import { paintTargetMark, paintTileMark, revealMoveMarks } from '../board-marks.ts';
 import { createPieceSelection } from '../piece-selection.ts';
@@ -141,12 +142,7 @@ export function chessScene(view: () => GameView) {
         this.add.text(offset + (i + .5) * cell, 456, 'abcdefgh'[i], style).setOrigin(.5);
         this.add.text(23, offset + (i + .5) * cell, String(8 - i), style).setOrigin(.5);
       }
-      this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-        const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-        const x = Math.floor((point.x - offset) / cell), y = Math.floor((point.y - offset) / cell);
-        const current = view();
-        if (current.canMove && x >= 0 && x < 8 && y >= 0 && y < 8) current.move(y * 8 + x, pointer.wasTouch);
-      });
+      bindBoardInput(this, view, chessSize, offset, cell);
     },
     update(this: Phaser.Scene) {
       const current = view();

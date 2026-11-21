@@ -1,48 +1,28 @@
 import Phaser from 'phaser';
-import type { ProfileGame } from '../../../../packages/protocol/profile.ts';
-import type { AlkkagiStatus, Flick, FlickRound, StonePosition } from './alkkagi/rules.ts';
-import type { TargetMark } from './board-marks.ts';
-import { tableSize } from './table.ts';
-import { alkkagiScene } from './alkkagi/scene.ts';
-import { omokScene } from './omok/scene.ts';
-import { othelloScene } from './othello/scene.ts';
-import { chessScene } from './chess/scene.ts';
-import { sichuanScene } from './sichuan/scene.ts';
-import type { Tile, TilePoint } from './sichuan/rules.ts';
-import type { SichuanSize, SichuanTheme } from './sichuan/options.ts';
+import type { GameId } from '../../../../packages/protocol/games.ts';
+import type { GameView } from './game-view.ts';
 import type { RenderSize } from './render-resolution.ts';
-import type { SichuanHudView } from './sichuan/hud.ts';
+import type { SceneFactory } from './scene-loader.ts';
+import { tableSize } from './table.ts';
+import { alkkagiWorldOrigin, alkkagiWorldSize } from './alkkagi/rules.ts';
+import { sichuanSceneHeight } from './sichuan/options.ts';
+import { createRoundAnnouncement, preloadRoundAnnouncement } from './round-announcement.ts';
+import type { RoundAnnouncement } from './round-announcement.ts';
+import { playSound } from '../platform/audio.ts';
 
-export type GameId = ProfileGame;
-export interface GameView {
-  history: number[];
-  cursor: number | null;
-  chessSelected?: number;
-  chessTargets: ReadonlyMap<number, TargetMark>;
-  dark: boolean;
-  force: number;
-  allowDoubleThree: boolean;
-  canMove: boolean;
-  deadline: number;
-  finished: boolean;
-  move: (index: number, touch?: boolean) => void;
-  onAlkkagi: (status: AlkkagiStatus) => void;
-  localFlick?: FlickRound;
-  onlineFlick?: FlickRound & { host: boolean; send: (shot: Flick) => void; settle: (layout: StonePosition[], revision: number) => void };
-  sichuan?: { board: readonly Tile[]; size: SichuanSize; theme: SichuanTheme; selected?: number;
-    hint?: readonly [number, number]; match?: { path: readonly TilePoint[]; combo: number }; rejected?: { index: number };
-    flip?: 'backs' | 'faces'; hud: SichuanHudView };
-}
-
-export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, initialSize: RenderSize, current: () => GameView, onReady: () => void) {
-  const scene = { omok: omokScene, othello: othelloScene, chess: chessScene, physics: alkkagiScene, sichuan: sichuanScene }[id](current);
+export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, initialSize: RenderSize, current: () => GameView, createScene: SceneFactory,
+  announcement: () => RoundAnnouncement, onReady: () => void) {
+  const scene = createScene(current);
+  const worldSize = id === 'physics' ? alkkagiWorldSize : tableSize;
+  const origin = id === 'physics' ? alkkagiWorldOrigin : 0;
   let size = initialSize;
   let camera: Phaser.Cameras.Scene2D.Camera | undefined;
+  let drawCue: ReturnType<typeof createRoundAnnouncement>;
 
   function applyResolution(game: Phaser.Game) {
     if (!camera) return;
     if (game.scale.gameSize.width !== size.width || game.scale.gameSize.height !== size.height) game.scale.resize(size.width, size.height);
-    camera.setSize(size.width, size.height).setOrigin(0, 0).setZoom(size.width / tableSize);
+    camera.setSize(size.width, size.height).setOrigin(0, 0).setZoom(size.width / worldSize).setScroll(origin, origin);
   }
 
   const game = new Phaser.Game({
@@ -57,12 +37,29 @@ export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, i
     scene: {
       key: id,
       ...scene,
+      preload(this: Phaser.Scene) {
+        preloadRoundAnnouncement(this);
+        scene.preload?.call(this);
+      },
       create(this: Phaser.Scene) {
         camera = this.cameras.main;
         applyResolution(this.game);
-        if (id === 'physics') this.physics.world.setBounds(0, 0, tableSize, tableSize);
+        if (id === 'physics') this.physics.world.setBounds(origin, origin, worldSize, worldSize);
         scene.create.call(this);
+        drawCue = createRoundAnnouncement(this, tableSize / 2, (id === 'sichuan' ? sichuanSceneHeight : tableSize) / 2, worldSize, cue => {
+          switch (cue) {
+            case '1': case '2': case '3': return playSound('countdown', 4 - Number(cue));
+            case 'go': return playSound('go');
+            case 'victory': case 'success': return playSound('win');
+            case 'defeat': return playSound('loss');
+            case 'finished': return playSound('finish');
+          }
+        });
         onReady();
+      },
+      update(this: Phaser.Scene, time: number, delta: number) {
+        scene.update?.call(this, time, delta);
+        drawCue(announcement());
       },
     },
   });

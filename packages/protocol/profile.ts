@@ -1,10 +1,9 @@
-export const profileIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-export const profileGames = ['omok', 'physics', 'othello', 'chess', 'sichuan'] as const;
-export type ProfileGame = (typeof profileGames)[number];
+import { isGameId } from './games.ts';
+import type { GameId } from './games.ts';
 
-export function isProfileGame(value: unknown): value is ProfileGame {
-  return profileGames.some(game => game === value);
-}
+export const profileIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+export { gameIds as profileGames, isGameId as isProfileGame } from './games.ts';
+export type ProfileGame = GameId;
 export const avatarIds = ['mint', 'amber', 'lunar', 'ink', 'violet'] as const;
 export type AvatarId = (typeof avatarIds)[number];
 export const defaultAvatar: AvatarId = 'mint';
@@ -75,7 +74,7 @@ export function readProfilePreferences(value: unknown): ProfilePreferences | und
   if ('presence' in value && (value.presence === 'online' || value.presence === 'offline')) return { presence: value.presence };
   if (!('favorite' in value) || !value.favorite || typeof value.favorite !== 'object') return;
   const favorite = value.favorite as { game?: unknown; selected?: unknown };
-  if (isProfileGame(favorite.game) && typeof favorite.selected === 'boolean') {
+  if (isGameId(favorite.game) && typeof favorite.selected === 'boolean') {
     return { favorite: { game: favorite.game, selected: favorite.selected } };
   }
 }
@@ -91,7 +90,7 @@ export function readReport(value: unknown): MatchReport | undefined {
   if (!value || typeof value !== 'object') return;
   const data = value as Partial<MatchReport>;
   const { id, game, mode, outcome, seconds } = data;
-  if (typeof id !== 'string' || !profileIdPattern.test(id) || !isProfileGame(game)
+  if (typeof id !== 'string' || !profileIdPattern.test(id) || !isGameId(game)
     || (mode !== 'local' && mode !== 'online' && mode !== 'practice')
     || (mode === 'practice' && game !== 'physics')
     || (outcome !== 'win' && outcome !== 'loss' && outcome !== 'draw' && outcome !== 'practice')

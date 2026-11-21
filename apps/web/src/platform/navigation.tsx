@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { isProfileGame, profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
-import type { GameId } from '../games/scenes.ts';
+import type { GameId } from '../../../../packages/protocol/games.ts';
 
 export type Navigate = (destination: string, replace?: boolean) => void;
 const pages = import.meta.env.VITE_GITHUB_PAGES === 'true';

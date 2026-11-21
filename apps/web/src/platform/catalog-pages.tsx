@@ -5,13 +5,14 @@ import { apiAvailable } from '../network/api.ts';
 import type { GuestRoom } from '../network/guest-seat.ts';
 import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
 import type { ReactNode, Ref } from 'react';
-import type { GameId } from '../games/scenes.ts';
+import type { GameId } from '../../../../packages/protocol/games.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
 import { cardsPerPage, pageNumbers } from './library-pagination.ts';
 import { BackLink, gamePath, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 
 type Filter = 'all' | 'favorites' | 'strategy' | 'action';
+const heartPath = 'M12 21S1.8 15.4 1.8 8.8C1.8 3.2 8.8 1.7 12 6.6c3.2-4.9 10.2-3.4 10.2 2.2C22.2 15.4 12 21 12 21Z';
 
 function Tags({ id }: { id: GameId }) {
   const { t } = useTranslation();
@@ -36,9 +37,10 @@ function GameCard({ id, selected, preview, selectable, disabled, onSelect, favor
       </button>
       {favorite && <button type="button" className="favorite-button" aria-pressed={favorite.selected} disabled={favorite.disabled}
         aria-label={t(favorite.selected ? 'removeFavorite' : 'addFavorite', { game: t(id) })} onClick={() => favorite.toggle(id)}>
-        <svg viewBox="0 0 24 24" aria-hidden="true" fill={favorite.selected ? 'currentColor' : 'none'} stroke="currentColor"
-          strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M20.8 8.7c0 4.2-8.8 9.5-8.8 9.5S3.2 12.9 3.2 8.7a4.4 4.4 0 0 1 8.8-.5 4.4 4.4 0 0 1 8.8.5Z" />
+        <span className="favorite-heart-glass" aria-hidden="true" style={{ clipPath: `path('${heartPath}')` }} />
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor"
+          strokeWidth="1.45" strokeLinecap="round" strokeLinejoin="round">
+          <path d={heartPath} />
         </svg>
       </button>}
     </article>

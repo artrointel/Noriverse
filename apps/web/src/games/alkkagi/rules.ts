@@ -11,13 +11,17 @@ export interface AlkkagiStatus {
 }
 
 export const initialAlkkagi: AlkkagiStatus = { turn: 1, remaining: [5, 5], phase: 'aim' };
-export const alkkagiEdge = 44;
+const boardExpansion = 1.3;
+export const alkkagiWorldSize = tableSize * boardExpansion;
+export const alkkagiWorldOrigin = (tableSize - alkkagiWorldSize) / 2;
+const expandEdge = (edge: number) => alkkagiWorldOrigin + edge * boardExpansion;
+export const alkkagiEdge = expandEdge(44);
 export const flickBoardSizes = ['small', 'standard', 'large'] as const;
 export type FlickSettings = { stones: number; board: typeof flickBoardSizes[number]; random: boolean };
 export const defaultFlickSettings: FlickSettings = { stones: 5, board: 'standard', random: false };
-const edges = { small: 70, standard: alkkagiEdge, large: 23 };
-export const flickEdge = (settings: FlickSettings) => edges[settings.board];
-export const flickDiameter = (settings: FlickSettings) => Math.min(42, (tableSize - 2 * flickEdge(settings)) * .51 / (settings.stones - 1));
+const edges = { small: 70, standard: 44, large: 23 };
+export const flickEdge = (settings: FlickSettings) => expandEdge(edges[settings.board]);
+export const flickDiameter = (settings: FlickSettings) => Math.min(42, (tableSize - 2 * edges[settings.board]) * .51 / (settings.stones - 1));
 
 export function readFlickSettings(raw: unknown): FlickSettings | undefined {
   if (!raw || typeof raw !== 'object') return;
@@ -38,7 +42,11 @@ export interface FlickRound {
 const rows = [357, 331, 351, 331, 357];
 export const initialFlickRound: FlickRound = {
   revision: 0,
-  layout: rows.flatMap((y, index) => [[100 + index * 70, y], [100 + index * 70, tableSize - y]] as StonePosition[]),
+  layout: rows.flatMap((y, index) => {
+    const x = alkkagiWorldOrigin + (100 + index * 70) * boardExpansion;
+    const fromTop = alkkagiWorldOrigin + y * boardExpansion;
+    return [[x, fromTop], [x, tableSize - fromTop]] as StonePosition[];
+  }),
 };
 
 export function createFlickRound(settings: FlickSettings, players = 2, random = Math.random): FlickRound {

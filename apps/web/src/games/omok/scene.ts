@@ -2,7 +2,8 @@ import type Phaser from 'phaser';
 import { playSound } from '../../platform/audio.ts';
 import { addStoneShadow, createBoardArt, preloadBoard, stoneTexture } from '../board-art.ts';
 import { paintStoneImprint, paintTileMark, revealMoveMarks } from '../board-marks.ts';
-import type { GameView } from '../scenes.ts';
+import type { GameView } from '../game-view.ts';
+import { bindBoardInput } from '../board-input.ts';
 import { tableSize } from '../table.ts';
 import type { Stone } from '../table.ts';
 import { boardSize, doubleThreeAxes } from './rules.ts';
@@ -30,13 +31,7 @@ export function omokScene(view: () => GameView) {
       board.paint(view().dark);
       markers = this.add.graphics().setDepth(3);
       focus = this.add.graphics().setDepth(.5);
-      this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-        const point = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-        const x = Math.round((point.x - (edge + inset)) / pitch);
-        const y = Math.round((point.y - (edge + inset)) / pitch);
-        const current = view();
-        if (current.canMove && x >= 0 && y >= 0 && x < boardSize && y < boardSize) current.move(y * boardSize + x, pointer.wasTouch);
-      });
+      bindBoardInput(this, view, boardSize, edge + inset, pitch, Math.round);
     },
     update(this: Phaser.Scene) {
       const current = view();

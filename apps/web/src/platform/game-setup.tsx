@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { apiAvailable } from '../network/api.ts';
-import type { GameId } from '../games/scenes.ts';
+import type { GameId } from '../../../../packages/protocol/games.ts';
 import type { MatchSettings } from '../games/match-settings.ts';
 import { BackLink, gamePath } from './navigation.tsx';
 import type { GameMode, Navigate } from './navigation.tsx';

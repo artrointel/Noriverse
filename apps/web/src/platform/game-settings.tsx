@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { GameId } from '../games/scenes.ts';
+import type { GameId } from '../../../../packages/protocol/games.ts';
 import type { MatchSettings } from '../games/match-settings.ts';
 import { isTurnLimit, maxTurnLimit, turnLimits } from '../games/turn-clock.ts';
 import { omokOverlineRules } from '../games/omok/rules.ts';
@@ -9,10 +9,10 @@ import { defaultHints, defaultObstacleDensity, maxSichuanObstacleDensity, sichua
 import { FlickSettingsFields } from './flick-settings.tsx';
 import { SichuanModePicker, SichuanSettingsFields } from './sichuan-settings.tsx';
 import { games } from './game-catalog.ts';
-import { formatPlayTime } from './profiles.tsx';
+import { formatPlayTime } from './game-time.tsx';
 import { SettingsSection, SettingsSelect } from './settings-fields.tsx';
 
-export function GameFeature({ game, heading, children, overlay }: { game: GameId; heading: string; children?: ReactNode; overlay?: ReactNode }) {
+export function GameFeature({ game, heading, children }: { game: GameId; heading: string; children?: ReactNode }) {
   const { t } = useTranslation();
   const entry = games[game];
   return <section className="match-feature" aria-label={heading}>
@@ -23,7 +23,6 @@ export function GameFeature({ game, heading, children, overlay }: { game: GameId
         <h2>{t(game)}</h2>
         <p>{t(entry.description)}</p>
       </div>
-      {overlay}
     </div>
     {children}
   </section>;

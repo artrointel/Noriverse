@@ -4,8 +4,8 @@ import { addStoneShadow, createBoardArt, preloadBoard, stoneTexture } from '../b
 import { paintGoldRing } from '../board-marks.ts';
 import { createPieceSelection } from '../piece-selection.ts';
 import { tableSize } from '../table.ts';
-import type { GameView } from '../scenes.ts';
-import { canFlick, defaultFlickSettings, endShot, flickDiameter, flickEdge, initialAlkkagi, initialFlickRound, isOffBoard, pieceOwner, settledStatus } from './rules.ts';
+import type { GameView } from '../game-view.ts';
+import { alkkagiWorldOrigin, alkkagiWorldSize, canFlick, defaultFlickSettings, endShot, flickDiameter, flickEdge, initialAlkkagi, initialFlickRound, isOffBoard, pieceOwner, settledStatus } from './rules.ts';
 import type { AlkkagiStatus, Flick, FlickPlayer, FlickRound, StonePosition } from './rules.ts';
 
 type Piece = {
@@ -188,7 +188,7 @@ export function alkkagiScene(view: () => GameView) {
     preload(this: Phaser.Scene) { preloadBoard(this); },
     create(this: Phaser.Scene) {
       stage = this;
-      board = createBoardArt(this, edge, 19, settings.board === 'small' ? 7 : settings.board === 'large' ? 13 : 9);
+      board = createBoardArt(this, edge, 19 * 1.3, settings.board === 'small' ? 7 : settings.board === 'large' ? 13 : 9, undefined, alkkagiWorldSize);
       dark = view().dark;
       board.paint(dark);
       aim = this.add.graphics().setDepth(2);
@@ -215,8 +215,8 @@ export function alkkagiScene(view: () => GameView) {
       function position(event: PointerEvent) {
         const rect = canvas.getBoundingClientRect();
         return {
-          x: Phaser.Math.Clamp((event.clientX - rect.left) * tableSize / rect.width, 0, tableSize),
-          y: Phaser.Math.Clamp((event.clientY - rect.top) * tableSize / rect.height, 0, tableSize),
+          x: alkkagiWorldOrigin + Phaser.Math.Clamp((event.clientX - rect.left) / rect.width, 0, 1) * alkkagiWorldSize,
+          y: alkkagiWorldOrigin + Phaser.Math.Clamp((event.clientY - rect.top) / rect.height, 0, 1) * alkkagiWorldSize,
         };
       }
       function pointerDown(event: PointerEvent) {

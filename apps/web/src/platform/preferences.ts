@@ -125,7 +125,8 @@ const ko = {
   outcome_win: '승리', outcome_loss: '패배', outcome_draw: '무승부', outcome_practice: '연습',
   matchResult: '{{game}} 결과', saveResult: '기록 다시 저장',
   savingResult: '기록 저장 중', savedResult: '프로필에 기록됨', failedResult: '기록을 저장하지 못했습니다.',
-  localRecord: '한 기기 대전은 1번 플레이어의 전적으로 기록합니다.',
+  roundWaiting: '경기 준비 중', roundVictory: '승리!', roundDefeat: '패배!', roundSuccess: '성공!', roundFinished: '종료!',
+  endPractice: '종료', confirmEndPractice: '연습을 종료할까요?', confirmResign: '이번 경기에서 기권할까요?', roundResigned: '기권했습니다. 남은 참가자의 경기 결과를 기다리는 중입니다.',
   playerOne: '1번 플레이어', playerTwo: '2번 플레이어',
   turnLimit: '턴 제한시간', turnSeconds: '{{count}}초', unlimitedTurns: '제한 없음', turnClockPaused: '일시 정지',
   turnLimitHelp: '시간이 지나면 상대가 승리를 확정하거나 시간을 추가할 수 있습니다.', turnTimeout: '{{stone}} 시간 초과',
@@ -193,7 +194,6 @@ const ko = {
   createRoomError: '방을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.',
   totalPlayTime: '누적 플레이 시간', levelProgress: '다음 레벨까지의 진행도', gameHistory: '게임별 전적', winRate: '승률',
   close: '닫기', cancel: '취소', surrender: '기권',
-  confirmSurrender: '{{stone}}이 기권할까요?',
   resignedBy: '{{stone}} 기권', surrenderPending: '기권을 처리하는 중',
 };
 
@@ -319,7 +319,8 @@ const en: Record<keyof typeof ko, string> = {
   outcome_win: 'Win', outcome_loss: 'Loss', outcome_draw: 'Draw', outcome_practice: 'Practice',
   matchResult: '{{game}} result', saveResult: 'Retry saving result',
   savingResult: 'Saving your result', savedResult: 'Saved to your profile', failedResult: 'Could not save this result.',
-  localRecord: 'Same-device matches are recorded for Player 1.',
+  roundWaiting: 'Getting ready', roundVictory: 'VICTORY!', roundDefeat: 'DEFEAT!', roundSuccess: 'SUCCESS!', roundFinished: 'FINISHED!',
+  endPractice: 'End practice', confirmEndPractice: 'End this practice round?', confirmResign: 'Resign from this match?', roundResigned: 'You resigned. Waiting for the remaining players to finish.',
   playerOne: 'Player 1', playerTwo: 'Player 2',
   turnLimit: 'Turn time limit', turnSeconds: '{{count}} sec', unlimitedTurns: 'No limit', turnClockPaused: 'Paused',
   turnLimitHelp: 'When time runs out, the other player can claim a win or add time.', turnTimeout: '{{stone}} ran out of time',
@@ -387,7 +388,6 @@ const en: Record<keyof typeof ko, string> = {
   createRoomError: 'The room could not be created. Please try again shortly.',
   totalPlayTime: 'Total play time', levelProgress: 'Progress to the next level', gameHistory: 'Game records', winRate: 'Win rate',
   close: 'Close', cancel: 'Cancel', surrender: 'Resign',
-  confirmSurrender: 'Should {{stone}} resign?',
   resignedBy: '{{stone}} resigned', surrenderPending: 'Submitting resignation',
 };
 

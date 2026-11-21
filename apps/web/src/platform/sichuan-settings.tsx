@@ -2,7 +2,7 @@ import { useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { defaultHints, defaultObstacleDensity, defaultSichuanTileDensity, maxSichuanObstacleDensity, maxSichuanTileDensity, minSichuanTileDensity, sichuanObstacleCount, sichuanSizes, sichuanThemes, sichuanTileCount, sichuanTimeLimits } from '../games/sichuan/options.ts';
 import type { SichuanMode, SichuanSettings, SichuanSize } from '../games/sichuan/options.ts';
-import { formatPlayTime } from './profiles.tsx';
+import { formatPlayTime } from './game-time.tsx';
 import { SettingsSection, SettingsSelect } from './settings-fields.tsx';
 
 export function SichuanModePicker({ value, change }: { value: SichuanMode; change: (value: SichuanMode) => void }) {

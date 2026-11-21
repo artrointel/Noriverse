@@ -2,12 +2,11 @@ import { DurableObject } from 'cloudflare:workers';
 import { avatarLevel, defaultAvatar, levelFromPlayTime, profileGames, profileIdPattern, readFriendUpdate, readName, readProfilePreferences, readReport } from '../../packages/protocol/profile.ts';
 import type { AvatarId, FriendAction, GameStats, MatchReport, OwnProfile, PresenceMode, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
 import type { RoomInvite } from '../../packages/protocol/rooms.ts';
-import type { Room } from './worker.ts';
-import type { FriendGraph } from './friend-graph.ts';
+import type { Env } from './bindings.ts';
+import { readBody } from './http.ts';
 
 const cookieName = 'noriverse_profile';
 type Identity = { id: string; secret: string; name: string; avatar?: AvatarId; favorites?: ProfileGame[]; friends?: string[]; touchEffect?: TouchEffect; presence?: PresenceMode };
-interface Env { PROFILES: DurableObjectNamespace<ProfileStore>; FRIENDS: DurableObjectNamespace<FriendGraph>; ROOMS: DurableObjectNamespace<Room> }
 const presenceLease = 25_000;
 const friendActions = ['request', 'accept', 'decline', 'remove', 'cancel'] as const satisfies readonly FriendAction[];
 const friendGraph = (env: Env) => env.FRIENDS.getByName('relationships');
@@ -32,13 +31,6 @@ function json(data: unknown, status: number, headers?: HeadersInit) {
   const responseHeaders = new Headers(headers);
   responseHeaders.set('Cache-Control', 'no-store');
   return Response.json(data, { status, headers: responseHeaders });
-}
-
-export async function readBody(request: Request) {
-  if (request.headers.get('Content-Type')?.split(';')[0] !== 'application/json') return undefined;
-  const body = await request.text();
-  if (body.length > 2048) return undefined;
-  try { return JSON.parse(body) as unknown; } catch { return undefined; }
 }
 
 export function profileSession(request: Request, external: boolean) {
@@ -172,7 +164,7 @@ export class ProfileStore extends DurableObject<Env> {
   }
 
   private profileSummary(identity: Identity): ProfileSummary {
-    const seconds = this.ctx.storage.sql.exec<{ seconds: number }>('SELECT COALESCE(sum(seconds), 0) AS seconds FROM matches').one().seconds;
+    const seconds = this.ctx.storage.sql.exec<{ seconds: number }>("SELECT COALESCE(sum(seconds), 0) AS seconds FROM matches WHERE mode = 'online'").one().seconds;
     return { id: identity.id, name: identity.name, avatar: identity.avatar ?? defaultAvatar, level: levelFromPlayTime(seconds) };
   }
 
@@ -325,8 +317,10 @@ export class ProfileStore extends DurableObject<Env> {
   async record(secret: string, report: MatchReport) {
     const identity = await this.ctx.storage.get<Identity>('identity');
     if (identity?.secret !== secret) return null;
-    this.ctx.storage.sql.exec('INSERT OR IGNORE INTO matches VALUES (?, ?, ?, ?, ?, ?, ?)',
-      report.id, report.game, report.mode, report.outcome, report.seconds, report.seconds, Date.now());
+    if (report.mode === 'online') {
+      this.ctx.storage.sql.exec('INSERT OR IGNORE INTO matches VALUES (?, ?, ?, ?, ?, ?, ?)',
+        report.id, report.game, report.mode, report.outcome, report.seconds, report.seconds, Date.now());
+    }
     return this.ownView(identity);
   }
 
@@ -370,7 +364,7 @@ export class ProfileStore extends DurableObject<Env> {
       game: MatchReport['game']; seconds: number; wins: number; losses: number; draws: number; sessions: number;
     }>(`SELECT game, sum(seconds) AS seconds, sum(outcome = 'win') AS wins,
       sum(outcome = 'loss') AS losses, sum(outcome = 'draw') AS draws, count(*) AS sessions
-      FROM matches GROUP BY game`);
+      FROM matches WHERE mode = 'online' GROUP BY game`);
     for (const { game, ...stats } of totals) {
       games[game] = stats;
       totalSeconds += stats.seconds;
@@ -379,7 +373,7 @@ export class ProfileStore extends DurableObject<Env> {
       id: string; game: MatchReport['game']; mode: MatchReport['mode']; outcome: MatchReport['outcome']; seconds: number; playedAt: number;
     };
     const recent = profileGames.flatMap(game => this.ctx.storage.sql.exec<MatchRow>(
-      'SELECT id, game, mode, outcome, seconds, playedAt FROM matches WHERE game = ? ORDER BY playedAt DESC LIMIT 20', game).toArray())
+      "SELECT id, game, mode, outcome, seconds, playedAt FROM matches WHERE mode = 'online' AND game = ? ORDER BY playedAt DESC LIMIT 20", game).toArray())
       .sort((left, right) => right.playedAt - left.playedAt);
     return {
       id: identity.id, name: identity.name, avatar: identity.avatar ?? defaultAvatar,

@@ -20,7 +20,7 @@ export function preloadStones(scene: Phaser.Scene) {
 }
 
 export function createBoardArt(scene: Phaser.Scene, edge: number, gridInset: number, lines: number,
-  marks: readonly (readonly [number, number])[] = [[(lines - 1) / 2, (lines - 1) / 2]]) {
+  marks: readonly (readonly [number, number])[] = [[(lines - 1) / 2, (lines - 1) / 2]], fieldSize = tableSize) {
   const bg = scene.add.graphics().setDepth(-4);
   const length = tableSize - edge * 2;
   const wood = scene.add.image(tableSize / 2, tableSize / 2, boardTexture).setDisplaySize(length, length).setDepth(-3);
@@ -32,7 +32,8 @@ export function createBoardArt(scene: Phaser.Scene, edge: number, gridInset: num
 
   function paint(dark: boolean) {
     bg.clear();
-    bg.fillStyle(dark ? 0x272132 : 0xe8ddd1).fillRect(0, 0, tableSize, tableSize);
+    const origin = (tableSize - fieldSize) / 2;
+    bg.fillStyle(dark ? 0x272132 : 0xe8ddd1).fillRect(origin, origin, fieldSize, fieldSize);
     for (let spread = 13; spread >= 3; spread -= 2) {
       bg.fillStyle(0x20121c, .05).fillRoundedRect(edge - spread / 2 + 2, edge - spread / 2 + 7,
         length + spread, length + spread, 5);
