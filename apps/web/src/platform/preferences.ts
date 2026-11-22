@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useState } from 'react';
 import i18next from 'i18next';
 import { initReactI18next, useTranslation } from 'react-i18next';
 import { readResolution } from '../games/render-resolution.ts';
+import { maxBurgerPixelStep } from '../games/burger/layout.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 
 const ko = {
@@ -74,11 +75,32 @@ const ko = {
   slimeStackCount: '쌓인 칸 {{count}}개',
   slime_left: '왼쪽', slime_right: '오른쪽', slime_rotate: '회전', slime_down: '아래',
   burger: '햄버거 타이쿤', burgerPixelSize: '픽셀 크기', burgerCopy: '배고픈 별길 탐사대가 찾아와요. 패티를 굽고, 주문대로 버거를 쌓고, 음료를 맞춰 혼자 가게를 운영하거나 최대 네 명이 매출을 겨뤄요.',
-  burgerHelp: '철판의 패티를 두 번 눌러 뒤집고, 양면이 익으면 한 번 눌러 트레이로 옮기고, 오른쪽 트레이에서 소고기와 치킨을 따로 골라 조립대로 보내요. 손님 말풍선의 버거를 아래부터 따라 쌓으세요. 조립 칸에 포장지와 바닥 빵을 놓고 재료를 쌓은 뒤, 같은 빵을 다시 선택하면 윗빵이 올라가요. 윗빵을 올린 조립 칸을 두 번 눌러 포장하세요. 노즐을 눌러 음료를 켜거나 끄고, 손님의 컵과 액체 높이를 맞추세요. 포장한 버거를 하단의 보관대에 끌어 놓고, 보관한 버거를 누르면 응대 칸으로 옮겨요. 버릴 음식은 왼쪽 아래 쓰레기통에 끌어 놓으세요. 보관한 버거만 위로 끌어 버릴 수도 있어요. 응대 칸을 채운 뒤 접시 덮개 아이콘을 누르면 줄 맨 오른쪽 손님에게 전달돼요. 가로로 돌리고 전체 화면을 켜면 주방이 더 넓게 보여요.',
+  burgerHelp: '손님 말풍선을 누르면 주문을 두 배 크기로 볼 수 있어요. 철판의 패티를 두 번 눌러 뒤집고, 양면이 익으면 한 번 눌러 트레이로 옮기세요. 트레이에 여러 장이 있으면 원하는 패티를 골라 조립대로 보내요. 포장지와 바닥 빵 위에 재료를 쌓은 뒤 같은 빵으로 윗빵을 올리세요. 조립 칸을 두 번 누르면 포장됩니다. 노즐을 눌러 음료를 켜고 끄고, 주문의 액체 높이에 맞추세요. 응대 칸을 채운 뒤 접시 덮개를 누르면 줄 맨 오른쪽 손님에게 전달돼요. 레벨이 오르면 카드 한 장을 골라 영업을 계속하세요. 레벨 옆 카드 아이콘으로 기록을 열 수 있어요. 키보드는 게임 화면에 초점을 둔 채 1·2·3으로 카드를 고르고 C로 기록을 열어요.',
   burgerBoard: '햄버거 타이쿤 주방', burgerRace: '매출 대전', burgerClosed: '영업 종료', burgerWaiting: '다른 주방이 영업 중이에요',
-  burgerDurationHelp: '영업시간이 끝나면 매출로 순위를 매겨요. 완벽한 주문을 5번 연속 완성하면 잠시 매출이 두 배예요.',
+  coop: '협동', burgerSharedKitchen: '공동 주방', burgerTeamSales: '팀 매출',
+  burgerCoopBest: '협동 최고 매출', burgerCoopRecordHelp: '협동은 최고 매출만 저장합니다.',
+  burgerEndless: '무한 모드',
+  burgerDurationHelp: '영업시간이 끝나면 매출로 순위를 매겨요. 무한 모드는 1분 30초로 시작하고, 주문을 제출하면 정확도에 따라 시간이 늘어나요.',
   burgerServed: '응대한 손님', burgerBest: '최대 콤보', burgerSolo: '혼자 가게를 운영하며 조리법을 익히고 매출 기록에 도전하세요.',
   burgerLabel_time: '영업시간', burgerLabel_money: '누적 매출', burgerLabel_combo: '콤보', burgerLabel_fever: '피버타임',
+  burgerLabel_prepare: '영업 준비',
+  burgerLabel_soldOut: '벌써 매진이라구요? 그렇다면…', burgerBankrupt: '잔액 소진 · 패배',
+  burgerLevelUp: '레벨 {{level}} 달성!', burgerDraftChoose: '영업을 계속하려면 카드 한 장을 골라 주세요.',
+  burgerDraftCoop: '한 사람이 카드를 고르면 공유 주방이 다시 열려요.', burgerCardHistory: '선택한 카드', burgerNoCards: '아직 선택한 카드가 없어요.',
+  burgerCardType_unlock: '해금', burgerCardType_guest: '손님', burgerCardType_special: '특수',
+  burgerCard_unlock: '{{item}} 해금', burgerCard_sold: '{{item}} 매진',
+  burgerCard_rush: '서두르는 손님', burgerCard_patient: '느긋한 손님', burgerCard_advertise: '동네 광고', burgerCard_picky: '까다로운 손님', burgerCard_simple: '단순한 손님',
+  burgerCard_broom: '빗자루 배치', burgerCard_griddle: '더 넓은 철판', burgerCard_assembly: '두 번째 조립대', burgerCard_storage: '버거 보관대', burgerCard_table: '새 테이블', burgerCard_tray: '깊은 패티 트레이',
+  burgerCardDetail_unlock: '주문과 조리에 추가 · 수익 +15%', burgerCardDetail_sold: '해당 재료가 든 주문을 교체 · 수익 −5%',
+  burgerCardDetail_rush: '대기시간 −10% · 수익 +20%', burgerCardDetail_patient: '대기시간 +10% · 수익 −10%',
+  burgerCardDetail_advertise: '손님 방문 +10%', burgerCardDetail_picky: '최대 속재료 +1 · 수익 +20%', burgerCardDetail_simple: '최대 속재료 −1 · 수익 −20%',
+  burgerCardDetail_broom: '손님을 두 번 눌러 내보내기 · 퇴장 시 30% 확률로 결제', burgerCardDetail_griddle: '철판 4칸 추가',
+  burgerCardDetail_assembly: '조립 칸 1개 추가', burgerCardDetail_storage: '포장 버거를 보관하는 8칸 개방',
+  burgerCardDetail_table: '테이블 1개 · 손님 방문과 수익 각각 +10%', burgerCardDetail_tray: '패티 종류별 보관 한도 4개 → 8개',
+  burgerLabel_rare: '레어', burgerLabel_medium: '미디움', burgerLabel_well: '웰던', burgerLabel_undercooked: '덜 익음', burgerLabel_charred: '탐',
+  burgerLabel_delighted: '대만족이야!', burgerLabel_tip: '팁',
+  burgerLabel_shooLeft0: '앗! 다른 가게로 갈래요.', burgerLabel_shooLeft1: '치, 친구한테 다 말할 거예요!', burgerLabel_shooLeft2: '내 버거는 다음에요!',
+  burgerLabel_shooStay0: '으잉? 전 아직 배고파요!', burgerLabel_shooStay1: '빗자루는 내려놓고 버거 주세요!', burgerLabel_shooStay2: '흥! 여기서 기다릴래요.',
   burgerLabel_grill: '패티 굽기', burgerLabel_tray: '트레이', burgerLabel_build: '버거 조립', burgerLabel_drink: '음료',
   burgerLabel_paper: '포장지', burgerLabel_wrap: '두 번 눌러 포장', burgerLabel_stack: '재료 쌓기', burgerLabel_wait: '손님을 기다리는 중',
   burgerLabel_service: '손님 응대', burgerLabel_placeOrder: '음식 놓기', burgerLabel_trash: '위로 끌어 버리기',
@@ -168,6 +190,7 @@ const ko = {
   force: '발사 강도', standard: '표준', fast: '빠르게',
   start: '게임 시작', backToGames: '게임 목록',
   fullscreen: '전체 화면', restore: '전체 화면 나가기', board: '오목판', physicsBoard: '알까기 경기장',
+  rotateForLandscape: '가로로 보려면 기기를 돌려 주세요.',
   loading: '게임 불러오는 중', gameError: '게임을 불러오지 못했습니다.',
   boardHelp: '빈 교차점을 선택하세요. 방향키와 Enter로도 둘 수 있습니다.',
   touchMoveHelp: '터치로 둘 때는 같은 위치를 빠르게 두 번 탭하세요.',
@@ -309,7 +332,7 @@ const ko = {
   explorerDetails: '{{name}} 소개 보기', explorerProfile: '프로필에서 아이콘 고르기',
   reactionHasSound: '효과음 지원',
   footerInfo: '설치나 가입 없이 친구와 함께 즐기는 브라우저 게임.',
-  siteLinks: '사이트 정보', sourceCode: 'GitHub 저장소', license: 'MIT 라이선스',
+  siteLinks: '사이트 정보', sourceCode: 'GitHub 저장소', license: '저작권 안내',
   userProfilesUnavailable: '이 주소에서는 공개 프로필을 조회할 수 없습니다.',
   favoritesUnavailable: '이 주소에서는 즐겨찾기를 아직 저장할 수 없습니다.',
   roomUnavailable: '이 주소에 온라인 방 서버가 아직 연결되지 않았습니다.',
@@ -390,11 +413,32 @@ const en: Record<keyof typeof ko, string> = {
   slimeStackCount: '{{count}} occupied cells',
   slime_left: 'Left', slime_right: 'Right', slime_rotate: 'Rotate', slime_down: 'Down',
   burger: 'Burger Tycoon', burgerPixelSize: 'Pixel size', burgerCopy: 'The hungry Startrail Crew is here! Grill patties, stack made-to-order burgers, and pour drinks on your own or race up to three rivals for the highest sales.',
-  burgerHelp: 'Double-tap a patty to flip it. Once both sides are cooked, tap it to move it to the tray. Tap the beef or chicken well on the right to add its top patty to the burger. Follow the pictured burger from the bottom up. Lay down a wrapper and bottom bun, stack the ingredients, and choose the same bun again to add the top. Double-tap the assembly slot to wrap. Tap a nozzle to start or stop pouring and match the liquid level in the guest’s order. Drag wrapped burgers to the bottom rack. Tap a stored burger to move it to the service tray. Drag food to the bin at lower left to discard it. You can also flick stored burgers upward to discard them. Tap the cloche icon to hand the staged food to the rightmost guest. Rotate your device and go full screen for a larger kitchen.',
+  burgerHelp: 'Tap a guest’s order bubble to double its size. Double-tap a patty to flip it and tap it once both sides are cooked to move it to the tray. Tap a tray with several patties to pick the one you want. Stack the order from the bottom bun up and select the matching bun to cap it. Double-tap the assembly slot to wrap. Tap a nozzle to start or stop pouring and match the liquid level in the order. Stage the food, then tap the cloche to serve the rightmost guest. Drag food to the lower-left bin to discard it. Unlock the rack to store burgers and the broom to shoo guests with a double-tap. Choose a card on each level-up to keep cooking. Tap the deck next to the level to review your cards. With the game focused, press 1, 2, or 3 to choose, or C to open your card history.',
   burgerBoard: 'Burger Tycoon kitchen', burgerRace: 'Sales race', burgerClosed: 'Shop closed', burgerWaiting: 'Other kitchens are still open',
-  burgerDurationHelp: 'The highest sales win when the shop closes. Five perfect orders in a row double your sales for a short time.',
+  coop: 'Co-op', burgerSharedKitchen: 'Shared kitchen', burgerTeamSales: 'Team sales',
+  burgerCoopBest: 'Co-op best sales', burgerCoopRecordHelp: 'Co-op saves your best sales total.',
+  burgerEndless: 'Endless',
+  burgerDurationHelp: 'The highest sales win when the shop closes. Endless starts at 1:30 and adds time based on how closely each delivery matches the order.',
   burgerServed: 'Guests served', burgerBest: 'Best combo', burgerSolo: 'Run your own shop, practice recipes, and try for a higher total.',
   burgerLabel_time: 'Time left', burgerLabel_money: 'Total sales', burgerLabel_combo: 'Combo', burgerLabel_fever: 'Fever time',
+  burgerLabel_prepare: 'Opening prep',
+  burgerLabel_soldOut: 'Sold out already? Then I’ll have…', burgerBankrupt: 'Out of cash · Defeat',
+  burgerLevelUp: 'Level {{level}}!', burgerDraftChoose: 'Choose a card to reopen the kitchen.',
+  burgerDraftCoop: 'Anyone can choose a card to reopen the shared kitchen.', burgerCardHistory: 'Chosen cards', burgerNoCards: 'No cards chosen yet.',
+  burgerCardType_unlock: 'Unlock', burgerCardType_guest: 'Guest', burgerCardType_special: 'Special',
+  burgerCard_unlock: 'Unlock {{item}}', burgerCard_sold: '{{item}} sold out',
+  burgerCard_rush: 'In a hurry', burgerCard_patient: 'Easygoing guests', burgerCard_advertise: 'Local ads', burgerCard_picky: 'Picky guests', burgerCard_simple: 'Simple tastes',
+  burgerCard_broom: 'Keep a broom', burgerCard_griddle: 'Bigger griddle', burgerCard_assembly: 'Second prep station', burgerCard_storage: 'Burger rack', burgerCard_table: 'Add a table', burgerCard_tray: 'Deeper patty trays',
+  burgerCardDetail_unlock: 'Add to orders and recipes · +15% revenue', burgerCardDetail_sold: 'Replace affected orders · −5% revenue',
+  burgerCardDetail_rush: '−10% patience · +20% revenue', burgerCardDetail_patient: '+10% patience · −10% revenue',
+  burgerCardDetail_advertise: '+10% guest traffic', burgerCardDetail_picky: '+1 max filling · +20% revenue', burgerCardDetail_simple: '−1 max filling · −20% revenue',
+  burgerCardDetail_broom: 'Double-tap to shoo · 30% chance they pay on departure', burgerCardDetail_griddle: 'Add 4 grill slots',
+  burgerCardDetail_assembly: 'Add 1 assembly slot', burgerCardDetail_storage: 'Open 8 slots for wrapped burgers',
+  burgerCardDetail_table: 'Add 1 table · +10% traffic and revenue', burgerCardDetail_tray: 'Store 8 patties instead of 4 per type',
+  burgerLabel_rare: 'Rare', burgerLabel_medium: 'Medium', burgerLabel_well: 'Well done', burgerLabel_undercooked: 'Undercooked', burgerLabel_charred: 'Burnt',
+  burgerLabel_delighted: 'That was perfect!', burgerLabel_tip: 'Tip',
+  burgerLabel_shooLeft0: 'Hey! I’m going elsewhere.', burgerLabel_shooLeft1: 'Wait till my friends hear about this!', burgerLabel_shooLeft2: 'I’ll get a burger another day!',
+  burgerLabel_shooStay0: 'Hey! I’m still hungry.', burgerLabel_shooStay1: 'Put the broom down. Where’s my burger?', burgerLabel_shooStay2: 'Hmph. I’m staying put.',
   burgerLabel_grill: 'Grill', burgerLabel_tray: 'Tray', burgerLabel_build: 'Assembly', burgerLabel_drink: 'Drinks',
   burgerLabel_paper: 'Wrapper', burgerLabel_wrap: 'Double-tap to wrap', burgerLabel_stack: 'Stack ingredients', burgerLabel_wait: 'Waiting for guests',
   burgerLabel_service: 'Service', burgerLabel_placeOrder: 'Place food', burgerLabel_trash: 'Drag up to discard',
@@ -484,6 +528,7 @@ const en: Record<keyof typeof ko, string> = {
   force: 'Flick power', standard: 'Standard', fast: 'Fast',
   start: 'Start game', backToGames: 'All games',
   fullscreen: 'Fullscreen', restore: 'Exit fullscreen', board: 'Omok board', physicsBoard: 'Disc arena',
+  rotateForLandscape: 'Rotate your device to play in landscape.',
   loading: 'Loading game', gameError: 'The game could not load.',
   boardHelp: 'Select an empty intersection, or use the arrow keys and Enter.',
   touchMoveHelp: 'On a touch screen, tap the same spot twice quickly to move.',
@@ -626,7 +671,7 @@ const en: Record<keyof typeof ko, string> = {
   explorerDetails: 'Meet {{name}}', explorerProfile: 'Choose an avatar in your profile',
   reactionHasSound: 'Includes a sound effect',
   footerInfo: 'Play browser games with friends. No installation or signup required.',
-  siteLinks: 'Site information', sourceCode: 'GitHub repository', license: 'MIT license',
+  siteLinks: 'Site information', sourceCode: 'GitHub repository', license: 'Copyright notice',
   userProfilesUnavailable: 'Public profiles are unavailable at this address.',
   favoritesUnavailable: 'Saving favorites is unavailable at this address.',
   roomUnavailable: 'An online room server has not been connected to this site yet.',
@@ -654,6 +699,17 @@ function readPreference(key: string) {
 
 function savePreference(key: string, value: string) {
   try { localStorage.setItem('noriverse.' + key, value); } catch { /* Storage is optional. */ }
+}
+
+export function useBurgerPixelStep() {
+  const [step, setStep] = useState(() => {
+    const saved = Number(readPreference('burger-pixel-step'));
+    return Number.isInteger(saved) && saved >= 1 && saved <= maxBurgerPixelStep ? saved : 2;
+  });
+  return [step, (value: number) => {
+    setStep(value);
+    savePreference('burger-pixel-step', String(value));
+  }] as const;
 }
 
 function getLanguagePreference(): LanguagePreference {

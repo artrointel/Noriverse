@@ -13,7 +13,7 @@ import { defaultMemorySettings } from './memory/rules.ts';
 import { defaultMoleSettings } from './mole/rules.ts';
 import type { MoleSettings } from './mole/rules.ts';
 import { defaultBurgerMinutes } from './burger/rules.ts';
-import type { BurgerMinutes } from './burger/rules.ts';
+import type { BurgerMinutes, BurgerMode } from './burger/rules.ts';
 
 export type MatchSettings = {
   turnLimit: TurnLimit;
@@ -27,6 +27,7 @@ export type MatchSettings = {
   liar: LiarSettings;
   mole: MoleSettings;
   burger: BurgerMinutes;
+  burgerMode: BurgerMode;
 };
 
 export const defaultMatchSettings: MatchSettings = {
@@ -34,6 +35,7 @@ export const defaultMatchSettings: MatchSettings = {
   power: 1, flick: defaultFlickSettings, puzzle: defaultSichuanRoomSettings, memory: defaultMemorySettings, sketch: defaultSketchSettings, liar: defaultLiarSettings,
   mole: defaultMoleSettings,
   burger: defaultBurgerMinutes,
+  burgerMode: 'race',
 };
 
 export function matchSettingsForLanguage(language: SketchSettings['language']): MatchSettings {

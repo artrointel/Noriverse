@@ -32,12 +32,13 @@ import { GearIcon } from './gear-icon.tsx';
 import { GameReactions } from './game-reactions.tsx';
 import type { RoomReactions } from './game-reactions.tsx';
 import { setMatchMusic } from './audio.ts';
+import { useBurgerPixelStep } from './preferences.ts';
 import type { RoundAnnouncement } from '../games/round-announcement.ts';
 
 
 export function GameStage({ id, matchId, antialias, resolution, onResolution, onAntialias, view, setCursor, info, infoStatus, yourTurn, timer, result, resultVisible, resultPending, decision, onShowResult,
   showTouches, onTouchDisplay, touchStyle, remoteTouch, onTouch, reactions, ownProfile, onReady, progress, beginsAt = 0, ending, endAction,
-  stageContext, interaction, playfieldContent }: {
+  stageContext, interaction, playfieldContent, landscapeFullscreen = false }: {
   id: GameId; matchId: string; antialias: boolean; view: GameView; setCursor: (cursor: number | null) => void;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   info?: ReactNode; infoStatus?: string; yourTurn: boolean; timer?: ReactNode; result?: ReactNode; decision?: ReactNode;
@@ -48,6 +49,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   onReady?: () => void; progress?: ReactNode; interaction?: ReactNode; playfieldContent?: ReactNode;
   beginsAt?: number; ending?: RoundAnnouncement['ending']; endAction?: ReactNode;
   stageContext?: { mode: string; map: string };
+  landscapeFullscreen?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const paused = Boolean(useContext(MatchRecoveryContext));
@@ -60,7 +62,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     : id === 'slime' ? orbitSceneHeight : id === 'burger' ? burgerSceneHeight : tableSize;
   const requestedSize = useRef({ frame: { width: tableSize, height: sceneHeight }, buffer: { width: tableSize, height: sceneHeight } });
   const [actualSize, setActualSize] = useState(requestedSize.current);
-  const [pixelStep, setPixelStep] = useState(2);
+  const [pixelStep, setPixelStep] = useBurgerPixelStep();
   const [appliedPixelStep, setAppliedPixelStep] = useState(2);
   const resultButton = useRef<HTMLButtonElement>(null);
   const [gameSettingsOpen, setGameSettingsOpen] = useState(false);
@@ -270,9 +272,15 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
       try {
         if (!shell.current?.requestFullscreen) throw new Error();
         await shell.current.requestFullscreen();
-        setExpanded('native');
       } catch {
         setExpanded('page');
+        return;
+      }
+      if (document.fullscreenElement !== shell.current || !shell.current) return;
+      setExpanded('native');
+      if (landscapeFullscreen && matchMedia('(pointer: coarse)').matches) {
+        const orientation = screen.orientation as (ScreenOrientation & { lock?: (value: 'landscape') => Promise<void> }) | undefined;
+        try { await orientation?.lock?.('landscape'); } catch { /* The portrait hint remains available. */ }
       }
     }
   }
@@ -326,12 +334,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         {stageContext && <div className="stage-context">
           <span>{stageContext.mode}</span><strong>{stageContext.map}</strong>
         </div>}
-        {id === 'burger' && <label className="burger-pixel-control">
-          <span>{t('burgerPixelSize')}</span>
-          <input type="range" min={1} max={maxBurgerPixelStep} step={1} value={pixelStep}
-            onChange={event => setPixelStep(Number(event.currentTarget.value))} />
-          <output>{appliedPixelStep} px · {actualSize.buffer.width} × {actualSize.buffer.height}</output>
-        </label>}
+        {expanded && landscapeFullscreen && <small className="stage-rotate-hint">{t('rotateForLandscape')}</small>}
         <div className="stage-actions">
           {resultHidden && <button ref={resultButton} className="button stage-result-trigger attention-button" type="button" aria-label={t('viewResult')} onClick={onShowResult}>{t('viewResult')}</button>}
           {info && <details className="stage-info" ref={gameInfo} onKeyDown={event => {
@@ -376,6 +379,12 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
                 </select>
               </label>
               <small>{t('resolutionFit')}</small>
+              {id === 'burger' && <div className="burger-pixel-control">
+                <label htmlFor={helpId + '-pixel'}>{t('burgerPixelSize')}</label>
+                <output htmlFor={helpId + '-pixel'}>{appliedPixelStep} px</output>
+                <input id={helpId + '-pixel'} type="range" min={1} max={maxBurgerPixelStep} step={1} value={pixelStep}
+                  onChange={event => setPixelStep(Number(event.currentTarget.value))} />
+              </div>}
               {status === 'ready' && <>
                 <output className="applied-resolution">{t('resolutionApplied', actualSize.buffer)}</output>
                 {actualSize.frame.width !== actualSize.buffer.width && <small>{t('resolutionDisplay', actualSize.frame)}</small>}

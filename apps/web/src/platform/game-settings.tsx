@@ -118,11 +118,17 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
 }) {
   const { t } = useTranslation();
   if (game === 'burger') return <SettingsSection title={t('setupBoardRules')}>
-    <SettingsSelect label={t('matchTimeLimit')} value={settings.burger} change={value => {
-      const minutes = burgerMinutes.find(option => option === Number(value));
+    {online && <SettingsSelect label={t('sichuanOnlineMode')} value={settings.burgerMode} change={value => {
+      if (value === 'race' || value === 'coop') change({ ...settings, burgerMode: value });
+    }}>
+      <option value="race">{t('sichuanMode_race')}</option>
+      <option value="coop">{t('coop')}</option>
+    </SettingsSelect>}
+    <SettingsSelect label={t('matchTimeLimit')} value={settings.burger === 3 ? 5 : settings.burger} change={value => {
+      const minutes = burgerMinutes.find(option => String(option) === value);
       if (minutes) change({ ...settings, burger: minutes });
     }}>
-      {burgerMinutes.map(minutes => <option key={minutes} value={minutes}>{formatPlayTime(minutes * 60)}</option>)}
+      {burgerMinutes.map(minutes => <option key={minutes} value={minutes}>{minutes === 'endless' ? t('burgerEndless') : formatPlayTime(minutes * 60)}</option>)}
     </SettingsSelect>
     <p className="setup-help">{t('burgerDurationHelp')}</p>
   </SettingsSection>;
@@ -212,7 +218,8 @@ export function GameRulesSummary({ game, settings }: { game: GameId; settings: M
   const { t } = useTranslation();
   const entries: [string, string][] = [];
   if (game === 'burger') {
-    entries.push([t('matchTimeLimit'), formatPlayTime(settings.burger * 60)]);
+    entries.push([t('sichuanOnlineMode'), t(settings.burgerMode === 'coop' ? 'coop' : 'sichuanMode_race')]);
+    entries.push([t('matchTimeLimit'), settings.burger === 'endless' ? t('burgerEndless') : formatPlayTime(settings.burger * 60)]);
   } else if (game === 'mole') {
     const { size, mode, seconds } = settings.mole;
     entries.push([t('sichuanGrid'), `${size} × ${size}`], [t('moleFormat'), t('mole_' + mode)],

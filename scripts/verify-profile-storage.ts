@@ -62,7 +62,27 @@ try {
   assert.equal(restored.touchEffect, 'pixelDrift');
   assert(restored.favorites.includes('omok'));
   assert.equal(restored.presence, 'offline');
+
+  const submit = async (record: unknown) => (await request(me + '/matches', 'POST', session, record)).json() as Promise<OwnProfile>;
+  const shared = { id: crypto.randomUUID(), game: 'burger', mode: 'coop', outcome: 'score', seconds: 90 };
+  const sharedOnly = await submit({ ...shared, score: 0 });
+  assert.equal(sharedOnly.games.burger.coopBest, 0);
+  assert.equal(sharedOnly.games.burger.sessions, 0);
+  assert.equal(sharedOnly.totalSeconds, 0);
+  assert.deepEqual(sharedOnly.recent, []);
+  const race = { id: crypto.randomUUID(), game: 'burger', mode: 'online', outcome: 'win', seconds: 95 };
+  await submit(race);
+  await Promise.all([submit({ ...shared, score: 730 }), submit({ ...shared, id: crypto.randomUUID(), score: 580 })]);
+  await submit({ ...shared, id: crypto.randomUUID(), score: 640 });
+  const expected = { seconds: 95, wins: 1, losses: 0, draws: 0, sessions: 1, coopBest: 730 };
+  const after = await reload();
+  assert.deepEqual(after.games.burger, expected);
+  assert.equal(after.totalSeconds, 95);
+  assert.deepEqual(after.recent.map(report => report.id), [race.id]);
+  const publicView = await (await request('/api/profiles/' + id, 'GET')).json() as PublicProfile;
+  assert.deepEqual(publicView.games.burger, expected);
+  assert.deepEqual(publicView.recent.map(report => report.id), [race.id]);
 } finally {
   await request(me, 'DELETE', session, { id });
 }
-console.log(`Saved and reloaded ${explorerIds.length} explorer avatars, the original avatar, and profile preferences.`);
+console.log(`Saved and reloaded ${explorerIds.length} explorer avatars, profile preferences, and separate Burger race and co-op records.`);

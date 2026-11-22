@@ -45,14 +45,16 @@ export function winRate(stats: Pick<GameStats, 'wins' | 'losses' | 'draws'>) {
 }
 export type MatchMode = 'local' | 'online' | 'practice';
 export type MatchOutcome = 'win' | 'loss' | 'draw' | 'practice';
-export interface MatchReport {
+export interface OutcomeReport {
   id: string;
   game: ProfileGame;
   mode: MatchMode;
   outcome: MatchOutcome;
   seconds: number;
 }
-export interface GameStats { seconds: number; wins: number; losses: number; draws: number; sessions: number }
+export type MatchReport = OutcomeReport
+  | { id: string; game: 'burger'; mode: 'coop'; outcome: 'score'; seconds: number; score: number };
+export interface GameStats { seconds: number; wins: number; losses: number; draws: number; sessions: number; coopBest?: number }
 export interface PublicProfile extends AvatarLayers {
   id: string;
   name: string;
@@ -63,7 +65,7 @@ export interface PublicProfile extends AvatarLayers {
   totalSeconds: number;
   badges?: EarnedBadge[];
   games: Record<ProfileGame, GameStats>;
-  recent: (MatchReport & { playedAt: number })[];
+  recent: (OutcomeReport & { playedAt: number })[];
 }
 
 export type ProfileSummary = AvatarLayers & Pick<PublicProfile, 'id' | 'name' | 'level'>;
@@ -112,13 +114,18 @@ export function readName(value: unknown) {
 
 export function readReport(value: unknown): MatchReport | undefined {
   if (!value || typeof value !== 'object') return;
-  const data = value as Partial<MatchReport>;
-  const { id, game, mode, outcome, seconds } = data;
+  const data = value as { id?: unknown; game?: unknown; mode?: unknown; outcome?: unknown; seconds?: unknown; score?: unknown };
+  const { id, game, mode, outcome, seconds, score } = data;
   if (typeof id !== 'string' || !profileIdPattern.test(id) || !isGameId(game)
-    || (mode !== 'local' && mode !== 'online' && mode !== 'practice')
+    || typeof seconds !== 'number' || !Number.isSafeInteger(seconds) || seconds < 0 || seconds > 2_147_483_647) return;
+  if (mode === 'coop') {
+    if (game === 'burger' && outcome === 'score' && typeof score === 'number' && Number.isSafeInteger(score)
+      && score >= 0 && score <= 2_147_483_647) return { id, game, mode, outcome, seconds, score };
+    return;
+  }
+  if ((mode !== 'local' && mode !== 'online' && mode !== 'practice')
     || (mode === 'practice' && game !== 'physics')
     || (outcome !== 'win' && outcome !== 'loss' && outcome !== 'draw' && outcome !== 'practice')
-    || (mode === 'practice') !== (outcome === 'practice')
-    || typeof seconds !== 'number' || !Number.isSafeInteger(seconds) || seconds < 0 || seconds > 2_147_483_647) return;
+    || (mode === 'practice') !== (outcome === 'practice')) return;
   return { id, game, mode, outcome, seconds };
 }

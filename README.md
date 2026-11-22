@@ -48,6 +48,6 @@ Worker와 Pages를 함께 자동 배포하려면 GitHub Actions에 Worker 편집
 
 동일 출처에서는 HttpOnly 쿠키를 사용합니다. Pages와 Worker를 서로 다른 출처로 운영할 때는 Pages의 퍼스트파티 쿠키에 익명 세션을 저장하고 Worker 요청에 전달합니다. Worker는 지정된 Pages 출처만 허용합니다. 로컬 Wrangler의 기록과 배포된 Worker의 기록은 별개입니다.
 
-저장소 코드는 [MIT 라이선스](LICENSE)를 적용합니다. 이후 비공개로 전환해도 이미 MIT로 배포한 버전의 권한은 유지됩니다.
+놀이버스 자체 코드와 에셋의 권리는 artrointel이 유보합니다. 공개 서비스는 접속하여 플레이할 수 있습니다. [저작권 안내](LICENSE)
 
 체스 규칙에는 [chess.js의 BSD-2-Clause 라이선스](apps/web/public/licenses/chess.js.txt)가 적용됩니다.

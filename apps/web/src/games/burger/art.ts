@@ -1,10 +1,11 @@
-import type Phaser from 'phaser';
+import Phaser from 'phaser';
 import type { CupSize, DrinkKind } from './rules.ts';
 import { drinkKinds } from './rules.ts';
 
 export const kitchenShade = 'burger-surface-shade';
 export const kitchenCup = 'burger-cup';
-export const kitchenServe = 'burger-serve-mark';
+export const pattyOilTexture = 'burger-patty-oil';
+export const pattyOilGlint = 'burger-patty-oil-glint';
 const textureSize = 64;
 const fillLevels = { small: .36, medium: .61, large: .87 } as const;
 
@@ -35,23 +36,53 @@ export function createKitchenArt(scene: Phaser.Scene) {
     shade.refresh();
   }
   paintCup(scene, kitchenCup);
+  paintOilTexture(scene, pattyOilTexture, false);
+  paintOilTexture(scene, pattyOilGlint, true);
   for (const kind of drinkKinds) {
     for (const size of Object.keys(fillLevels) as CupSize[]) paintCup(scene, cupTexture(kind, size), kind, fillLevels[size]);
   }
-  const serve = scene.textures.createCanvas(kitchenServe, textureSize, textureSize);
-  if (serve) {
-    const ctx = serve.getContext();
-    const cloche = new Path2D('M8 43 H56 M14 40 C14 22 24 18 32 18 C40 18 50 22 50 40 M32 18 V13 M27 13 H37');
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#603325';
-    ctx.lineWidth = 8;
-    ctx.stroke(cloche);
-    ctx.strokeStyle = '#fff4d4';
-    ctx.lineWidth = 4.5;
-    ctx.stroke(cloche);
-    serve.refresh();
+}
+
+function paintOilTexture(scene: Phaser.Scene, key: string, glint: boolean) {
+  const size = 32;
+  const texture = scene.textures.createCanvas(key, size, size);
+  if (!texture) return;
+  const ctx = texture.getContext();
+  const pixels = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = (x + .5) / size * 2 - 1;
+      const v = (y + .5) / size * 2 - 1;
+      const edge = Math.max(0, 1 - u * u - v * v);
+      const curve = v + .55 * u * u - .18;
+      const highlight = Math.exp(-9 * curve * curve) * (.78 + .22 * Math.cos(u * 7));
+      const offset = (y * size + x) * 4;
+      pixels.data.set([255, glint ? 229 : 201, glint ? 170 : 119,
+        glint ? edge * (26 + 155 * highlight) : Math.min(1, edge * 2.5) * 20], offset);
+    }
   }
+  ctx.putImageData(pixels, 0, 0);
+  texture.refresh();
+  texture.setFilter(Phaser.Textures.FilterMode.LINEAR);
+}
+
+export function pattyShadowTexture(scene: Phaser.Scene, frame: Phaser.Textures.Frame) {
+  const key = 'burger-patty-shade-' + frame.name;
+  if (scene.textures.exists(key)) return key;
+  const shade = scene.textures.createCanvas(key, textureSize, textureSize);
+  if (!shade) return kitchenShade;
+  const context = shade.getContext();
+  context.filter = 'blur(2px)';
+  context.drawImage(frame.source.image as CanvasImageSource, frame.cutX, frame.cutY, frame.cutWidth, frame.cutHeight,
+    0, 0, textureSize, textureSize);
+  context.filter = 'none';
+  context.globalCompositeOperation = 'source-in';
+  context.fillStyle = '#1b1119';
+  context.fillRect(0, 0, textureSize, textureSize);
+  context.globalCompositeOperation = 'source-over';
+  shade.refresh();
+  shade.setFilter(Phaser.Textures.FilterMode.LINEAR);
+  return key;
 }
 
 function paintCup(scene: Phaser.Scene, key: string, kind?: DrinkKind, level = 0) {

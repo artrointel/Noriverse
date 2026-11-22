@@ -8,6 +8,11 @@ import { deleteBrowserProfile, readBrowserProfile, readBrowserTouchEffect, recor
 import { playSound } from './audio.ts';
 
 const recordCount = (profile: PublicProfile) => Object.values(profile.games).reduce((sum, game) => sum + game.sessions, 0);
+function keepBurgerBest(games: PublicProfile['games'], other: PublicProfile['games']): PublicProfile['games'] {
+  const coopBest = other.burger.coopBest;
+  return coopBest !== undefined && coopBest > (games.burger.coopBest ?? -1)
+    ? { ...games, burger: { ...games.burger, coopBest } } : games;
+}
 const applyBrowserTouchEffect = (profile: OwnProfile): OwnProfile => ({ ...profile,
   touchEffect: readBrowserTouchEffect(profile.id) ?? profile.touchEffect ?? 'soft',
 });
@@ -113,7 +118,8 @@ export function useProfile(profileOpen: boolean) {
     const next = await response.json() as OwnProfile;
     if (next.id === deletingOwner.current) throw new Error();
     setProfile(current => applyBrowserTouchEffect(current?.id === next.id
-      ? { ...next, presence: current.presence ?? next.presence, badges: mergeBadges(current.badges, next.badges) } : next));
+      ? { ...next, games: keepBurgerBest(next.games, current.games), presence: current.presence ?? next.presence,
+        badges: mergeBadges(current.badges, next.badges) } : next));
     setStatus('ready');
   }
 
@@ -169,8 +175,9 @@ export function useProfile(profileOpen: boolean) {
       if (current?.id !== next.id) return current;
       const presence = 'presence' in preferences ? next.presence : current.presence ?? next.presence;
       return recordCount(current) > recordCount(next)
-        ? { ...current, avatar: next.avatar, avatarBackground: next.avatarBackground, favorites: next.favorites, touchEffect: next.touchEffect, presence }
-        : { ...next, presence, badges: mergeBadges(current.badges, next.badges) };
+        ? { ...current, games: keepBurgerBest(current.games, next.games), avatar: next.avatar, avatarBackground: next.avatarBackground,
+          favorites: next.favorites, touchEffect: next.touchEffect, presence }
+        : { ...next, games: keepBurgerBest(next.games, current.games), presence, badges: mergeBadges(current.badges, next.badges) };
     });
   }
 
@@ -191,11 +198,16 @@ export function useProfile(profileOpen: boolean) {
       });
       if (!response.ok) return false;
       const next = await response.json() as PublicProfile;
-      if (next.id !== owner) return false;
+      if (next.id !== owner || (match.mode === 'coop' && (next.games.burger.coopBest ?? -1) < match.score)) return false;
       updatePendingMatch(owner, match, false);
       syncBadges(owner, next.badges ?? []);
-      setProfile(current => current?.id === next.id && recordCount(current) <= recordCount(next)
-        ? { ...current, totalSeconds: next.totalSeconds, xp: next.xp, level: next.level, games: next.games, recent: next.recent } : current);
+      setProfile(current => {
+        if (current?.id !== next.id) return current;
+        return recordCount(current) <= recordCount(next)
+          ? { ...current, totalSeconds: next.totalSeconds, xp: next.xp, level: next.level,
+            games: keepBurgerBest(next.games, current.games), recent: next.recent }
+          : { ...current, games: keepBurgerBest(current.games, next.games) };
+      });
       return true;
     } catch {
       return false;

@@ -113,7 +113,9 @@ function RoomGamesDialog({ room, choices, participants, close }: { room: Room; c
   </Popup>;
 }
 
-function ParticipantStats({ id, game, own, latest }: { id: string; game: RoomGame; own?: PublicProfile; latest?: Room['roomHistory'][number] }) {
+function ParticipantStats({ id, game, cooperative, own, latest }: {
+  id: string; game: RoomGame; cooperative: boolean; own?: PublicProfile; latest?: Room['roomHistory'][number];
+}) {
   const { t, i18n } = useTranslation();
   const [remote, setRemote] = useState<PublicProfile | null>();
   const ownId = own?.id;
@@ -136,10 +138,13 @@ function ParticipantStats({ id, game, own, latest }: { id: string; game: RoomGam
     }
     void refresh(0);
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [id, game, ownId, latestId, endedAt]);
+  }, [id, game, cooperative, ownId, latestId, endedAt]);
 
   const stats = (own ?? remote)?.games[game];
   if (!stats) return <small className="lobby-participant-record">{t(remote === null ? 'lobbyStatsUnavailable' : 'lobbyStatsLoading')}</small>;
+  if (cooperative) return stats.coopBest !== undefined && <small className="lobby-participant-record">
+    <span>{t('burgerCoopBest')}</span><b>{stats.coopBest.toLocaleString(i18n.resolvedLanguage)}</b>
+  </small>;
   const rate = winRate(stats);
   return <small className="lobby-participant-record" aria-label={t('lobbyGameStats', { game: t(game) })}>
     <b>{t('recordScore', { wins: stats.wins, losses: stats.losses, draws: stats.draws })}</b>
@@ -270,6 +275,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
                   <RoomPlayerAvatar appearance={participant} size={38} path={room.connectionPaths[role]} />
                   <span><strong>{participant.name}</strong><small>{seatInfo}</small>{activityLine}
                     <ParticipantStats key={participant.id} id={participant.id} game={activeGame} own={own ? ownProfile : undefined}
+                      cooperative={activeGame === 'burger' && room.settings.burgerMode === 'coop'}
                       latest={room.roomHistory.find(entry => !entry.test && entry.game === activeGame && entry.players.some(player => player.profileId === participant.id))} />
                   </span>
                 </RouteLink>

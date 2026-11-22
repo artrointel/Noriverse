@@ -1,6 +1,6 @@
 {
   "name": "noriverse",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "private": true,
   "type": "module",
   "engines": { "node": ">=24" },

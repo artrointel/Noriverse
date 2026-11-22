@@ -28,7 +28,7 @@ import { mergeRoomHistory, readRoomResult, roomHistoryBatchSize } from '../../..
 import type { RoomResult } from '../../../../packages/protocol/room-history.ts';
 import { readRoomTitle } from '../../../../packages/protocol/room-titles.ts';
 import { awardRoomPoints } from './room-scoring.ts';
-import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchOutcome, matchTurn, matchWinner, mockSeatsFor, readMatchSnapshot, resumeMatchClock, roundSeats } from './room-match.ts';
+import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchOutcome, matchTurn, matchWinner, mockSeatsFor, onlineMatchReport, readMatchSnapshot, resumeMatchClock, roundSeats } from './room-match.ts';
 import type { Match } from './room-match.ts';
 import { countdownDuration } from '../games/round-cues.ts';
 import { advanceSketch, applySketchAction, chooseSketchMap, defaultSketchSettings, makeSketchRound, nextSketchEvent, readSketchGuess, sketchDeck, startSketchTurn, visibleSketch } from '../games/sketch/rules.ts';
@@ -194,10 +194,9 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
       setReactions([]);
       window.clearTimeout(arcadeBroadcast.current.timer);
       arcadeBroadcast.current = { sentAt: -Infinity, timer: 0 };
-      if (currentSeat && previous.finishedAt && !next.startedAt && !previous.mockSeats?.length && inRound(previous, currentSeat.role)) {
-        const outcome = matchOutcome(previous, currentSeat.role);
-        if (outcome) setLobbyReport({ id: previous.id, game: previous.game, mode: 'online', outcome,
-          seconds: elapsedPlaySeconds(matchBeginsAt(previous), previous.finishedAt) });
+      if (currentSeat && !next.startedAt) {
+        const report = onlineMatchReport(previous, currentSeat.role);
+        if (report) setLobbyReport(report);
       }
     }
     if (currentSeat && next.startedAt && !next.mockSeats?.length && (previous.id !== next.id || !previous.startedAt)) {
@@ -940,7 +939,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
       mockSeats: mocks.length ? mocks : undefined, puzzle,
       slime: current.game === 'slime' ? createOrbitRound(seats) : undefined,
       mole: current.moleConfig ? createMoleRound(current.moleConfig, seats) : undefined,
-      burger: current.burgerMinutes ? createBurgerRound(current.burgerMinutes, seats) : undefined,
+      burger: current.burgerMinutes ? createBurgerRound(current.burgerMinutes, seats, undefined, current.burgerMode) : undefined,
       sketch: current.sketchConfig ? makeSketchRound(seats, drawingDeck.current[0], chooseSketchMap(current.sketchConfig.map)) : undefined,
       liar: current.liarConfig ? makeLiarRound(seats, current.liarConfig.language, Math.random, previous?.liar?.result?.word) : undefined,
       physicsSeats, physics: physicsSeats ? createFlickRound(current.flickSettings ?? defaultFlickSettings, physicsSeats.length) : undefined });
@@ -954,6 +953,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     memory: game === 'memory' && round.puzzleConfig ? round.puzzleConfig : defaultMemorySettings, sketch: round.sketchConfig ?? defaultSketchSettings,
     liar: round.liarConfig ?? defaultLiarSettings, mole: round.moleConfig ?? defaultMoleSettings,
     burger: round.burgerMinutes ?? defaultBurgerMinutes,
+    burgerMode: round.burgerMode ?? 'race',
   };
 
   function configureMatch(settings: MatchSettings) {

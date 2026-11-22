@@ -187,7 +187,7 @@ function AvatarDialog({ profile, save, close, navigate }: {
 function GameHistory({ profile }: { profile: PublicProfile }) {
   const { t, i18n } = useTranslation();
   const [query, setQuery] = useState('');
-  const played = gameIds.filter(id => (profile.games[id]?.sessions ?? 0) > 0);
+  const played = gameIds.filter(id => (profile.games[id]?.sessions ?? 0) > 0 || profile.games[id]?.coopBest !== undefined);
   const visible = played.filter(id => matchesGame(id, query, t(id)))
     .sort((left, right) => profile.games[right].seconds - profile.games[left].seconds);
   const date = new Intl.DateTimeFormat(i18n.resolvedLanguage);
@@ -206,16 +206,19 @@ function GameHistory({ profile }: { profile: PublicProfile }) {
           return <details key={game} className="game-history">
             <summary>
               <strong>{t(game)}</strong>
-              <span>{t('recordScore', { ...stats })}</span>
-              <span>{t('winRate')} <b>{rate === null ? '—' : percentage.format(rate)}</b></span>
-              <span>{t('playTime')} <b>{formatPlayTime(stats.seconds)}</b></span>
+              {stats.sessions > 0 && <>
+                <span>{t('recordScore', { ...stats })}</span>
+                <span>{t('winRate')} <b>{rate === null ? '—' : percentage.format(rate)}</b></span>
+                <span>{t('playTime')} <b>{formatPlayTime(stats.seconds)}</b></span>
+              </>}
+              {stats.coopBest !== undefined && <span>{t('burgerCoopBest')} <b>{stats.coopBest.toLocaleString(i18n.resolvedLanguage)}</b></span>}
             </summary>
             {matches.length ? <ul aria-label={t('recentMatches')}>{matches.map(match => (
               <li key={match.id}>
                 <div><strong>{t('outcome_' + match.outcome)}</strong><span>{t(match.mode)} · {formatPlayTime(match.seconds)}</span></div>
                 <time dateTime={new Date(match.playedAt).toISOString()}>{date.format(match.playedAt)}</time>
               </li>
-            ))}</ul> : <p>{t('emptyHistory')}</p>}
+            ))}</ul> : <p>{t(stats.coopBest === undefined ? 'emptyHistory' : 'burgerCoopRecordHelp')}</p>}
           </details>;
         })}
         <p className="muted">{t('recordSource')}</p>

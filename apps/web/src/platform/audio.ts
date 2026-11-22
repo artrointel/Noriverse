@@ -144,6 +144,8 @@ function changeMusicTrack(track: MusicTrack) {
   beat = 0;
   nextBeat = (graph?.context.currentTime ?? 0) + .055;
   if (graph) for (const note of playingNotes) note.stop(graph.context.currentTime + .025);
+  if (clock === undefined) syncMusic();
+  else scheduleMusic();
   for (const listener of trackListeners) listener();
 }
 

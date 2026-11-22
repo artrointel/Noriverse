@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { avatarLevel, defaultAvatar, levelFromPlayTime, profileGames, profileIdPattern, readFriendUpdate, readName, readProfilePreferences, readReport } from '../../packages/protocol/profile.ts';
-import type { AvatarLayers, FriendAction, GameStats, MatchReport, OwnProfile, PresenceMode, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
+import type { AvatarLayers, FriendAction, GameStats, MatchReport, OutcomeReport, OwnProfile, PresenceMode, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
 import type { RoomInvite } from '../../packages/protocol/rooms.ts';
 import type { Env } from './bindings.ts';
 import { readBody } from './http.ts';
@@ -159,6 +159,7 @@ export class ProfileStore extends DurableObject<Env> {
         seconds INTEGER NOT NULL, xp INTEGER NOT NULL, playedAt INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS matches_recent ON matches(playedAt DESC);
+      CREATE TABLE IF NOT EXISTS cooperative_bests (game TEXT PRIMARY KEY, score INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS presence_tickets (id TEXT PRIMARY KEY, expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS badges (id TEXT PRIMARY KEY, earnedAt INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS badge_events (kind TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (kind, id));
@@ -183,7 +184,7 @@ export class ProfileStore extends DurableObject<Env> {
       const contacts = await friendGraph(this.env).removeProfile(identity.id);
       this.ctx.waitUntil(Promise.allSettled(contacts.map(id => this.env.PROFILES.getByName(id).sendSocialChange())));
       this.ctx.storage.transactionSync(() => {
-        this.ctx.storage.sql.exec('DELETE FROM matches; DELETE FROM presence_tickets; DELETE FROM badges; DELETE FROM badge_events;');
+        this.ctx.storage.sql.exec('DELETE FROM matches; DELETE FROM cooperative_bests; DELETE FROM presence_tickets; DELETE FROM badges; DELETE FROM badge_events;');
         this.ctx.storage.kv.delete('currentRoom');
         this.ctx.storage.kv.delete('invites');
         this.ctx.storage.kv.delete('lastOnlineAt');
@@ -376,6 +377,9 @@ export class ProfileStore extends DurableObject<Env> {
     if (report.mode === 'online') {
       this.ctx.storage.sql.exec('INSERT OR IGNORE INTO matches VALUES (?, ?, ?, ?, ?, ?, ?)',
         report.id, report.game, report.mode, report.outcome, report.seconds, report.seconds, Date.now());
+    } else if (report.mode === 'coop') {
+      this.ctx.storage.sql.exec(`INSERT INTO cooperative_bests (game, score) VALUES (?, ?)
+        ON CONFLICT(game) DO UPDATE SET score = excluded.score WHERE excluded.score > cooperative_bests.score`, report.game, report.score);
     }
     return this.ownView(identity);
   }
@@ -476,6 +480,10 @@ export class ProfileStore extends DurableObject<Env> {
       games[game] = stats;
       totalSeconds += stats.seconds;
     }
+    for (const { game, score } of this.ctx.storage.sql.exec<{ game: ProfileGame; score: number }>(
+      'SELECT game, score FROM cooperative_bests')) {
+      games[game].coopBest = score;
+    }
     let badges = this.earnedBadges();
     const gameCount = Object.values(games).filter(stats => stats.sessions > 0).length;
     const conquest = reachedBadges('games', gameCount).filter(id => !badges.some(badge => badge.id === id));
@@ -487,7 +495,7 @@ export class ProfileStore extends DurableObject<Env> {
       badges = this.earnedBadges();
     }
     type MatchRow = {
-      id: string; game: MatchReport['game']; mode: MatchReport['mode']; outcome: MatchReport['outcome']; seconds: number; playedAt: number;
+      id: string; game: ProfileGame; mode: 'online'; outcome: OutcomeReport['outcome']; seconds: number; playedAt: number;
     };
     const recent = profileGames.flatMap(game => this.ctx.storage.sql.exec<MatchRow>(
       "SELECT id, game, mode, outcome, seconds, playedAt FROM matches WHERE mode = 'online' AND game = ? ORDER BY playedAt DESC LIMIT 20", game).toArray())
