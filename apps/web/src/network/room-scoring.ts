@@ -53,6 +53,10 @@ function losingProgress(match: Match, role: Role, liarPoints: number): number {
     case 'sichuan': return match.puzzle ? puzzleProgress(match.puzzle, role) / 100 : 0;
     case 'sketch': return match.sketch ? (match.sketch.scores[match.sketch.players.indexOf(role)] ?? 0) / Math.max(1, ...match.sketch.scores) : 0;
     case 'liar': return liarPoints / 40;
+    case 'mole': {
+      const best = Math.max(1, ...Object.values(match.mole?.boards ?? {}).map(board => board.score));
+      return (match.mole?.boards[role]?.score ?? 0) / best;
+    }
     case 'slime': {
       const board = match.slime?.boards[role];
       const best = Math.max(0, ...Object.values(match.slime?.boards ?? {}).map(board => board.cleared));

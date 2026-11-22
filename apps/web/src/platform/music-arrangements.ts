@@ -86,7 +86,7 @@ export type ArrangementTrack = keyof typeof arrangements;
 
 export const musicMoods = {
   orbit: ['cosmic', 'calm'], skylight: ['bright', 'soft'], lantern: ['warm', 'calm'], paperComet: ['playful', 'bright'],
-  chess: ['moody', 'soft'], physics: ['energetic', 'rhythmic'],
+  chess: ['moody', 'soft'], physics: ['energetic', 'rhythmic'], starBop: ['energetic', 'rhythmic'],
   lemonSprint: ['energetic', 'bright', 'arcade'], rainAtMidnight: ['melancholy', 'slow', 'piano'], neonAvenue: ['funky', 'rhythmic', 'night'],
   velvetCarousel: ['whimsical', 'waltz'], belowTheTide: ['ambient', 'slow', 'cosmic'],
   citrusTerrace: ['bossa', 'warm'], midnightCourier: ['breakbeat', 'night', 'energetic'], highlandParade: ['march', 'bright'],

@@ -16,6 +16,7 @@ import { SettingsSection, SettingsSelect } from './settings-fields.tsx';
 import { maxHintInterval, sketchCycles, sketchMaps, sketchTimes } from '../games/sketch/rules.ts';
 import type { SketchSettings } from '../games/sketch/rules.ts';
 import { liarGuessSeconds, liarHintTimes, liarVoteSeconds } from '../games/liar/rules.ts';
+import { moleModes, moleSizes, moleTimes } from '../games/mole/rules.ts';
 
 export function GameFeature({ game, heading, children }: { game: GameId; heading: string; children?: ReactNode }) {
   const { t } = useTranslation();
@@ -115,6 +116,29 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
   online: boolean; onValidity: (valid: boolean) => void;
 }) {
   const { t } = useTranslation();
+  if (game === 'mole') {
+    const mole = settings.mole;
+    return <SettingsSection title={t('setupBoardRules')}>
+      <SettingsSelect label={t('sichuanGrid')} value={mole.size} change={value => {
+        const size = moleSizes.find(option => option === Number(value));
+        if (size) change({ ...settings, mole: { ...mole, size } });
+      }}>
+        {moleSizes.map(size => <option key={size} value={size}>{size} × {size}</option>)}
+      </SettingsSelect>
+      <SettingsSelect label={t('moleFormat')} value={mole.mode} change={value => {
+        const mode = moleModes.find(option => option === value);
+        if (mode) change({ ...settings, mole: { ...mole, mode } });
+      }}>
+        {moleModes.map(mode => <option key={mode} value={mode}>{t('mole_' + mode)}</option>)}
+      </SettingsSelect>
+      {mole.mode === 'timed' ? <SettingsSelect label={t('matchTimeLimit')} value={mole.seconds} change={value => {
+        const seconds = moleTimes.find(option => option === Number(value));
+        if (seconds) change({ ...settings, mole: { ...mole, seconds } });
+      }}>
+        {moleTimes.map(seconds => <option key={seconds} value={seconds}>{formatPlayTime(seconds)}</option>)}
+      </SettingsSelect> : <p className="setup-help">{t('moleEndlessHelp')}</p>}
+    </SettingsSection>;
+  }
   if (game === 'slime') return <SettingsSection title={t('setupBoardRules')}>
     <p className="setup-help">{t('slimeRules')}</p>
   </SettingsSection>;
@@ -177,7 +201,11 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
 export function GameRulesSummary({ game, settings }: { game: GameId; settings: MatchSettings }) {
   const { t } = useTranslation();
   const entries: [string, string][] = [];
-  if (game === 'slime') {
+  if (game === 'mole') {
+    const { size, mode, seconds } = settings.mole;
+    entries.push([t('sichuanGrid'), `${size} × ${size}`], [t('moleFormat'), t('mole_' + mode)],
+      [t('matchTimeLimit'), mode === 'timed' ? formatPlayTime(seconds) : t('moleEndlessDuration')]);
+  } else if (game === 'slime') {
     entries.push([t('gameMode'), t('slimeVersus')], [t('sichuanGrid'), `${orbitWidth} × ${orbitHeight}`],
       [t('slimeBoardLimit'), t('slimeMatchSize', { count: orbitMatchSize })]);
   } else if (game === 'liar') {

@@ -4,7 +4,8 @@ import type { ProfileGame } from '../../../../packages/protocol/profile.ts';
 import type { Emoji } from '../../../../packages/protocol/reactions.ts';
 import { playReactionCue } from './reaction-sounds.ts';
 
-type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'distantCombo' | 'paper' | 'countdown' | 'go' | 'badge';
+type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'distantCombo' | 'paper' | 'countdown' | 'go' | 'badge'
+  | 'moleBop' | 'moleArmor' | 'moleTrap' | 'moleBonus' | 'moleFever' | 'moleFog';
 type Channel = 'music' | 'effects';
 type VoiceBus = Channel | 'distantEffects';
 export type AudioLevels = Record<Channel, number>;
@@ -17,6 +18,7 @@ const scores = {
   paperComet: { chords: [[43, 55, 59, 62], [47, 54, 57, 62], [48, 55, 59, 64], [50, 57, 60, 66]], pattern: [0, 2, 3, -1, 1, 2, -1, 3], interval: .32 },
   chess: { chords: [[45, 52, 60, 64], [47, 54, 59, 62], [43, 55, 59, 62], [44, 52, 59, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, -1], interval: .4 },
   physics: { chords: [[43, 50, 58, 62], [46, 53, 60, 65], [41, 48, 57, 60], [45, 52, 55, 64]], pattern: [0, 2, -1, 1, 3, -1, 2, 1], interval: .265 },
+  starBop: { chords: [[48, 55, 60, 64], [50, 57, 62, 65], [53, 60, 65, 69], [55, 62, 67, 71]], pattern: [0, 2, -1, 3, 1, 2, 3, -1], interval: .22 },
 } as const;
 const lobbyTracks = ['orbit', 'skylight', 'lantern', 'paperComet', ...Object.keys(arrangements) as ArrangementTrack[]] as const;
 type LobbyTrack = typeof lobbyTracks[number];
@@ -31,6 +33,7 @@ const gameTracks: Record<ProfileGame, readonly MusicTrack[]> = {
   sketch: ['paperConstellation', 'melonSurf', 'velvetCarousel', 'islandPostcard', 'bambooClock'],
   liar: ['midnightCourier', 'velvetCarousel', 'paperConstellation', 'rooftopStatic'],
   slime: ['orbit', 'skyRelay', 'prismDrive', 'paperComet'],
+  mole: ['starBop', 'lemonSprint', 'melonSurf', 'highlandParade'],
 };
 
 function randomTrack<T extends MusicTrack>(tracks: readonly T[], previous?: string | null, lastMatchTrack?: MusicTrack): T {
@@ -260,6 +263,30 @@ export function playSound(effect: Effect, strength = 1) {
     case 'paper':
       texture(time, .065, .19, 1550);
       texture(time + .019, .095, .12, 2880);
+      break;
+    case 'moleBop':
+      tone(time, 180 - 24 * strength, .085, .20, 'effects', 'sine', 55);
+      texture(time, .047, .19, 1500);
+      tone(time + .018, 820 + strength * 120, .083, .086, 'effects', 'triangle', 465);
+      break;
+    case 'moleArmor':
+      texture(time, .065, .26, 2750);
+      tone(time, 610, .135, .15, 'effects', 'triangle', 320);
+      tone(time + .025, 1420, .09, .062, 'effects', 'sine');
+      break;
+    case 'moleTrap':
+      tone(time, 333, .14, .19, 'effects', 'triangle', 183);
+      tone(time + .09, 180, .19, .16, 'effects', 'sine', 86);
+      break;
+    case 'moleBonus':
+    case 'moleFever':
+      (effect === 'moleFever' ? [67, 71, 74, 79] : [72, 76, 84]).forEach((note, index) => {
+        tone(time + index * .052, frequency(note), .17, .14, 'effects', 'triangle');
+      });
+      break;
+    case 'moleFog':
+      texture(time, .23, .14, 1100);
+      tone(time, 285, .25, .07, 'effects', 'sine', 195);
       break;
     case 'place':
       texture(time, .045, .35, 1900);

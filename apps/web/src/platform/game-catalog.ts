@@ -7,6 +7,7 @@ import memoryArt from '../assets/memory-cover.webp';
 import sketchArt from '../assets/sketch-cover.webp';
 import liarArt from '../assets/liar-cover.webp';
 import slimeArt from '../assets/slime-cover.webp';
+import moleArt from '../assets/mole/cover.webp';
 import type { GameId } from '../../../../packages/protocol/games.ts';
 export { gameIds } from '../../../../packages/protocol/games.ts';
 
@@ -21,6 +22,8 @@ export const games = {
   liar: { art: liarArt, category: 'strategy', players: 'liarPlayers', description: 'liarCopy', rules: 'liarRules', searchNames: '라이어 게임 추리 거짓말 liar hidden role deduction' },
   slime: { art: slimeArt, category: 'action', players: 'upToFourPlayers', description: 'slimeCopy', rules: 'slimeRules',
     cardSubtitle: 'slimeCardSubtitle', searchNames: '별젤리 슬라임 낙하 퍼즐 jelly orbit slime falling puzzle 뿌요뿌요 puyo puyo puyopuyo ぷよぷよ' },
+  mole: { art: moleArt, category: 'action', players: 'upToFourPlayers', description: 'moleCopy', rules: 'moleHelp',
+    searchNames: '두더지 게임 두더지잡기 두더지망치 별길 탐사대 star bop mole whack arcade' },
 } as const satisfies Record<GameId, { art: string; category: string; players: string; description: string; rules: string; searchNames: string;
   cardSubtitle?: string }>;
 

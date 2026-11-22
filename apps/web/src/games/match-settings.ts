@@ -10,6 +10,8 @@ import type { SketchSettings } from './sketch/rules.ts';
 import { defaultLiarSettings } from './liar/rules.ts';
 import type { LiarSettings } from './liar/rules.ts';
 import { defaultMemorySettings } from './memory/rules.ts';
+import { defaultMoleSettings } from './mole/rules.ts';
+import type { MoleSettings } from './mole/rules.ts';
 
 export type MatchSettings = {
   turnLimit: TurnLimit;
@@ -21,11 +23,13 @@ export type MatchSettings = {
   memory: SichuanRoomSettings;
   sketch: SketchSettings;
   liar: LiarSettings;
+  mole: MoleSettings;
 };
 
 export const defaultMatchSettings: MatchSettings = {
   turnLimit: 0, allowDoubleThree: true, overline: defaultOmokOverline,
   power: 1, flick: defaultFlickSettings, puzzle: defaultSichuanRoomSettings, memory: defaultMemorySettings, sketch: defaultSketchSettings, liar: defaultLiarSettings,
+  mole: defaultMoleSettings,
 };
 
 export function matchSettingsForLanguage(language: SketchSettings['language']): MatchSettings {

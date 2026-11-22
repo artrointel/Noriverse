@@ -40,6 +40,7 @@ import './styles.css';
 
 const LiarPage = lazy(() => import('./platform/liar-page.tsx').then(module => ({ default: module.LiarPage })));
 const SlimePage = lazy(() => import('./platform/slime-page.tsx').then(module => ({ default: module.SlimePage })));
+const MolePage = lazy(() => import('./platform/mole-page.tsx').then(module => ({ default: module.MolePage })));
 const ExplorerPage = lazy(() => import('./platform/explorer-pages.tsx'));
 
 function App() {
@@ -268,6 +269,17 @@ function App() {
             onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias} showTouches={preferences.showTouches}
             onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
             record={online && apiAvailable && profile.profile && !room.testMatch ? profile.record : undefined} />;
+        }
+        if (id === 'mole') {
+          const moleRoom = online && room.mole && room.role ? { ...room, mole: room.mole, role: room.role } : undefined;
+          if (online && !moleRoom) return <p role="status">{t('loading')}</p>;
+          return <Suspense fallback={<div className="surface stage-loading" role="status">{t('loading')}</div>}>
+            <MolePage room={moleRoom} settings={settings.mole} ownProfile={profile.profile} navigate={navigate}
+              dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
+              onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias}
+              showTouches={preferences.showTouches} onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}
+              record={online && apiAvailable && profile.profile && !room.testMatch ? profile.record : undefined} />
+          </Suspense>;
         }
         if (id === 'slime') {
           const slimeRoom = online && room.slime && room.role ? { ...room, slime: room.slime, role: room.role } : undefined;

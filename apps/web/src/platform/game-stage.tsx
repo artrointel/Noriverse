@@ -75,10 +75,11 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const [status, setStatus] = useState<'ready' | 'loading' | 'error'>('loading');
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [expanded, setExpanded] = useState<'native' | 'page' | null>(null);
-  const boardSize = view.sichuan?.size ?? (id === 'othello' ? othelloSize : id === 'chess' ? chessSize : omokSize);
+  const boardSize = view.mole?.size ?? view.sichuan?.size ?? (id === 'othello' ? othelloSize : id === 'chess' ? chessSize : omokSize);
   const notifyReady = useEffectEvent(() => onReady?.());
   const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : id === 'sichuan' ? 'sichuanBoard'
-    : id === 'memory' ? 'memoryBoard' : id === 'sketch' ? 'sketchCanvas' : id === 'liar' ? 'liarTable' : id === 'slime' ? 'slimeBoard' : 'board';
+    : id === 'memory' ? 'memoryBoard' : id === 'sketch' ? 'sketchCanvas' : id === 'liar' ? 'liarTable' : id === 'slime' ? 'slimeBoard'
+      : id === 'mole' ? 'moleBoard' : 'board';
 
   useLayoutEffect(() => { current.current = view; announcement.current = announcements; });
   useEffect(() => { setMatchMusic(id, matchId); }, [id, matchId]);
@@ -406,7 +407,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
           <button className="settings-close" type="button" aria-label={t('close')} onClick={() => gameHelp.current?.close()}><span aria-hidden="true" /></button>
         </header>
         <p id={helpId + '-body'}>{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp'
-          : id === 'memory' ? 'memoryHelp' : id === 'sketch' ? 'sketchHelp' : id === 'liar' ? 'liarHelp' : id === 'slime' ? 'slimeHelp' : 'boardHelp')}
+          : id === 'memory' ? 'memoryHelp' : id === 'sketch' ? 'sketchHelp' : id === 'liar' ? 'liarHelp' : id === 'slime' ? 'slimeHelp'
+            : id === 'mole' ? 'moleHelp' : 'boardHelp')}
           {(id === 'omok' || id === 'chess') && <> {t('previewMoveHelp')}</>}
           {id === 'othello' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
         </p>

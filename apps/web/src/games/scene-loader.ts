@@ -18,4 +18,5 @@ export const sceneLoaders: Record<GameId, () => Promise<SceneFactory>> = {
   sketch: () => import('./sketch/scene.ts').then(module => module.sketchScene),
   liar: () => import('./liar/scene.ts').then(module => module.liarScene),
   slime: () => import('./slime/scene.ts').then(module => module.slimeScene),
+  mole: () => import('./mole/scene.ts').then(module => module.moleScene),
 };
