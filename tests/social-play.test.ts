@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { isTurnLimit, nextDeadline, readPendingTimeout, resolveTurnTimeout } from '../apps/web/src/games/turn-clock.ts';
 import { availableStageHeight, centeredStageScroll, readResolution, renderBufferSize, renderFrameSize } from '../apps/web/src/games/render-resolution.ts';
 import { readProfilePreferences } from '../packages/protocol/profile.ts';
-import { readInvite, readRelayData, readTouch } from '../packages/protocol/rooms.ts';
+import { readInvite, readRelayData, readRoomActivity, readRoomLinks, readSignal, readTouch } from '../packages/protocol/rooms.ts';
+import { summarizeIcePath } from '../apps/web/src/network/room-diagnostics.ts';
 
 test('room relay carries game data and omits continuous touch positions', () => {
   const move = { type: 'move', index: 14 };
@@ -11,6 +12,42 @@ test('room relay carries game data and omits continuous touch positions', () => 
   for (const value of [null, [], { type: 4 }, { type: '' }, { type: 'touch', point: { x: 1, y: 1 } }]) {
     assert.equal(readRelayData(value), undefined);
   }
+});
+
+test('room path status accepts mixed transports and omits disconnected seats', () => {
+  const mixed = { host: 'relay', guest: 'direct', guest2: 'relay' };
+  assert.deepEqual(readRoomLinks(mixed), mixed);
+  assert.deepEqual(readRoomLinks({}), {});
+  for (const value of [{ guest: 'offline' }, { spectator: 'direct' }, JSON.parse('{"__proto__":"direct"}'), []]) {
+    assert.equal(readRoomLinks(value), undefined);
+  }
+});
+
+test('room activity accepts page categories and known games without page-specific identifiers', () => {
+  for (const activity of ['home', 'lobby', 'profile', 'friends', 'play:omok', 'play:slime']) {
+    assert.equal(readRoomActivity(activity), activity);
+  }
+  for (const activity of ['/profiles/123', 'profile:123', 'play:omok?room=ABC', 'play:other', { page: 'home' }]) {
+    assert.equal(readRoomActivity(activity), undefined);
+  }
+});
+
+test('ICE signaling preserves generation identifiers and end-of-candidates', () => {
+  const candidate = { candidate: '', sdpMid: '0', sdpMLineIndex: 0, usernameFragment: 'abcd' };
+  assert.deepEqual(readSignal({ type: 'ice', candidate }, 'guest'), { type: 'ice', candidate });
+  assert.equal(readSignal({ type: 'ice', candidate: { ...candidate, usernameFragment: 42 } }, 'guest'), undefined);
+});
+
+test('ICE diagnostics summarize selected transport or probe counts without exposing addresses', () => {
+  const stats = new Map([
+    ['transport', { type: 'transport', selectedCandidatePairId: 'pair' }],
+    ['pair', { type: 'candidate-pair', localCandidateId: 'local', remoteCandidateId: 'remote', requestsSent: 3, responsesReceived: 1 }],
+    ['local', { type: 'local-candidate', candidateType: 'srflx', protocol: 'udp', address: '192.0.2.1' }],
+    ['remote', { type: 'remote-candidate', candidateType: 'prflx', address: '192.0.2.2' }],
+  ]);
+  assert.equal(summarizeIcePath(stats.values(), id => stats.get(id)), 'selected ICE path srflx / prflx via udp');
+  stats.delete('transport');
+  assert.equal(summarizeIcePath(stats.values(), id => stats.get(id)), 'no selected ICE path, 1 candidate pairs, requests 3 / responses 1');
 });
 
 test('custom turn limits accept whole seconds and keep zero unlimited', () => {

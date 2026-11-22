@@ -11,7 +11,7 @@ import { advanceOrbit, applyOrbitInput, createOrbitRound, nextOrbitAt, orbitGrav
 import { orbitSidebar, orbitTabHeight } from '../games/slime/layout.ts';
 import { tableSize } from '../games/table.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
-import { Avatar } from './avatar.tsx';
+import { Avatar, RoomPlayerAvatar } from './avatar.tsx';
 import { EndRoundAction } from './end-round-action.tsx';
 import { GameResult } from './game-result.tsx';
 import { PlayTime } from './game-time.tsx';
@@ -114,7 +114,8 @@ export function SlimePage({ room, ownProfile, navigate, dark, antialias, resolut
   }));
   const playerStats = <section className="sichuan-score" aria-label={t('sichuanPlayerStats')}>
     {players.map(({ player, profile, name, stats, result }) => <div key={player}>
-        <strong>{profile && <Avatar appearance={profile} size={22} />} {name}
+        <strong>{room ? <RoomPlayerAvatar appearance={profile} size={22} path={room.connectionPaths[player]} />
+          : profile && <Avatar appearance={profile} size={22} />} {name}
           {room && <small>{t(result ? 'outcome_' + result : stats.out ? 'slimeOut' : 'slimeAlive')}</small>}
         </strong>
         <span>{t('slimeCleared')} <b>{stats.cleared}</b></span>
@@ -131,7 +132,7 @@ export function SlimePage({ room, ownProfile, navigate, dark, antialias, resolut
   </>;
   const result = report && <GameResult key={id} report={report} winner={1} title={status} details={playerStats}
     visible={resultVisible} onClose={() => setClosedResult(id)} record={room ? record : undefined}
-    room={room && { canRematch: room.role === 'host' && room.canStart, reconnect: room.needsReconnect ? room.reconnect : undefined,
+    room={room && { canRematch: room.role === 'host' && room.canStart, returnToLobby: room.returnToLobby, reconnect: room.needsReconnect ? room.reconnect : undefined,
       request: room.role !== 'host' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
     rematch={() => { if (room) room.rematch(); else setPractice(newPractice()); }} back={room ? '/room' : '/games'} navigate={navigate} />;
   const labels = useMemo(() => ({

@@ -12,7 +12,7 @@ import type { GuestRoom } from '../network/guest-seat.ts';
 import { winRate } from '../../../../packages/protocol/profile.ts';
 import type { PublicProfile } from '../../../../packages/protocol/profile.ts';
 import { gameIds, games } from './game-catalog.ts';
-import { Avatar } from './avatar.tsx';
+import { RoomPlayerAvatar } from './avatar.tsx';
 import { FriendButton, InviteDialog } from './friends.tsx';
 import type { Friends } from './friends.tsx';
 import { BackLink, gamePath, routeHref, RouteLink } from './navigation.tsx';
@@ -24,6 +24,28 @@ import { GearIcon } from './gear-icon.tsx';
 import { ReactionLayer, ReactionPicker } from './game-reactions.tsx';
 
 type Room = ReturnType<typeof useRoomBoard>;
+
+function ConnectionReport({ read }: { read: () => string | undefined }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  const [report, setReport] = useState<string>();
+  async function copy() {
+    const value = read();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setReport(undefined);
+    } catch { setReport(value); }
+  }
+  return <>
+    <button type="button" className="button button-secondary" onClick={() => void copy()}>
+      {t(copied ? 'connectionReportCopied' : 'connectionReportCopy')}
+    </button>
+    {report && <textarea className="lobby-connection-report" readOnly rows={5} value={report} aria-label={t('connectionReportCopy')}
+      onFocus={event => event.currentTarget.select()} />}
+  </>;
+}
 const roomGames = gameIds.filter(isRoomGame);
 
 export function CreateRoomPage({ selected, select, navigate }: {
@@ -154,6 +176,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const hasRoom = room.active;
   const participants: Participant[] = room.role && !room.participants.some(person => person.role === room.role)
     ? [...room.participants, { role: room.role, profile: undefined }] : room.participants;
+  const rosterPlayers = [...participants, ...room.awayParticipants.filter(person => !participants.some(player => player.role === person.role))];
   const capacity = roomCapacity[activeGame];
   const gameChoices = roomGames.filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
   const canEdit = room.role === 'host' && (!room.started || room.finishedAt > 0);
@@ -225,6 +248,65 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
     {createPortal(<ReactionLayer events={room.lobbyReactions.events} viewport />, document.body)}
     <GameFeature game={activeGame} heading={t(activeGame)}>
       <div className="lobby-feature-rules"><GameRulesSummary game={activeGame} settings={room.settings} /></div>
+      <div className="lobby-feature-panels">
+        <section className="lobby-participants" aria-label={t('participants')}>
+          <header className="room-panel-heading"><h2>{t('participants')}</h2><div className="lobby-participant-tools">
+            <span className="lobby-count">{participants.length}/{capacity}</span>
+            <ReactionPicker lobby scope={room.code ?? ''} enabled={room.lobbyReactions.enabled} send={room.lobbyReactions.send} />
+          </div></header>
+          {room.state && <div className="lobby-status">
+            <p id="lobby-connection" className="connection lobby-connection" role="status">
+              {t(activeGame === 'liar' && !room.started && participants.length < 3 ? 'liarNeedPlayers'
+                : room.role === 'host' && !room.started && connected && !room.canStart ? 'waitingAllConnections'
+                  : connected && room.role !== 'host' && room.started && !room.inMatch ? 'waitingNextRound'
+                    : connected && room.role !== 'host' && !room.started ? 'waitingStart' : room.state)}
+            </p>
+            {canRetry && <button type="button" className="button button-secondary" onClick={room.reconnect}>{t('retry')}</button>}
+            {connected && <ConnectionReport key={room.code} read={room.connectionReport} />}
+          </div>}
+          {room.rematchNotice === 'incoming' && <p role="status">{t('rematchIncoming')}</p>}
+          <ul className="people-list">{rosterPlayers.map(({ role, profile, mock, activity }) => {
+            const color = room.colorFor(role) ?? (role === 'host' ? room.hostColor : oppositeStone(room.hostColor));
+            const own = room.role === role;
+            const participant = own ? ownProfile ?? profile : profile;
+            const activityLabel = activity?.startsWith('play:') ? t('roomActivity_play', { game: t(activity.slice(5)) })
+              : activity ? t('roomActivity_' + activity) : undefined;
+            const activityLine = activityLabel && <small className="lobby-participant-activity">{activityLabel}</small>;
+            const seatInfo = [t(role === 'host' ? 'host' : 'guest'), isTilePuzzle(activeGame) || activeGame === 'sketch' || activeGame === 'liar' || activeGame === 'slime'
+              || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)),
+              own ? t('me') : undefined, participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
+            return <li key={role}>
+              {participant ? <>
+                <RouteLink className="person-link" href={own ? '/profile' : '/profiles/' + participant.id} navigate={navigate}>
+                  <RoomPlayerAvatar appearance={participant} size={38} path={room.connectionPaths[role]} />
+                  <span><strong>{participant.name}</strong><small>{seatInfo}</small>{activityLine}
+                    <ParticipantStats key={participant.id} id={participant.id} game={activeGame} own={own ? ownProfile : undefined}
+                      latest={room.roomHistory.find(entry => !entry.test && entry.game === activeGame && entry.players.some(player => player.profileId === participant.id))} />
+                  </span>
+                </RouteLink>
+                {!own && <FriendButton id={participant.id} model={friends} />}
+              </> : <div className="person-link">
+                {mock ? <span className={'stone stone-' + (color > 2 ? color : sideLabel(activeGame, color) === 'black' ? 0 : 1)} aria-hidden="true" />
+                  : <RoomPlayerAvatar size={38} path={room.connectionPaths[role]} />}
+                <span><strong>{mock ? t('mockSeat', { number: roomRoles.indexOf(role) }) : t('anonymousPlayer')}</strong>
+                  <small>{mock ? t('mockIdle') : seatInfo}</small>{activityLine}</span>
+              </div>}
+            </li>;
+          })}</ul>
+          {room.mockControls && <div className="panel-actions">
+            <button type="button" className="button button-secondary" disabled={!room.mockControls.canAdd} onClick={room.mockControls.add}>{t('addMockPlayer')}</button>
+            {room.mockControls.canRemove && <button type="button" className="button button-secondary" onClick={room.mockControls.remove}>{t('removeMockPlayer')}</button>}
+          </div>}
+          <div className="invite-code">
+            <div><span>{t('code')}</span><code>{room.code}</code></div>
+            <button type="button" className="button button-secondary" onClick={() => void copyInvite()}>{t(copyState === 'copied' ? 'copied' : 'copy')}</button>
+          </div>
+          {copyState === 'manual' && <input aria-label={t('link')} readOnly value={shareUrl.href} onFocus={event => event.currentTarget.select()} />}
+          {room.role === 'host' && <button className="button button-secondary lobby-invite" type="button"
+            disabled={!friends.owner || participants.length >= capacity} onClick={() => setInviteOpen(true)}>{t('inviteFriend')}</button>}
+        </section>
+        <RoomRankingBoard entries={room.roomHistory} participants={participants} roomTitle={room.title} test={room.testMatch && !room.mockControls} />
+      </div>
       <div className="panel-actions lobby-feature-actions">
         {canEdit && <button type="button" className="button button-secondary" disabled={room.changingGame || !room.matchId}
           onClick={() => setSettingsOpen(true)}><GearIcon />{t('settings')}</button>}
@@ -238,62 +320,6 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           onClick={() => { room.leave(); setCopyState('idle'); setInviteOpen(false); setSettingsOpen(false); setGamesOpen(false); }}>{t('leave')}</button>
       </div>
     </GameFeature>
-    <div className="lobby-grid">
-      <RoomRankingBoard entries={room.roomHistory} participants={participants} roomTitle={room.title} test={room.testMatch && !room.mockControls}
-        status={<>
-          {room.state && <div className="lobby-status">
-            <p id="lobby-connection" className="connection lobby-connection" role="status">
-              {t(activeGame === 'liar' && !room.started && participants.length < 3 ? 'liarNeedPlayers'
-                : room.role === 'host' && !room.started && connected && !room.canStart ? 'waitingAllConnections'
-                  : connected && room.role !== 'host' && room.started && !room.inMatch ? 'waitingNextRound'
-                    : connected && room.role !== 'host' && !room.started ? 'waitingStart' : room.state)}
-            </p>
-            {canRetry && <button type="button" className="button button-secondary" onClick={room.reconnect}>{t('retry')}</button>}
-          </div>}
-          {room.rematchNotice === 'incoming' && <p role="status">{t('rematchIncoming')}</p>}
-        </>} />
-      <section className="surface lobby-panel room-participants" aria-label={t('participants')}>
-        <header className="room-panel-heading"><h2>{t('participants')}</h2><div className="lobby-participant-tools">
-          <span className="lobby-count">{participants.length}/{capacity}</span>
-          <ReactionPicker lobby scope={room.code ?? ''} enabled={room.lobbyReactions.enabled} send={room.lobbyReactions.send} />
-        </div></header>
-        <ul className="people-list">{participants.map(({ role, profile, mock }) => {
-          const color = room.colorFor(role) ?? (role === 'host' ? room.hostColor : oppositeStone(room.hostColor));
-          const own = room.role === role;
-          const participant = own ? ownProfile ?? profile : profile;
-          const seatInfo = [t(role === 'host' ? 'host' : 'guest'), isTilePuzzle(activeGame) || activeGame === 'sketch' || activeGame === 'liar' || activeGame === 'slime'
-            || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)),
-            own ? t('me') : undefined, participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
-          return <li key={role}>
-            {participant ? <>
-              <RouteLink className="person-link" href={own ? '/profile' : '/profiles/' + participant.id} navigate={navigate}>
-                <Avatar appearance={participant} size={38} />
-                <span><strong>{participant.name}</strong><small>{seatInfo}</small>
-                  <ParticipantStats key={participant.id} id={participant.id} game={activeGame} own={own ? ownProfile : undefined}
-                    latest={room.roomHistory.find(entry => !entry.test && entry.game === activeGame && entry.players.some(player => player.profileId === participant.id))} />
-                </span>
-              </RouteLink>
-              {!own && <FriendButton id={participant.id} model={friends} />}
-            </> : <div className="person-link">
-              <span className={'stone stone-' + (color > 2 ? color : sideLabel(activeGame, color) === 'black' ? 0 : 1)} aria-hidden="true" />
-              <span><strong>{mock ? t('mockSeat', { number: roomRoles.indexOf(role) }) : t('anonymousPlayer')}</strong><small>{mock ? t('mockIdle') : seatInfo}</small></span>
-            </div>}
-          </li>;
-        })}</ul>
-        {room.mockControls && <div className="panel-actions">
-          <button type="button" className="button button-secondary" disabled={!room.mockControls.canAdd} onClick={room.mockControls.add}>{t('addMockPlayer')}</button>
-          {room.mockControls.canRemove && <button type="button" className="button button-secondary" onClick={room.mockControls.remove}>{t('removeMockPlayer')}</button>}
-        </div>}
-        <div className="invite-code">
-          <div><span>{t('code')}</span><code>{room.code}</code></div>
-          <button type="button" className="button button-secondary" onClick={() => void copyInvite()}>{t(copyState === 'copied' ? 'copied' : 'copy')}</button>
-        </div>
-        {copyState === 'manual' && <input aria-label={t('link')} readOnly value={shareUrl.href} onFocus={event => event.currentTarget.select()} />}
-        {room.role === 'host' && <button className="button button-secondary lobby-invite" type="button"
-          disabled={!friends.owner || participants.length >= capacity} onClick={() => setInviteOpen(true)}>{t('inviteFriend')}</button>}
-      </section>
-
-    </div>
     {inviteOpen && room.role === 'host' && <InviteDialog owner={friends.owner} navigate={navigate} invite={room.invite} close={() => setInviteOpen(false)} />}
     {gamesOpen && room.role === 'host' && <RoomGamesDialog room={room} choices={gameChoices} participants={participants.length} close={() => setGamesOpen(false)} />}
     {settingsOpen && canEdit && <RoomSettingsDialog room={room} close={() => setSettingsOpen(false)} />}

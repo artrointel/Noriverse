@@ -1,27 +1,31 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { FriendAction } from '../../packages/protocol/profile.ts';
 
-type Edge = { first: string; second: string; sender: string; status: 'pending' | 'accepted' | 'removed' };
+type Edge = { first: string; second: string; sender: string; status: 'pending' | 'accepted' | 'removed'; requestId: string | null };
 
 export class FriendGraph extends DurableObject<object> {
   constructor(context: DurableObjectState, env: object) {
     super(context, env);
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS friendships (first TEXT NOT NULL, second TEXT NOT NULL, sender TEXT NOT NULL,
-        status TEXT NOT NULL, PRIMARY KEY (first, second));
+        status TEXT NOT NULL, requestId TEXT, PRIMARY KEY (first, second));
       CREATE INDEX IF NOT EXISTS friendships_by_second ON friendships(second);
       CREATE TABLE IF NOT EXISTS imported_friends (id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS deleted_profiles (id TEXT PRIMARY KEY);
     `);
+    const columns = this.ctx.storage.sql.exec<{ name: string }>('PRAGMA table_info(friendships)').toArray();
+    if (!columns.some(column => column.name === 'requestId')) this.ctx.storage.sql.exec('ALTER TABLE friendships ADD COLUMN requestId TEXT');
   }
 
   list(id: string) {
     const edges = this.ctx.storage.sql.exec<Edge>(
       'SELECT * FROM friendships WHERE (first = ? OR second = ?) AND status != ?', id, id, 'removed').toArray();
-    const list = { friends: [] as string[], incoming: [] as string[], outgoing: [] as string[] };
+    const list = { friends: [] as string[], incoming: [] as string[], outgoing: [] as string[], requestIds: {} as Record<string, string> };
     for (const edge of edges) {
       const group = edge.status === 'accepted' ? 'friends' : edge.sender === id ? 'outgoing' : 'incoming';
-      list[group].push(edge.first === id ? edge.second : edge.first);
+      const other = edge.first === id ? edge.second : edge.first;
+      list[group].push(other);
+      if (group === 'incoming' && edge.requestId) list.requestIds[other] = edge.requestId;
     }
     return list;
   }
@@ -36,7 +40,7 @@ export class FriendGraph extends DurableObject<object> {
       for (const other of mutual) {
         if (this.isDeleted(other)) continue;
         const [first, second] = [id, other].sort();
-        this.ctx.storage.sql.exec('INSERT OR IGNORE INTO friendships VALUES (?, ?, ?, ?)', first, second, id, 'accepted');
+        this.ctx.storage.sql.exec('INSERT OR IGNORE INTO friendships (first, second, sender, status) VALUES (?, ?, ?, ?)', first, second, id, 'accepted');
       }
       this.ctx.storage.sql.exec('INSERT INTO imported_friends VALUES (?)', id);
     });
@@ -68,7 +72,8 @@ export class FriendGraph extends DurableObject<object> {
             'SELECT count(*) AS count FROM friendships WHERE (first = ? OR second = ?) AND status != ?', id, id, 'removed').one();
           if (count >= 64) return false;
         }
-        this.ctx.storage.sql.exec('INSERT OR REPLACE INTO friendships VALUES (?, ?, ?, ?)', first, second, actor, 'pending');
+        this.ctx.storage.sql.exec('INSERT OR REPLACE INTO friendships (first, second, sender, status, requestId) VALUES (?, ?, ?, ?, ?)',
+          first, second, actor, 'pending', crypto.randomUUID());
         return true;
       }
       if (!edge) return false;

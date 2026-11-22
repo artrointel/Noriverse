@@ -9,7 +9,7 @@ import { liarHintLimit, liarSpeaker } from '../games/liar/rules.ts';
 import type { LiarView } from '../games/liar/rules.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import { roomRankingEntries, roomStandings } from '../../../../packages/protocol/room-history.ts';
-import { Avatar } from './avatar.tsx';
+import { RoomPlayerAvatar } from './avatar.tsx';
 import { MatchStage } from './match-stage.tsx';
 import { EndRoundAction } from './end-round-action.tsx';
 import { GameResult } from './game-result.tsx';
@@ -120,7 +120,7 @@ export function LiarPage({ room, ownProfile, dark, antialias, resolution, onReso
           {players.filter(entry => entry.player !== role && !round.retired.includes(entry.player)).map(entry =>
             <button key={entry.player} className="button button-secondary" type="button"
               onClick={() => room.liarAction({ kind: 'vote', target: entry.player })}>
-              {entry.profile && <Avatar appearance={entry.profile} size={23} />}{entry.name}
+              <RoomPlayerAvatar appearance={entry.profile} size={23} path={room.connectionPaths[entry.player]} />{entry.name}
             </button>)}
         </fieldset>}
       </div>}
@@ -146,7 +146,8 @@ export function LiarPage({ room, ownProfile, dark, antialias, resolution, onReso
           {clockActive && <time dateTime={'PT' + seconds + 'S'}>{formatPlayTime(seconds)}</time>}
           {room.needsReconnect && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}
           {roundStart.started && !outcome && <PlayTime startedAt={roundStart.beginsAt} />}
-          <ul className="liar-tally">{players.map(entry => <li key={entry.player}><span>{entry.name}</span>
+          <ul className="liar-tally">{players.map(entry => <li key={entry.player}>
+            <span><RoomPlayerAvatar appearance={entry.profile} size={23} path={room.connectionPaths[entry.player]} /> {entry.name}</span>
             <small>{t('rankingPoints', { points: entry.total })}{(speaker === entry.player || round.retired.includes(entry.player))
               && ' · ' + t(speaker === entry.player ? 'liarSpeaking' : 'roundResigned')}</small>
           </li>)}</ul></>}
@@ -158,7 +159,7 @@ export function LiarPage({ room, ownProfile, dark, antialias, resolution, onReso
         endAction={!outcome && !retired && <EndRoundAction key={id} online disabled={!active} end={room.surrender} />}
         result={report && <GameResult key={id} report={report} winner="draw"
           title={t(round.result?.winner === 'liar' ? 'liarWins' : 'liarCitizensWin')} visible={visible} onClose={() => setClosedResult(id)}
-          details={details} room={{ canRematch: role === 'host' && room.canStart,
+          details={details} room={{ canRematch: role === 'host' && room.canStart, returnToLobby: room.returnToLobby,
             request: role !== 'host' && connected ? room.requestRematch : undefined, notice: room.rematchNotice }}
           record={record} rematch={room.rematch} back="/room" navigate={navigate} />}
         resultVisible={visible} resultPending={pending} onShowResult={() => setClosedResult('')}

@@ -19,7 +19,7 @@ import { BackLink, gamePath } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { formatPlayTime, PlayTime, useCountdown } from './game-time.tsx';
 import { MatchStage } from './match-stage.tsx';
-import { Avatar } from './avatar.tsx';
+import { RoomPlayerAvatar } from './avatar.tsx';
 import { useRoundEnd, useRoundStart } from './use-round-cues.ts';
 import { EndRoundAction } from './end-round-action.tsx';
 import { createMemoryBoard, memoryPair, memoryPreviewMs, memoryRevealMs } from '../games/memory/rules.ts';
@@ -63,7 +63,7 @@ function RaceProgress({ room }: { room: PuzzleRoom }) {
       const name = profile?.name ?? t('sichuanOpponent', { number: index + 1 });
       const percent = puzzleProgress(puzzle, player);
       return <li key={player} title={name} data-closing={percent >= 75} style={{ '--race-progress': `${percent}%` } as CSSProperties}>
-        {profile && <Avatar appearance={profile} size={17} />}
+        <RoomPlayerAvatar appearance={profile} size={20} path={room.connectionPaths[player]} />
         <span>{name}</span><strong>{percent}%</strong>
       </li>;
     })}
@@ -305,10 +305,12 @@ export function SichuanPage({ game, settings, room, ownProfile, dark, antialias,
   const stats = room ? room.puzzle.players.map(role => ({ role, ...room.puzzle.stats[role]!,
     profile: (role === room.role ? ownProfile : undefined) ?? room.participants.find(player => player.role === role)?.profile,
     outcome: onlineResult && puzzleOutcome(onlineResult, role) }))
-    : [{ role: 'solo', maxCombo: localMax, removed: localRemoved, profile: ownProfile,
+    : [{ role: 'solo' as const, maxCombo: localMax, removed: localRemoved, profile: ownProfile,
       outcome: resultState?.reason === 'stopped' ? undefined : outcome }];
   const results = <section className="sichuan-score" aria-label={t('sichuanPlayerStats')}>
-    {stats.map(row => <div key={row.role}><strong>{row.profile?.name ?? t(row.role === 'solo' ? 'me' : row.role === 'host' ? 'host' : 'guest')}
+    {stats.map(row => <div key={row.role}><strong>
+      {room && row.role !== 'solo' && <RoomPlayerAvatar appearance={row.profile} size={24} path={room.connectionPaths[row.role]} />}
+      {row.profile?.name ?? t(row.role === 'solo' ? 'me' : row.role === 'host' ? 'host' : 'guest')}
       {row.outcome && <small>{t('outcome_' + row.outcome)}</small>}</strong>
       <span>{t('sichuanMaxCombo')} <b>{row.maxCombo}</b></span><span>{t('sichuanRemovedTiles')} <b>{row.removed}</b></span></div>)}
   </section>;
@@ -323,7 +325,7 @@ export function SichuanPage({ game, settings, room, ownProfile, dark, antialias,
       {room.needsReconnect && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}</>}
   </>;
   const result = report && <GameResult key={report.id} report={report} winner={1} title={status} visible={resultVisible} onClose={() => setClosedResult(report.id)}
-    details={results} room={room && { canRematch: room.role === 'host' && room.canStart,
+    details={results} room={room && { canRematch: room.role === 'host' && room.canStart, returnToLobby: room.returnToLobby,
       request: room.role !== 'host' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
     record={room ? record : undefined} rematch={reset} back={room ? '/room' : '/games'} navigate={navigate} />;
 

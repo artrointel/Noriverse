@@ -1,0 +1,33 @@
+.explorer-page { display: grid; gap: clamp(15px, 3vw, 25px); }
+.explorer-page > .back-link { justify-self: start; margin-bottom: 0; }
+.explorer-heading { display: grid; gap: 7px; max-width: 60ch; }
+.explorer-heading h1, .explorer-feature h1 { margin: 0; font-size: clamp(2.2rem, 6vw, 4rem); line-height: 1.08; }
+.explorer-heading > p:last-child, .explorer-story p { color: var(--muted); line-height: 1.65; }
+.explorer-kicker { margin: 0; color: var(--primary); font-size: .91rem; font-weight: 800; }
+.explorer-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, max(158px, calc((100% - 48px) / 5))), 1fr)); }
+.explorer-card { display: grid; grid-template-rows: auto 1fr; height: 100%; overflow: hidden; color: var(--text); text-decoration: none; transition: transform .2s, border-color .2s; }
+.explorer-card:hover { transform: translateY(-3px); border-color: var(--explorer-accent); }
+.explorer-card-art, .explorer-portrait { display: grid; place-items: center; background: radial-gradient(ellipse at 50% 72%, color-mix(in srgb, var(--explorer-accent) 32%, var(--surface)), var(--raised)); }
+.explorer-card-art { padding: 12px; }
+.explorer-card-copy { display: grid; align-content: start; gap: 3px; padding: 11px 13px 14px; }
+.explorer-card-copy small { color: var(--muted); }
+.explorer-feature { display: grid; grid-template-columns: minmax(210px, 2fr) 3fr; overflow: hidden; }
+.explorer-portrait { min-height: 260px; padding: 14px; }
+.explorer-portrait .avatar, .explorer-card-art .avatar { width: min(100%, var(--avatar-size)); height: auto; aspect-ratio: 1; }
+.explorer-feature-copy { display: grid; align-content: center; gap: 10px; padding: clamp(18px, 4vw, 40px); }
+.explorer-summary { margin: 3px 0 0; font-weight: 650; }
+.explorer-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.explorer-tags span { padding: 3px 9px; border-radius: 6px; background: var(--raised); color: var(--text); font-size: .85rem; }
+.explorer-story { display: grid; gap: 8px; padding: clamp(17px, 4vw, 30px); }
+.explorer-story > * { margin: 0; }
+.explorer-actions { margin: 0; }
+@media (max-width: 560px) {
+  .explorer-feature { grid-template-columns: minmax(0, 1fr); }
+  .explorer-portrait { min-height: 185px; }
+  .explorer-portrait .avatar { width: min(165px, 100%); }
+  .explorer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .explorer-card { transition: none; }
+  .explorer-card:hover { transform: none; }
+}

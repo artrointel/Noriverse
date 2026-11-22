@@ -1,4 +1,5 @@
 import { RoomRankingContext } from './platform/room-ranking.tsx';
+import { MatchRecoveryContext } from './platform/match-recovery.tsx';
 import { lazy, StrictMode, Suspense, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useTranslation } from 'react-i18next';
@@ -16,9 +17,10 @@ import type { GameId } from '../../../packages/protocol/games.ts';
 import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setLobbyMusic } from './platform/audio.ts';
 import type { AudioLevels } from './platform/audio.ts';
 import { CatalogPage, GameDetail } from './platform/catalog-pages.tsx';
+import { explorerCopy } from './platform/explorers.ts';
 import { GameSetup } from './platform/game-setup.tsx';
 import { games } from './platform/game-catalog.ts';
-import { BackNavigation, gamePath, RouteLink, useNavigation } from './platform/navigation.tsx';
+import { BackNavigation, explorerPath, gamePath, roomActivityForRoute, RouteLink, useNavigation } from './platform/navigation.tsx';
 import type { GameMode } from './platform/navigation.tsx';
 import { PlayPage } from './platform/play-page.tsx';
 import { SichuanPage } from './platform/sichuan-page.tsx';
@@ -32,11 +34,13 @@ import { ReactionUsageContext } from './platform/game-reactions.tsx';
 import { usePreferences } from './platform/preferences.ts';
 import { SettingsMenu } from './platform/settings-menu.tsx';
 import { NameDialog, ProfileNav, ProfilePage } from './platform/profiles.tsx';
+import { ScrollingLabel } from './platform/scrolling-label.tsx';
 import { useProfile } from './platform/use-profile.ts';
 import './styles.css';
 
 const LiarPage = lazy(() => import('./platform/liar-page.tsx').then(module => ({ default: module.LiarPage })));
 const SlimePage = lazy(() => import('./platform/slime-page.tsx').then(module => ({ default: module.SlimePage })));
+const ExplorerPage = lazy(() => import('./platform/explorer-pages.tsx'));
 
 function App() {
   const { t, i18n } = useTranslation();
@@ -44,8 +48,10 @@ function App() {
   const { route, path, navigate, backNavigation } = useNavigation();
   const profile = useProfile(route.page === 'profile');
   const language = i18n.resolvedLanguage === 'ko' ? 'ko' : 'en';
-  const room = useRoomBoard(profile.profile, language);
-  const friends = useFriends(profile.profile?.id, route.page === 'friends' ? 'full' : route.page === 'profile' ? 'summary' : false, route.page === 'room');
+  const room = useRoomBoard(profile.profile, language, roomActivityForRoute(route));
+  const reviewingRequests = route.page === 'friends';
+  const friends = useFriends(profile.profile?.id, reviewingRequests ? 'full' : route.page === 'profile' ? 'summary' : false,
+    route.page === 'room', reviewingRequests);
   const presence = profile.profile?.presence ?? 'online';
   const invitations = useInvitations(profile.profile?.id, presence, profile.syncPresence, profile.syncBadges);
   const playGame = route.page === 'play' && (!route.online || (room.code && room.inMatch && room.started && room.game === route.id
@@ -58,6 +64,9 @@ function App() {
   const [selectedRoomGame, selectRoomGame] = useState<GameId>();
   const { power, flick: flickSettings, allowDoubleThree, puzzle: { settings: sichuanSettings }, overline, turnLimit } = settings;
   const roomOpen = room.active;
+  const roomAction = t(roomOpen ? 'activeRoom' : 'joinRoom');
+  const roomTitle = roomOpen ? room.title : undefined;
+  const roomActionLabel = roomTitle ? roomAction + ' · ' + roomTitle : roomAction;
   const backdropGame = playGame ?? (roomOpen && (route.page === 'room' || (route.page === 'play' && route.online)) ? room.game : undefined);
   const [nameDismissed, setNameDismissed] = useState(() => Boolean(room.guestRoom));
   const [editName, setEditName] = useState(false);
@@ -82,21 +91,23 @@ function App() {
   useEffect(() => { if (!playGame) setLobbyMusic(); }, [playGame]);
 
   useEffect(() => {
-    if (!profile.profile || room.testMatch || !room.inMatch || !room.playerColor || !room.finishedAt || !room.matchId || lastAwayResult.current === room.matchId
-      || (route.page === 'play' && route.id === room.game && route.online)) return;
+    if (!profile.profile) return;
+    const watchingMatch = route.page === 'play' && route.id === room.game && route.online;
     const outcome = room.roundOutcome;
-    if (!outcome) return;
-    const matchId = room.matchId;
-    lastAwayResult.current = matchId;
-    void profile.record({
-      id: matchId, game: room.game, mode: 'online', outcome,
-      seconds: elapsedPlaySeconds(room.playStartedAt, room.finishedAt),
-    }).then(saved => { if (!saved && lastAwayResult.current === matchId) lastAwayResult.current = ''; });
-  }, [profile.profile, profile.record, room.game, room.playerColor, room.finishedAt, room.matchId, room.roundOutcome, room.playStartedAt, room.inMatch, room.testMatch, route]);
+    const report = !room.started ? room.lobbyReport
+      : !watchingMatch && !room.testMatch && room.inMatch && room.finishedAt && room.matchId && outcome
+        ? { id: room.matchId, game: room.game, mode: 'online' as const, outcome,
+          seconds: elapsedPlaySeconds(room.playStartedAt, room.finishedAt) } : undefined;
+    if (!report || lastAwayResult.current === report.id) return;
+    lastAwayResult.current = report.id;
+    void profile.record(report).then(saved => { if (!saved && lastAwayResult.current === report.id) lastAwayResult.current = ''; });
+  }, [profile.profile, profile.record, room.game, room.finishedAt, room.matchId, room.roundOutcome, room.playStartedAt,
+    room.inMatch, room.testMatch, room.lobbyReport, room.started, route]);
 
   useEffect(() => {
     const view = route.id ? t(route.id) : route.page === 'room' ? (room.active && room.title) || t('room') : route.page === 'createRoom' ? t('newRoom')
-      : route.page === 'games' ? t('library') : null;
+      : route.page === 'games' ? t('library') : route.page === 'explorers' ? t('explorers')
+        : route.page === 'explorer' ? explorerCopy(route.characterId, i18n.resolvedLanguage).name : null;
     const brand = i18n.resolvedLanguage === 'ko' ? '놀이버스' : 'Noriverse';
     document.title = view ? view + ' · ' + brand : brand + ' · ' + t('siteSummary');
   }, [route, t, i18n.resolvedLanguage, room.active, room.title]);
@@ -215,6 +226,11 @@ function App() {
         }} />;
       case 'detail':
         return <GameDetail id={route.id} navigate={navigate} />;
+      case 'explorers':
+      case 'explorer':
+        return <Suspense fallback={<div className="site-width subpage" role="status">{t('loading')}</div>}>
+          <ExplorerPage characterId={route.characterId} navigate={navigate} />
+        </Suspense>;
       case 'setup':
         return <GameSetup id={route.id} online={route.online} settings={settings} change={setSettings}
           activeGame={roomOpen ? room.game : undefined} profileName={profile.profile?.name} profileLoading={profile.status === 'loading'}
@@ -315,10 +331,13 @@ function App() {
           </nav>
           <div className="header-actions">
             <div className="header-room-actions">
-              <RouteLink href="/room" navigate={navigate} className="header-room-link" aria-label={t(roomOpen ? 'activeRoom' : 'joinRoom')}
-                title={t(roomOpen ? 'activeRoom' : 'joinRoom')} aria-current={route.page === 'room' ? 'page' : undefined}>
+              <RouteLink href="/room" navigate={navigate} className={'header-room-link' + (roomOpen ? ' header-active-room attention-button' : '')}
+                aria-label={roomActionLabel} title={roomActionLabel} aria-current={route.page === 'room' ? 'page' : undefined}>
                 <span className={roomOpen ? 'room-marker room-marker-active' : 'room-marker'} aria-hidden="true" />
-                <span className="header-room-label">{t(roomOpen ? 'activeRoom' : 'joinRoom')}</span>
+                <span className="header-room-copy">
+                  <span className="header-room-label">{roomAction}</span>
+                  {roomTitle && <ScrollingLabel text={roomTitle} />}
+                </span>
               </RouteLink>
               <RouteLink href="/room/create" navigate={navigate} className="header-room-link header-create" aria-label={t('newRoom')}
                 title={t('newRoom')} aria-current={route.page === 'createRoom' ? 'page' : undefined}>
@@ -326,7 +345,7 @@ function App() {
               </RouteLink>
             </div>
             <div className="header-account-actions">
-              <ProfileNav profile={profile.profile} navigate={navigate} />
+              <ProfileNav profile={profile.profile} navigate={navigate} unreadRequests={friends.unreadIncoming} />
               <SettingsMenu preferences={preferences} levels={audioLevels} onVolume={changeVolume} path={path}
                 presence={apiAvailable && profile.profile ? { mode: presence, change: mode => profile.setPreferences({ presence: mode }) } : undefined} />
             </div>
@@ -338,7 +357,13 @@ function App() {
         <ReactionUsageContext.Provider value={route.page === 'play' && route.online && room.testMatch ? undefined : profile.recordReaction}>
           <RoomRankingContext.Provider value={route.page === 'play' && route.online && playGame
             ? { entries: room.roomHistory, participants: room.participants, test: room.testMatch,
-              matchId: room.matchId, roomTitle: room.title, finished: Boolean(room.finishedAt) } : undefined}>{page}</RoomRankingContext.Provider>
+              matchId: room.matchId, roomTitle: room.title, finished: Boolean(room.finishedAt) } : undefined}>
+            <MatchRecoveryContext.Provider value={route.page === 'play' && route.online && room.recoveryAt
+              ? { since: room.recoveryAt, players: room.recoveryPlayers,
+                exit: () => { room.exitInterruptedMatch(); navigate('/', true); } } : undefined}>
+              {page}
+            </MatchRecoveryContext.Provider>
+          </RoomRankingContext.Provider>
         </ReactionUsageContext.Provider>
       </div></BackNavigation.Provider></main>
       <footer className="site-footer">
@@ -349,6 +374,7 @@ function App() {
           </div>
           <nav className="footer-links" aria-label={t('siteLinks')}>
             <RouteLink href="/games" navigate={navigate}>{t('games')}</RouteLink>
+            <RouteLink href={explorerPath()} navigate={navigate} aria-current={route.page === 'explorers' ? 'page' : undefined}>{t('explorers')}</RouteLink>
             <a href="https://github.com/artrointel/Noriverse">{t('sourceCode')}</a>
             <a href={licenseUrl} target="_blank" rel="noopener">{t('license')}</a>
           </nav>

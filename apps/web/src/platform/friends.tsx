@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import type { FriendAction, FriendList, FriendRoom, FriendSummary } from '../../../../packages/protocol/profile.ts';
@@ -9,12 +9,15 @@ import { games } from './game-catalog.ts';
 import { socialChangeEvent } from './invitations.tsx';
 import { BackLink, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
+import { useUnreadNotice } from './notification-dot.tsx';
 
 const endpoint = '/api/profiles/me/social';
 
-export function useFriends(owner: string | undefined, presence: 'full' | 'summary' | false, watchRequests = false) {
+export function useFriends(owner: string | undefined, presence: 'full' | 'summary' | false, watchRequests = false, reviewingRequests = false) {
   const [snapshot, setSnapshot] = useState<{ owner: string; list: FriendList }>();
   const list = snapshot?.owner === owner ? snapshot?.list : undefined;
+  const requestIds = useMemo(() => list?.incoming.map(friend => friend.requestId ?? friend.id), [list]);
+  const unreadIncoming = useUnreadNotice(owner, 'friend-requests', requestIds, reviewingRequests);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const revision = useRef(0);
@@ -65,7 +68,7 @@ export function useFriends(owner: string | undefined, presence: 'full' | 'summar
     finally { setBusy(false); }
   }
 
-  return { owner, friends: list?.friends, incoming: list?.incoming ?? [], outgoing: list?.outgoing ?? [], failed, busy, change };
+  return { owner, friends: list?.friends, incoming: list?.incoming ?? [], outgoing: list?.outgoing ?? [], unreadIncoming, failed, busy, change };
 }
 
 export type Friends = ReturnType<typeof useFriends>;

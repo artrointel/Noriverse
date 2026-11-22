@@ -128,7 +128,7 @@ export async function profileRequest(request: Request, env: Env, url: URL, exter
       ? env.PROFILES.getByName(id).friendSummary(auth.id, presence === '1') : env.PROFILES.getByName(id).summary()))).filter(friend => friend !== null);
     if (path.endsWith('/friends')) return json(await summaries(links.friends, showPresence), 200);
     const [friends, incoming, outgoing] = await Promise.all([summaries(links.friends, showPresence), summaries(links.incoming), summaries(links.outgoing)]);
-    return json({ friends, incoming, outgoing }, 200);
+    return json({ friends, incoming: incoming.map(profile => ({ ...profile, requestId: links.requestIds[profile.id] })), outgoing }, 200);
   }
   if (path === '/api/profiles/me/presence' && request.method === 'POST') {
     const ticket = store && await store.issuePresenceTicket(auth.secret);

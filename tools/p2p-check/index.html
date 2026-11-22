@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PC ↔ 모바일 P2P 연결 테스트</title>
+<style>
+  :root { color-scheme: light dark; font: 17px/1.5 system-ui, sans-serif; }
+  main { max-width: 580px; margin: 3rem auto; padding: 0 1rem; }
+  h1 { font-size: clamp(1.55rem, 5vw, 2.1rem); }
+  button, select, input, textarea { font: inherit; padding: .55rem; }
+  input, textarea { box-sizing: border-box; width: 100%; }
+  section { margin-block: 1.2rem; }
+  #status { font-weight: 750; }
+</style>
+<main>
+  <h1>PC ↔ 모바일 P2P 연결 테스트</h1>
+  <p>두 기기 사이에서 짧은 메시지를 직접 주고받습니다.</p>
+  <section id="host">
+    <label for="mode">테스트 방식</label>
+    <select id="mode"><option value="lan">같은 네트워크</option><option value="lan-ip">LAN 주소 비교</option><option value="stun">같은 네트워크 + STUN</option></select>
+    <button id="start">PC에서 시작</button>
+    <p>LAN 주소 비교를 선택하면 이 테스트에서 두 기기의 사설 주소를 서로에게 전달합니다.</p>
+  </section>
+  <section id="invitation" hidden>
+    <label for="link">모바일에서 열 주소</label>
+    <input id="link" readonly>
+  </section>
+  <button id="join" hidden>모바일에서 연결</button>
+  <details id="external">
+    <summary>서로 다른 인터넷 회선에서 테스트</summary>
+    <p>두 기기에서 이 페이지를 열고, 한쪽 기기를 다른 인터넷 회선으로 전환합니다. 페이지를 열린 채 유지하면 아래 신호를 직접 교환할 수 있습니다.</p>
+    <label for="external-role">역할</label>
+    <select id="external-role"><option value="host">방장 · PC에서 먼저 생성</option><option value="guest">참가자 · 휴대폰에서 먼저 붙여넣기</option></select>
+    <button id="external-start">외부 STUN 테스트 시작</button>
+    <section id="external-signals" hidden>
+      <label for="incoming">상대에게 받은 신호</label>
+      <textarea id="incoming" rows="3" spellcheck="false" placeholder="상대가 보낸 신호를 여기에 붙여넣으세요"></textarea>
+      <button id="apply-signal" disabled>받은 신호 적용</button>
+      <p id="signal-status" role="status"></p>
+      <label for="outgoing">상대에게 보낼 신호 · 복사 전용</label>
+      <textarea id="outgoing" rows="3" readonly spellcheck="false"></textarea>
+      <button id="copy-signal" disabled>보낼 신호 복사</button>
+    </section>
+  </details>
+  <p id="status" role="status">준비</p>
+  <label for="report">진단 결과</label>
+  <textarea id="report" readonly rows="11" spellcheck="false"></textarea>
+</main>
+<script type="module">
+  const params = new URLSearchParams(location.search);
+  const byId = id => document.getElementById(id);
+  const status = byId('status'), report = byId('report');
+  let guest = params.has('test');
+  const started = performance.now();
+  let peer, sample, deadline;
+  let finished = false;
+  byId('host').hidden = guest;
+  byId('join').hidden = !guest;
+  byId('external').hidden = guest;
+  byId('link').onclick = event => event.target.select();
+  report.onclick = () => report.select();
+  function note(text) {
+    report.value += `${((performance.now() - started) / 1000).toFixed(1)}s ${text}\n`;
+    report.scrollTop = report.scrollHeight;
+  }
+  async function api(path, query = {}, options) {
+    const search = new URLSearchParams({ key: params.get('key'), ...query });
+    const response = await fetch(path + '?' + search, options);
+    if (!response.ok) throw new Error('signaling HTTP ' + response.status);
+    return response.json();
+  }
+  const kind = value => ['host', 'srflx', 'prflx', 'relay'].includes(value) ? value : '?';
+  function candidate(line) {
+    const type = kind(/\btyp (\w+)/.exec(line)?.[1]);
+    return type === 'host' && /\.local\s/i.test(line) ? 'host/mDNS' : type;
+  }
+  async function stats() {
+    if (!peer) return;
+    const records = await peer.getStats();
+    const items = [...records.values()];
+    const transport = items.find(item => item.type === 'transport' && item.selectedCandidatePairId);
+    const candidates = items.filter(item => item.type === 'candidate-pair');
+    if (!candidates.length) { note('ICE candidate pairs: 0'); return; }
+    for (const pair of candidates) {
+      const local = records.get(pair.localCandidateId), remote = records.get(pair.remoteCandidateId);
+      note(`pair ${kind(local?.candidateType)} / ${kind(remote?.candidateType)} ${pair.state}${transport?.selectedCandidatePairId === pair.id ? ' selected' : ''}, requests ${pair.requestsSent ?? '?'} / responses ${pair.responsesReceived ?? '?'}`);
+    }
+  }
+  function finish(success, message) {
+    if (finished) return;
+    finished = true;
+    clearInterval(sample);
+    clearTimeout(deadline);
+    status.textContent = message;
+    note(success ? 'Bidirectional DataChannel succeeded' : 'Test ended without a bidirectional DataChannel');
+    void stats().catch(() => {});
+  }
+  function bind(channel) {
+    channel.onopen = () => { note('DataChannel open'); if (!guest) channel.send('ping'); };
+    channel.onmessage = event => {
+      if (guest && event.data === 'ping') channel.send('pong');
+      if (!guest && event.data === 'pong') {
+        channel.send('confirmed');
+        finish(true, 'P2P 직접 연결 성공');
+      }
+      if (guest && event.data === 'confirmed') finish(true, 'P2P 직접 연결 성공');
+    };
+  }
+  async function waitFor(test, type) {
+    while (!finished) {
+      const packet = await api('/signal', { test });
+      if (packet[type]) return packet[type];
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+  }
+  async function sendDescription(type, publish) {
+    const complete = new Promise(resolve => {
+      function check() {
+        if (peer.iceGatheringState !== 'complete') return;
+        peer.removeEventListener('icegatheringstatechange', check);
+        resolve();
+      }
+      peer.addEventListener('icegatheringstatechange', check);
+      check();
+    });
+    let localTimeout;
+    try {
+      await Promise.race([
+        peer.setLocalDescription(),
+        new Promise((_, reject) => {
+          localTimeout = setTimeout(() => reject(new Error('Browser did not create a local ' + type + ' within 8 seconds')), 8000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(localTimeout);
+    }
+    await Promise.race([complete, new Promise(resolve => setTimeout(resolve, 5000))]);
+    if (finished) return;
+    await publish(type, peer.localDescription.sdp);
+    note('Sent ' + type);
+  }
+  async function run(mode, exchange) {
+    if (!window.RTCPeerConnection) throw new Error('This browser does not expose WebRTC on this page');
+    note(`${guest ? 'guest' : 'host'} · ${mode} · no TURN or relay`);
+    peer = new RTCPeerConnection({ iceServers: mode === 'stun' ? [{ urls: 'stun:stun.cloudflare.com:3478' }] : [] });
+    peer.onicecandidate = ({ candidate: ice }) => note(ice ? 'Local ' + candidate(ice.candidate) : 'ICE gathering complete');
+    peer.onicecandidateerror = event => note('ICE server error ' + event.errorCode);
+    peer.oniceconnectionstatechange = () => note('ICE ' + peer.iceConnectionState);
+    peer.onconnectionstatechange = () => note('WebRTC ' + peer.connectionState);
+    peer.ondatachannel = ({ channel }) => bind(channel);
+    status.textContent = guest ? '연결 제안을 기다리는 중' : '연결 제안을 생성하는 중';
+    deadline = setTimeout(() => finish(false, '직접 연결 시간 초과'), exchange.waitMs);
+    if (!guest) {
+      bind(peer.createDataChannel('p2p-check'));
+      await sendDescription('offer', exchange.publish);
+      if (!finished) status.textContent = '참가 응답 대기 중';
+    }
+    const type = guest ? 'offer' : 'answer';
+    const sdp = await exchange.receive(type);
+    if (!sdp || finished) return;
+    for (const line of sdp.split(/\r?\n/)) if (line.startsWith('a=candidate:')) note('Remote ' + candidate(line));
+    await peer.setRemoteDescription({ type, sdp });
+    status.textContent = '직접 경로 확인 중';
+    if (guest) await sendDescription('answer', exchange.publish);
+    if (!finished) {
+      clearTimeout(deadline);
+      deadline = setTimeout(() => finish(false, '직접 연결 시간 초과'), 30_000);
+      sample = setInterval(() => void stats().catch(() => {}), 5000);
+    }
+  }
+  function localExchange(test) {
+    return {
+      waitMs: 90_000,
+      publish: (type, sdp) => api('/signal', { test, type }, { method: 'POST', body: sdp }),
+      receive: type => waitFor(test, type),
+    };
+  }
+  async function start() {
+    byId('start').disabled = byId('join').disabled = true;
+    try {
+      if (guest) {
+        const id = params.get('test');
+        const session = await api('/signal', { test: id });
+        await run(session.mode, localExchange(id));
+      } else {
+        const { id, mode } = await api('/start', { mode: byId('mode').value }, { method: 'POST' });
+        const invite = new URL(location.href);
+        invite.searchParams.set('test', id);
+        byId('link').value = invite.href;
+        byId('invitation').hidden = false;
+        await run(mode, localExchange(id));
+      }
+    } catch (error) {
+      note(error.message);
+      finish(false, '테스트를 시작하거나 신호를 전달하지 못했습니다');
+    }
+  }
+  byId('start').onclick = byId('join').onclick = start;
+  byId('outgoing').onclick = () => byId('outgoing').select();
+  byId('copy-signal').onclick = async () => {
+    const outgoing = byId('outgoing');
+    try {
+      await navigator.clipboard.writeText(outgoing.value);
+      byId('signal-status').textContent = '신호를 복사했습니다.';
+    } catch {
+      outgoing.focus();
+      outgoing.select();
+      byId('signal-status').textContent = '선택된 신호를 기기의 복사 메뉴로 복사하세요.';
+    }
+  };
+  byId('external-start').onclick = async () => {
+    byId('external-start').disabled = byId('start').disabled = byId('external-role').disabled = true;
+    byId('external-signals').hidden = false;
+    guest = byId('external-role').value === 'guest';
+    byId('signal-status').textContent = guest ? 'PC에서 받은 신호를 먼저 적용하세요.' : 'PC에서 보낼 신호를 생성하고 있습니다. 최대 약 13초 걸릴 수 있습니다.';
+    try {
+      await run('stun', {
+        waitMs: 300_000,
+        publish(type, sdp) {
+          byId('outgoing').value = btoa(JSON.stringify({ type, sdp }));
+          byId('copy-signal').disabled = false;
+          byId('signal-status').textContent = '생성된 신호를 복사해 상대 기기에 전달하세요.';
+        },
+        receive(type) {
+          return new Promise(resolve => {
+            const apply = byId('apply-signal');
+            apply.disabled = false;
+            apply.onclick = () => {
+              try {
+                const { type: received, sdp } = JSON.parse(atob(byId('incoming').value.trim()));
+                if (received !== type || typeof sdp !== 'string' || !sdp.startsWith('v=0')) throw new Error();
+                apply.disabled = true;
+                resolve(sdp);
+              } catch {
+                byId('signal-status').textContent = '이 역할에 맞는 상대 신호를 붙여넣었는지 확인하세요.';
+                note('Received signal does not match the expected ' + type);
+              }
+            };
+          });
+        },
+      });
+    } catch (error) {
+      byId('signal-status').textContent = '신호 처리에 실패했습니다. 아래 진단 결과를 확인하세요.';
+      note(error.message);
+      finish(false, '외부 회선 테스트를 시작하지 못했습니다');
+    }
+  };
+</script>

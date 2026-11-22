@@ -32,7 +32,8 @@ export type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: n
   liarConfig?: LiarSettings; liar?: LiarView | LiarRound;
   slime?: OrbitRound;
   mockSeats?: Role[];
-  turnLimit: TurnLimit; deadline: number; beginsAt?: number; clockOffset?: number };
+  turnLimit: TurnLimit; deadline: number; beginsAt?: number; clockOffset?: number; pausedAt?: number; pausedMs?: number;
+  disconnectedSeats?: Role[] };
 export const blankMatch: Match = { id: '', game: 'omok', hostColor: 1, startedAt: 0, finishedAt: 0, allowDoubleThree: true,
   overline: defaultOmokOverline, history: [], turnLimit: 0, deadline: 0 };
 export function lobbyMatch(game: RoomGame, settings: MatchSettings): Match {
@@ -95,7 +96,31 @@ export function matchBeginsAt(match: Match) {
 
 export function matchInProgress(match: Match, now: number) {
   const begins = matchBeginsAt(match);
-  return begins > 0 && now >= begins && !match.finishedAt;
+  return begins > 0 && now >= begins && !match.finishedAt && !match.pausedAt;
+}
+
+export function resumeMatchClock(match: Match, now: number): Match {
+  if (!match.pausedAt) return match;
+  const duration = Math.max(1, now - match.pausedAt);
+  const shift = (time: number) => time ? time + duration : 0;
+  const puzzle = match.puzzle && { ...match.puzzle, beginsAt: shift(match.puzzle.beginsAt),
+    stats: { ...match.puzzle.stats } };
+  for (const role of puzzle?.players ?? []) {
+    const stats = puzzle!.stats[role];
+    if (stats) puzzle!.stats[role] = { ...stats, lastAt: shift(stats.lastAt) };
+  }
+  const slime = match.slime && { ...match.slime, tickAt: shift(match.slime.tickAt), boards: { ...match.slime.boards } };
+  for (const role of slime?.players ?? []) {
+    const board = slime!.boards[role];
+    if (board?.resolution) slime!.boards[role] = { ...board, resolution: { ...board.resolution, until: shift(board.resolution.until) } };
+  }
+  return { ...match, pausedAt: undefined, disconnectedSeats: undefined, pausedMs: (match.pausedMs ?? 0) + duration,
+    beginsAt: match.beginsAt === undefined ? undefined : shift(match.beginsAt),
+    deadline: shift(match.deadline),
+    timeoutPending: match.timeoutPending && { ...match.timeoutPending, at: shift(match.timeoutPending.at) },
+    puzzle, slime,
+    sketch: match.sketch && { ...match.sketch, opensAt: shift(match.sketch.opensAt), deadline: shift(match.sketch.deadline) },
+    liar: match.liar && { ...match.liar, deadline: shift(match.liar.deadline) } };
 }
 
 function matchRevision(match: Match) {
@@ -106,12 +131,14 @@ function followsSnapshot(current: Match, next: Match) {
   if (next.id !== current.id) return true;
   const previousRevision = matchRevision(current);
   const nextRevision = matchRevision(next);
+  const addedPause = (next.pausedMs ?? 0) - (current.pausedMs ?? 0);
+  if (addedPause < 0 || !addedPause && current.pausedAt && current.pausedAt !== next.pausedAt) return false;
   const previousClock = current.timeoutPending?.at ?? current.deadline;
   const nextClock = next.timeoutPending?.at ?? next.deadline;
   if (previousRevision === nextRevision && previousClock && nextClock
     && (nextClock < previousClock || (nextClock === previousClock && current.timeoutPending && !next.timeoutPending))) return false;
   return nextRevision >= previousRevision && next.finishedAt >= current.finishedAt
-    && (current.beginsAt === undefined || (next.beginsAt !== undefined && (!current.beginsAt || next.beginsAt === current.beginsAt)))
+    && (current.beginsAt === undefined || (next.beginsAt !== undefined && (!current.beginsAt || next.beginsAt === current.beginsAt + addedPause)))
     && next.hostColor === current.hostColor && next.game === current.game
     && next.allowDoubleThree === current.allowDoubleThree && next.overline === current.overline && next.turnLimit === current.turnLimit
     && (nextRevision > previousRevision || !current.physics?.shot || Boolean(next.physics?.shot || next.finishedAt));
@@ -166,6 +193,15 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
   const nextLimit = 'turnLimit' in raw ? raw.turnLimit : 0;
   const nextDeadlineAt = 'deadline' in raw ? raw.deadline : 0;
   const beginsAt = 'beginsAt' in raw ? raw.beginsAt : undefined;
+  const pausedAt = 'pausedAt' in raw ? raw.pausedAt : undefined;
+  const pausedMs = 'pausedMs' in raw ? raw.pausedMs : undefined;
+  const disconnectedSeats = 'disconnectedSeats' in raw ? raw.disconnectedSeats : undefined;
+  if (pausedAt !== undefined && (typeof pausedAt !== 'number' || !Number.isSafeInteger(pausedAt)
+    || !raw.startedAt || pausedAt < raw.startedAt || raw.finishedAt)) return;
+  if (pausedMs !== undefined && (typeof pausedMs !== 'number' || !Number.isSafeInteger(pausedMs) || pausedMs < 0 || !raw.startedAt)) return;
+  if (disconnectedSeats !== undefined && (!pausedAt || !Array.isArray(disconnectedSeats) || !disconnectedSeats.length
+    || disconnectedSeats.length >= roomCapacity[game] || !disconnectedSeats.every(role => isRoomRole(role) && role !== 'host')
+    || new Set(disconnectedSeats).size !== disconnectedSeats.length)) return;
   if (beginsAt !== undefined && (typeof beginsAt !== 'number' || !Number.isSafeInteger(beginsAt) || beginsAt < 0
     || (beginsAt > 0 && (!raw.startedAt || beginsAt < raw.startedAt)))) return;
   const playStart = beginsAt ?? raw.startedAt;
@@ -180,11 +216,13 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
   const measuredOffset = 'sentAt' in raw && typeof raw.sentAt === 'number' && Number.isSafeInteger(raw.sentAt)
     ? receivedAt - raw.sentAt : 0;
   const synchronizedStart = puzzle?.beginsAt || beginsAt;
-  const clockOffset = synchronizedStart && raw.id === current.id && synchronizedStart === matchBeginsAt(current)
+  const clockOffset = synchronizedStart && raw.id === current.id && matchBeginsAt(current) > 0
     ? current.clockOffset ?? measuredOffset : measuredOffset;
   const next: Match = { id: raw.id, game, hostColor: nextHostColor, startedAt: raw.startedAt, finishedAt: raw.finishedAt, allowDoubleThree: raw.allowDoubleThree,
     overline: nextOverline, history, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, timeoutPending: pending,
-    turnLimit: nextLimit, deadline: nextDeadlineAt, beginsAt, clockOffset, puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, slime, flickSettings, physicsSeats, mockSeats };
+    turnLimit: nextLimit, deadline: nextDeadlineAt, beginsAt, clockOffset, pausedAt, pausedMs, disconnectedSeats,
+    puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, slime, flickSettings, physicsSeats, mockSeats };
   if (pending && (!nextLimit || pending.color !== matchTurn(next))) return;
+  if (disconnectedSeats?.some(role => !inRound(next, role))) return;
   if (followsSnapshot(current, next)) return next;
 }

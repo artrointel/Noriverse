@@ -28,6 +28,14 @@ jobs:
         id: pages
       - run: npm ci
       - run: npm test
+      - name: Verify profile storage on the configured Worker
+        env:
+          NORIVERSE_WORKER: ${{ vars.NORIVERSE_API_ORIGIN }}
+          NORIVERSE_PAGES_ORIGIN: ${{ steps.pages.outputs.origin }}
+        run: |
+          if [ -n "$NORIVERSE_WORKER" ]; then
+            npm run test:profile-storage -- "$NORIVERSE_WORKER" "$NORIVERSE_PAGES_ORIGIN"
+          fi
       - name: Build frontend
         run: |
           npm run build -- --base "${PAGES_BASE%/}/"

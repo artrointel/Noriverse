@@ -27,7 +27,7 @@ import { ChessPromotion } from './chess-promotion.tsx';
 import { ChessLosses } from './chess-losses.tsx';
 import { PlayTime, useCountdown } from './game-time.tsx';
 import { MatchStage } from './match-stage.tsx';
-import { Avatar } from './avatar.tsx';
+import { RoomPlayerAvatar } from './avatar.tsx';
 import { useRoundEnd, useRoundStart } from './use-round-cues.ts';
 import { EndRoundAction } from './end-round-action.tsx';
 
@@ -247,7 +247,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
           const profile = ownSeat ? ownProfile ?? participant?.profile : participant?.profile;
           const side = t(sideLabel(id, stone));
           return <li className="seat" key={stone} data-active={!outcome && !busy && turn === stone}>
-            {profile ? <Avatar appearance={profile} size={34} />
+            {room && !participant?.mock ? <RoomPlayerAvatar appearance={profile} size={34} path={room.connectionPaths[role]} />
               : <span className={'stone stone-' + (stone > 2 ? stone : sideLabel(id, stone) === 'black' ? 0 : 1)} aria-hidden="true" />}
             <div>
               <strong title={profile?.name}>{room ? profile?.name ?? t('anonymousPlayer') : side}</strong>
@@ -272,7 +272,7 @@ export function PlayPage({ id, dark, antialias, resolution, onResolution, onAnti
   const resultPanel = outcome && report && <GameResult key={report.id} report={report} winner={outcome} surrendered={room ? surrendered : undefined} timedOut={timedOut}
     title={!room && surrendered ? t('gameFinished') : undefined} scores={othello?.scores} visible={resultVisible} onClose={() => setClosedResult(report.id)}
     record={room ? record : undefined} rematch={restart}
-    room={room && { canRematch: canReset, reconnect: room.needsReconnect ? room.reconnect : undefined,
+    room={room && { canRematch: canReset, returnToLobby: room.returnToLobby, reconnect: room.needsReconnect ? room.reconnect : undefined,
       request: room.role !== 'host' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
     back={room ? '/room' : '/games'} navigate={navigate} />;
 

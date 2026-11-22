@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PresenceControl } from './presence-control.tsx';
@@ -8,6 +8,7 @@ import { musicMoods } from './music-arrangements.ts';
 import type { AudioLevels } from './audio.ts';
 import type { usePreferences } from './preferences.ts';
 import { GearIcon } from './gear-icon.tsx';
+import { Grouper } from './grouper.tsx';
 
 export function SettingsMenu({ preferences, levels, onVolume, path, presence }: {
   preferences: ReturnType<typeof usePreferences>;
@@ -24,7 +25,7 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
   function close(restoreFocus = false) {
     if (menu.current) {
       menu.current.open = false;
-      for (const section of menu.current.querySelectorAll<HTMLDetailsElement>('.settings-section')) section.open = false;
+      for (const section of menu.current.querySelectorAll<HTMLDetailsElement>('details.grouper')) section.open = false;
     }
     if (restoreFocus) trigger.current?.focus();
   }
@@ -48,6 +49,9 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
     };
   }, []);
 
+  const languageSummary = (preferences.language === 'system' ? t('system') + ' · ' : '') + (i18n.resolvedLanguage === 'ko' ? '한국어' : 'English');
+  const themeSummary = (preferences.theme === 'system' ? t('system') + ' · ' : '') + t(preferences.dark ? 'dark' : 'light');
+
   return (
     <details className="preferences" ref={menu} onToggle={event => {
       if (event.target === event.currentTarget && !event.currentTarget.open) close();
@@ -62,8 +66,7 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
             <span aria-hidden="true" />
           </button>
         </div>
-        <details className="settings-section">
-          <summary>{t('language')} <small>{preferences.language === 'system' ? t('system') + ' · ' : ''}{i18n.resolvedLanguage === 'ko' ? '한국어' : 'English'}</small></summary>
+        <Grouper title={t('language')} summaryValue={languageSummary} variant="panel">
           <div className="setting-segments">
             {([{ value: 'system', label: t('system') }, { value: 'ko', label: '한국어' },
               { value: 'en', label: 'English' }] as const).map(({ value, label }) => (
@@ -74,13 +77,11 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
                 </label>
             ))}
           </div>
-        </details>
-        {presence && <details className="settings-section">
-          <summary>{t('presenceSettings')} <small>{t(presence.mode === 'offline' ? 'appearOffline' : 'appearOnline')}</small></summary>
+        </Grouper>
+        {presence && <Grouper title={t('presenceSettings')} summaryValue={t(presence.mode === 'offline' ? 'appearOffline' : 'appearOnline')} variant="panel">
           <PresenceControl {...presence} />
-        </details>}
-        <details className="settings-section">
-          <summary>{t('theme')} <small>{preferences.theme === 'system' ? t('system') + ' · ' : ''}{t(preferences.dark ? 'dark' : 'light')}</small></summary>
+        </Grouper>}
+        <Grouper title={t('theme')} summaryValue={themeSummary} variant="panel">
           <div className="setting-segments">
             {(['system', 'light', 'dark'] as const).map(value => (
               <label key={value}>
@@ -90,17 +91,15 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
               </label>
             ))}
           </div>
-        </details>
-        <details className="settings-section">
-          <summary>{t('graphics')}</summary>
+        </Grouper>
+        <Grouper title={t('graphics')} variant="panel">
           <label className="choice">
             <input type="checkbox" checked={preferences.antialias} onChange={event => preferences.changeAntialias(event.target.checked)} />
             <span><strong>{t('antialias')}</strong><small>{t('graphicsHelp')}</small></span>
           </label>
-        </details>
+        </Grouper>
         <div className="sound-setting">
-        <details className="settings-section settings-sound">
-          <summary>{t('sound')}</summary>
+        <Grouper title={t('sound')} variant="panel">
           {(['music', 'effects'] as const).map(channel => (
             <div className="volume-field" key={channel} style={{ '--level': levels[channel] + '%' } as CSSProperties}>
               <div>
@@ -124,7 +123,7 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
               </button>}
             </div>
           ))}
-        </details>
+        </Grouper>
         <button className="sound-switch" type="button" role="switch" aria-label={t('sound')} aria-checked={!preferences.muted}
           onClick={() => preferences.changeMuted(!preferences.muted)}>
           <span aria-hidden="true">{t(preferences.muted ? 'disabled' : 'enabled')}</span><i aria-hidden="true" />

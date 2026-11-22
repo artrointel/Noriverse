@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { readTouch, roomCapacity, roomCodePattern, roomRoles } from '../../../../packages/protocol/rooms.ts';
-import type { Participant, Role, RoomGame, TouchPoint } from '../../../../packages/protocol/rooms.ts';
+import type { Participant, Role, RoomActivity, RoomGame, RoomLinks, TouchPoint } from '../../../../packages/protocol/rooms.ts';
 import { elapsedPlaySeconds, profileIdPattern } from '../../../../packages/protocol/profile.ts';
-import type { ProfileSummary } from '../../../../packages/protocol/profile.ts';
+import type { MatchReport, ProfileSummary } from '../../../../packages/protocol/profile.ts';
 import { assignReactionSlots, isEmoji, readRoomReaction, showReaction } from '../../../../packages/protocol/reactions.ts';
 import type { Emoji, Reaction, ReactionContent, TimedReaction } from '../../../../packages/protocol/reactions.ts';
 import { boardRules, isBoardGame, isTurnBasedGame } from '../games/board-rules.ts';
 import { advanceFlickRound, createFlickRound, defaultFlickSettings, flickPlayers, pieceOwner, readFlick, readLayout, settledStatus } from '../games/alkkagi/rules.ts';
 import type { Flick, FlickPlayer, FlickRound, StonePosition } from '../games/alkkagi/rules.ts';
 import { connectToRoom } from './room-connection.ts';
+import { relayRecoveryDelay } from './room-recovery.ts';
 import type { ConnectionState } from './room-connection.ts';
 import { forgetGuestSeat, readGuestRoom, readGuestSeat, rememberRecentRoom, saveGuestSeat, writeGuestRoom } from './guest-seat.ts';
 import { apiFetch } from './api.ts';
@@ -25,7 +26,7 @@ import { mergeRoomHistory, readRoomResult, roomHistoryBatchSize } from '../../..
 import type { RoomResult } from '../../../../packages/protocol/room-history.ts';
 import { readRoomTitle } from '../../../../packages/protocol/room-titles.ts';
 import { awardRoomPoints } from './room-scoring.ts';
-import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchOutcome, matchTurn, matchWinner, mockSeatsFor, readMatchSnapshot, roundSeats } from './room-match.ts';
+import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchOutcome, matchTurn, matchWinner, mockSeatsFor, readMatchSnapshot, resumeMatchClock, roundSeats } from './room-match.ts';
 import type { Match } from './room-match.ts';
 import { countdownDuration } from '../games/round-cues.ts';
 import { advanceSketch, applySketchAction, chooseSketchMap, defaultSketchSettings, makeSketchRound, nextSketchEvent, readSketchGuess, sketchDeck, startSketchTurn, visibleSketch } from '../games/sketch/rules.ts';
@@ -44,14 +45,16 @@ const matchDeadline = (match: Match) => (match.slime ? nextOrbitAt(match.slime) 
   ?? (match.sketch && match.sketchConfig ? nextSketchEvent(match.sketch, match.sketchConfig) : undefined)
   ?? (match.puzzle ? puzzleEnd(match.puzzle) : match.deadline);
 
-export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko' | 'en') {
+export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko' | 'en', activity: RoomActivity) {
   const [code, setCode] = useState<string>();
   const [title, setTitle] = useState<string>();
   const [role, setRole] = useState<Role>();
   const [state, setState] = useState<ConnectionState>();
   const [round, setRound] = useState(blankMatch);
+  const [localRecovery, setLocalRecovery] = useState<number>();
   const [sketchFeedback, setSketchFeedback] = useState<{ id: string; turn: number; wrong: boolean }>();
   const [roomHistory, setRoomHistory] = useState<RoomResult[]>([]);
+  const [lobbyReport, setLobbyReport] = useState<MatchReport>();
   const [mockCount, setMockCount] = useState(0);
   const results = useRef<RoomResult[]>([]);
   const matchRoster = useRef<{ seats: Role[]; players: Map<Role, Participant>; reactionSlots: ReturnType<typeof assignReactionSlots<Role>> }>(undefined);
@@ -59,8 +62,10 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
   const drawingDeck = useRef<Prompt[]>([]);
   const previousMatch = useRef<Match>(undefined);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [awayParticipants, setAwayParticipants] = useState<Participant[]>([]);
   const roster = useRef<Participant[]>([]);
   const [connectedPeers, setConnectedPeers] = useState<Role[]>([]);
+  const [connectionPaths, setConnectionPaths] = useState<RoomLinks>({});
   const [assignedSeat, setAssignedSeat] = useState<Seat>();
   const [guestRoom, setGuestRoom] = useState(readGuestRoom);
   const [changingGame, setChangingGame] = useState(false);
@@ -75,20 +80,35 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
   const started = startedAt > 0;
   const seat = useRef<Seat | undefined>(undefined);
   const link = useRef<ReturnType<typeof connectToRoom> | undefined>(undefined);
+  const activeView = useRef(activity);
   const match = useRef<Match>(blankMatch);
   const orbitBroadcast = useRef({ sentAt: -Infinity, timer: 0 });
   const operation = useRef(0);
   const ready = useRef(false);
   const sentTimeoutChoice = useRef<{ id: string; at: number; choice: TimeoutChoice }>(undefined);
-  const readyForPlay = () => ready.current || Boolean(import.meta.env.DEV && seat.current?.role === 'host' && match.current.mockSeats?.length);
+  const readyForPlay = () => !match.current.pausedAt
+    && (ready.current || Boolean(import.meta.env.DEV && seat.current?.role === 'host' && match.current.mockSeats?.length));
   const mockSeats = role === 'host' && import.meta.env.DEV ? mockSeatsFor(game, participants, mockCount) : [];
   const visibleMocks = (started && (!finishedAt || role !== 'host') ? round.mockSeats ?? [] : mockSeats)
     .filter(role => !participants.some(person => person.role === role));
-  const displayedParticipants: Participant[] = [...participants, ...visibleMocks.map(role => ({ role, mock: true }))];
-  const playState = role === 'host' && Boolean(round.mockSeats?.length) && state === 'waiting' ? 'connected' : state;
+  const interruptedPlayers = started && !finishedAt ? awayParticipants
+    .filter(player => inRound(round, player.role) && !visibleMocks.includes(player.role)) : [];
+  const displayedParticipants: Participant[] = [...participants, ...interruptedPlayers, ...visibleMocks.map(role => ({ role, mock: true }))];
+  const hostConnectionLost = localRecovery !== undefined && !connectedPeers.includes('host');
+  const pausedAt = round.pausedAt && round.pausedAt + (round.clockOffset ?? 0);
+  const recoveryAt = started && !finishedAt ? pausedAt ?? localRecovery : undefined;
+  const recoveryPlayers = recoveryAt ? (hostConnectionLost ? ['host' as const] : round.disconnectedSeats ?? [])
+    .map(role => matchRoster.current?.players.get(role)
+      ?? displayedParticipants.find(person => person.role === role) ?? { role }) : [];
+  const playState = recoveryAt ? 'disconnected'
+    : role === 'host' && Boolean(round.mockSeats?.length) && state === 'waiting' ? 'connected' : state;
   const gameChange = useRef<Seat | undefined>(undefined);
   const ownProfile = useRef(profile);
   useEffect(() => { ownProfile.current = profile; }, [profile]);
+  useEffect(() => {
+    activeView.current = activity;
+    link.current?.setActivity(activity);
+  }, [activity]);
 
   useEffect(() => () => {
     operation.current++;
@@ -127,6 +147,11 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
       setReactions([]);
       window.clearTimeout(orbitBroadcast.current.timer);
       orbitBroadcast.current = { sentAt: -Infinity, timer: 0 };
+      if (currentSeat && previous.finishedAt && !next.startedAt && !previous.mockSeats?.length && inRound(previous, currentSeat.role)) {
+        const outcome = matchOutcome(previous, currentSeat.role);
+        if (outcome) setLobbyReport({ id: previous.id, game: previous.game, mode: 'online', outcome,
+          seconds: elapsedPlaySeconds(matchBeginsAt(previous), previous.finishedAt) });
+      }
     }
     if (currentSeat && next.startedAt && !next.mockSeats?.length && (previous.id !== next.id || !previous.startedAt)) {
       rememberRecentRoom(currentSeat.code, next.game);
@@ -212,8 +237,12 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     setChangingGame(false);
     setAssignedSeat(undefined);
     setParticipants([]);
+    setAwayParticipants([]);
+    setLobbyReport(undefined);
     setMockCount(0);
     setConnectedPeers([]);
+    setConnectionPaths({});
+    setLocalRecovery(undefined);
     setRole(undefined);
     clearRoomHistory();
     update(blankMatch);
@@ -237,7 +266,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
 
   function markRoundReady(actor: Role) {
     const current = match.current;
-    if (!current.startedAt || current.finishedAt || !inRound(current, actor)) return;
+    if (!current.startedAt || current.finishedAt || current.pausedAt || !inRound(current, actor)) return;
     if (current.puzzle) { markPuzzleReady(actor); return; }
     const seats = matchRoster.current?.seats;
     if (current.beginsAt !== 0 || !seats?.includes(actor)) return;
@@ -347,7 +376,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
 
   function settleFlick(layout: StonePosition[], revision: number) {
     const current = match.current;
-    if (seat.current?.role !== 'host' || current.finishedAt || !current.physics?.shot || current.physics.revision !== revision) return;
+    if (seat.current?.role !== 'host' || current.finishedAt || current.pausedAt || !current.physics?.shot || current.physics.revision !== revision) return;
     const safe = readLayout(layout, current.physics.settings, current.physics.players);
     if (!safe || safe.some((point, index) => point && !current.physics?.layout[index])) return;
     syncFlick(advanceFlickRound(current.physics, safe), Date.now());
@@ -363,6 +392,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
 
   function expireTurn(now: number) {
     const current = match.current;
+    if (current.pausedAt) return false;
     if (current.slime) {
       const next = advanceOrbit(current.slime, now);
       if (!next) return false;
@@ -400,7 +430,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
   function decideTimeout(choice: TimeoutChoice, at: unknown, actor: Stone) {
     const current = match.current;
     const pending = current.timeoutPending;
-    if (!pending || pending.at !== at || current.finishedAt || actor === pending.color) return false;
+    if (!pending || pending.at !== at || current.finishedAt || current.pausedAt || actor === pending.color) return false;
     update({ ...current, ...resolveTurnTimeout(pending, choice, Date.now()) });
     snapshot();
     return true;
@@ -408,19 +438,19 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
 
   const activeDeadline = matchDeadline(round);
   useEffect(() => {
-    if (role !== 'host' || !activeDeadline || finishedAt) return;
+    if (role !== 'host' || !activeDeadline || finishedAt || recoveryAt) return;
     const timer = window.setTimeout(() => {
       const current = match.current;
       if (current.id === matchId && matchDeadline(current) === activeDeadline) expireTurn(Date.now());
     }, Math.max(0, activeDeadline - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [role, matchId, activeDeadline, finishedAt]);
+  }, [role, matchId, activeDeadline, finishedAt, recoveryAt]);
 
   const displayDeadline = deadline ? deadline + (round.clockOffset ?? 0) : 0;
   const pendingAt = timeoutPending?.at;
   useEffect(() => {
     const at = pendingAt ?? deadline;
-    if (!role || role === 'host' || state !== 'connected' || !started || finishedAt || !at) return;
+    if (!role || role === 'host' || playState !== 'connected' || !started || finishedAt || !at) return;
     let timer = window.setTimeout(requestClock, pendingAt ? 1000 : Math.max(1000, displayDeadline + 1000 - Date.now()));
     function requestClock() {
       const current = match.current;
@@ -431,7 +461,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
       timer = window.setTimeout(requestClock, 1000);
     }
     return () => window.clearTimeout(timer);
-  }, [role, state, started, matchId, finishedAt, deadline, displayDeadline, pendingAt]);
+  }, [role, playState, started, matchId, finishedAt, deadline, displayDeadline, pendingAt]);
 
   function finishBySurrender(color: FlickPlayer, actor: Role) {
     const current = match.current;
@@ -460,25 +490,56 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     return true;
   }
 
-  function connect(target: string, token?: string) {
+  const playing = () => Boolean(match.current.startedAt && !match.current.finishedAt);
+
+  function updateHostRecovery(peers: Role[]) {
+    const current = match.current;
+    if (seat.current?.role !== 'host' || !playing() || !matchRoster.current) return;
+    const missing = matchRoster.current.seats.filter(player =>
+      player !== 'host' && !current.mockSeats?.includes(player) && !peers.includes(player));
+    if (!missing.length && !current.pausedAt) return;
+    if (missing.length && current.disconnectedSeats?.length === missing.length
+      && missing.every(player => current.disconnectedSeats?.includes(player))) return;
+    const now = Date.now();
+    update(missing.length ? { ...current, pausedAt: current.pausedAt ?? now, disconnectedSeats: missing } : resumeMatchClock(current, now));
+    snapshot();
+  }
+
+  function connect(target: string, token?: string, recoveringSince?: number) {
     link.current?.close();
     ready.current = false;
     roster.current = [];
     setCode(target);
     setState('joining');
     setConnectedPeers([]);
+    setConnectionPaths({});
     link.current = connectToRoom(target, token, {
+      playing,
+      recoveringSince,
+      reopen(since) {
+        const currentLink = link.current;
+        const token = seat.current?.token;
+        const retryDelay = Date.now() - since < relayRecoveryDelay ? 750 : 3000;
+        if (token && seat.current?.role !== 'host') window.setTimeout(() => {
+          if (link.current === currentLink && playing()) connect(target, token, since);
+        }, retryDelay);
+      },
       retryWithoutSeat: token && seat.current?.role !== 'host' ? () => {
+        if (playing()) return;
         forgetGuestSeat(target);
         rememberGuestRoom(target);
         resetRoom();
         connect(target);
       } : undefined,
       state(next) {
+        if (playing() && next !== 'connected') {
+          if (seat.current?.role === 'host') updateHostRecovery(link.current?.connectedPeers() ?? []);
+          else if (seat.current) setLocalRecovery(previous => previous ?? Date.now());
+        }
         if (next === 'closed' || next === 'missing') {
           forgetGuestSeat(target);
           rememberGuestRoom(target);
-          clearRoomHistory();
+          if (!playing()) clearRoomHistory();
         }
         ready.current = next === 'connected';
         setState(next);
@@ -490,15 +551,25 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
         setAssignedSeat(seat.current);
         setRole(assignedRole);
       },
-      roster(people) {
+      roster(people, away) {
         roster.current = people;
         setParticipants(people);
+        setAwayParticipants(away);
         for (const person of people) {
           const original = matchRoster.current?.players.get(person.role);
           if (original && original.memberId === person.memberId) matchRoster.current?.players.set(person.role, person);
         }
       },
-      connections: setConnectedPeers,
+      activity(peer, next) {
+        if (!roster.current.some(person => person.role === peer && person.activity !== next)) return;
+        roster.current = roster.current.map(person => person.role === peer ? { ...person, activity: next } : person);
+        setParticipants(roster.current);
+      },
+      connections(peers, paths) {
+        setConnectedPeers(peers);
+        setConnectionPaths(paths);
+        updateHostRecovery(peers);
+      },
       open(peer) {
         if (seat.current?.role === 'host') {
           if (!expireTurn(Date.now())) snapshot(peer);
@@ -619,10 +690,14 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
           if (shot) update({ ...current, physics: { ...current.physics, shot }, deadline: 0 });
         } else if (raw.type === 'snapshot') {
           const next = readMatchSnapshot(raw, current, Date.now());
-          if (next) update(next);
+          if (next) {
+            update(next);
+            if (ready.current) setLocalRecovery(undefined);
+          }
         }
       },
     });
+    link.current.setActivity(activeView.current);
   }
 
   async function create(game: RoomGame, settings = matchSettingsForLanguage(language), roomTitle?: string) {
@@ -659,10 +734,10 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     connect(target, readGuestSeat(target));
   }
 
-  function leave() {
+  function leave(interrupted = false) {
     operation.current++;
     if (code && seat.current?.role !== 'host') rememberGuestRoom(code);
-    const releaseSeat = !match.current.startedAt;
+    const releaseSeat = interrupted || !match.current.startedAt;
     if (releaseSeat && code) forgetGuestSeat(code);
     link.current?.close(releaseSeat);
     link.current = undefined;
@@ -758,7 +833,8 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     let puzzle = current.puzzleConfig ? makePuzzleRound(current.puzzleConfig, Math.random, seats, current.game === 'memory') : undefined;
     for (const mock of mocks) if (puzzle) puzzle = readyPuzzle(puzzle, mock, now) ?? puzzle;
     previousMatch.current = undefined;
-    update({ ...current, id: rematch ? crypto.randomUUID() : current.id, hostColor, startedAt: now, finishedAt: 0,
+    update({ ...current, id: crypto.randomUUID(), hostColor, startedAt: now, finishedAt: 0,
+      pausedAt: undefined, pausedMs: undefined, disconnectedSeats: undefined,
       history: [], surrendered: undefined, timedOut: undefined, timeoutPending: undefined, deadline: 0, beginsAt: current.puzzleConfig ? undefined : 0,
       mockSeats: mocks.length ? mocks : undefined, puzzle,
       slime: current.game === 'slime' ? createOrbitRound(seats) : undefined,
@@ -769,8 +845,29 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     return true;
   }
 
+  const settings: MatchSettings = {
+    allowDoubleThree, overline, power: round.power ?? 1, turnLimit, flick: round.flickSettings ?? defaultFlickSettings,
+    puzzle: game === 'sichuan' && round.puzzleConfig ? round.puzzleConfig : defaultSichuanRoomSettings,
+    memory: game === 'memory' && round.puzzleConfig ? round.puzzleConfig : defaultMemorySettings, sketch: round.sketchConfig ?? defaultSketchSettings,
+    liar: round.liarConfig ?? defaultLiarSettings,
+  };
+
+  function configureMatch(settings: MatchSettings) {
+    const current = match.current;
+    if (seat.current?.role !== 'host' || gameChange.current || (current.startedAt && !current.finishedAt)) return false;
+    if (current.finishedAt) previousMatch.current = current;
+    update(lobbyMatch(current.game, settings));
+    snapshot();
+    return true;
+  }
+
   return {
     code, title, role, state: playState, game, hostColor, playerColor, history, roomHistory, started, matchId, startedAt, finishedAt, surrendered, timedOut, timeoutPending, turnLimit,
+    recoveryAt, recoveryPlayers, connectionPaths, awayParticipants, lobbyReport, exitInterruptedMatch: () => leave(true),
+    connectionReport: () => link.current?.connectionReport(),
+    returnToLobby() {
+      if (match.current.finishedAt) configureMatch(settings);
+    },
     active: Boolean(code) && state !== 'closed' && state !== 'missing' && state !== 'full',
     needsReconnect: state === 'failed' || state === 'disconnected',
     inMatch: Boolean(role && inRound(round, role)),
@@ -782,10 +879,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
       add: () => setMockCount(mockSeats.length + 1),
       remove: () => setMockCount(Math.max(0, mockSeats.length - 1)),
     } : undefined,
-    settings: { allowDoubleThree, overline, power: round.power ?? 1, turnLimit, flick: round.flickSettings ?? defaultFlickSettings,
-      puzzle: game === 'sichuan' && round.puzzleConfig ? round.puzzleConfig : defaultSichuanRoomSettings,
-      memory: game === 'memory' && round.puzzleConfig ? round.puzzleConfig : defaultMemorySettings, sketch: round.sketchConfig ?? defaultSketchSettings,
-      liar: round.liarConfig ?? defaultLiarSettings } satisfies MatchSettings,
+    settings,
     physicsSeats: round.physicsSeats,
     colorFor: (player: Role) => matchColor(round, player),
     guestRoom, changeGame, changingGame, rematchNotice: rematchNotice?.id === matchId ? rematchNotice.kind : undefined,
@@ -821,14 +915,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
       return Boolean(link.current?.send({ type: 'sketch-action', id: current.id, turn: current.sketch.turn, action }));
     },
     puzzleDisplayStart: round.puzzle?.beginsAt ? round.puzzle.beginsAt + (round.clockOffset ?? 0) : 0,
-    configureMatch(settings: MatchSettings) {
-      const current = match.current;
-      if (seat.current?.role !== 'host' || gameChange.current || (current.startedAt && !current.finishedAt)) return false;
-      if (current.finishedAt) previousMatch.current = current;
-      update(lobbyMatch(current.game, settings));
-      snapshot();
-      return true;
-    },
+    configureMatch,
     roundReady() {
       const current = match.current, own = seat.current?.role;
       if (!own || !current.startedAt || matchBeginsAt(current) || !readyForPlay() || current.finishedAt) return;
@@ -880,7 +967,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     chooseTimeout(choice: TimeoutChoice) {
       const current = match.current;
       const pending = current.timeoutPending;
-      if (!pending || !playerColor || playerColor === pending.color) return false;
+      if (!pending || !playerColor || playerColor === pending.color || playState !== 'connected') return false;
       if (role === 'host') return decideTimeout(choice, pending.at, current.hostColor);
       if (!ready.current) return false;
       const request = { id: current.id, at: pending.at, choice };

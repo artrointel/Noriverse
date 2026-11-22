@@ -18,7 +18,7 @@ export function GameResult({ report, winner, title, surrendered, timedOut, score
   surrendered?: Stone;
   timedOut?: Stone;
   scores?: readonly [number, number]; visible: boolean; onClose: () => void;
-  room?: { canRematch: boolean; reconnect?: () => void; request?: () => void; notice?: 'sent' | 'incoming' };
+  room?: { canRematch: boolean; returnToLobby: () => void; reconnect?: () => void; request?: () => void; notice?: 'sent' | 'incoming' };
   record?: (report: MatchReport) => Promise<boolean>;
   rematch: () => void; back: string; navigate: Navigate;
 }) {
@@ -64,7 +64,8 @@ export function GameResult({ report, winner, title, surrendered, timedOut, score
         </button>}
         {room?.request && <button type="button" className="button button-primary" disabled={room.notice === 'sent'} onClick={room.request}>{t('requestRematch')}</button>}
         {room?.reconnect && <button type="button" className="button button-primary" onClick={room.reconnect}>{t('retry')}</button>}
-        <RouteLink href={back} navigate={navigate} className="button button-secondary">{t(room ? 'goToRoom' : 'backToGames')}</RouteLink>
+        <RouteLink href={back} navigate={destination => { room?.returnToLobby(); navigate(destination); }}
+          className="button button-secondary">{t(room ? 'goToRoom' : 'backToGames')}</RouteLink>
         {saved === 'failed' && <button type="button" className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>{t('saveResult')}</button>}
       </div>
     </BlurredSurface>

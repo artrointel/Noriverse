@@ -20,7 +20,7 @@ import { BackLink, gamePath } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { playSound } from './audio.ts';
 import { useRoundEnd, useRoundStart } from './use-round-cues.ts';
-import { Avatar } from './avatar.tsx';
+import { RoomPlayerAvatar } from './avatar.tsx';
 import { SketchTools, useRecentInk } from './sketch-tools.tsx';
 import './sketch-tools.css';
 
@@ -156,7 +156,7 @@ export function SketchPage({ room, settings, ownProfile, navigate, dark, antiali
   const score = room && <ol className="sketch-score" aria-label={t('sketchScores')}>
     {ranked.map((player, index) => <li key={player.role} data-drawing={player === currentDrawer && !finishedAt}>
       <small>#{index + 1}</small>
-      {player.profile && <Avatar appearance={player.profile} size={24} />}
+      <RoomPlayerAvatar appearance={player.profile} size={24} path={room.connectionPaths[player.role]} />
       <span>{player.name}</span>
       <strong>{player.score}</strong>
     </li>)}
@@ -224,7 +224,7 @@ export function SketchPage({ room, settings, ownProfile, navigate, dark, antiali
         endAction={!finishedAt && !retired && <EndRoundAction key={id} online={Boolean(room)} disabled={!active || intro}
           end={() => { if (room) room.surrender(); else setPractice(previous => ({ ...previous, endedAt: Date.now() })); }} />}
         result={report && <GameResult key={id} report={report} winner="draw" title={title} visible={visible} onClose={() => setClosedResult(id)}
-          details={score} room={room && { canRematch: room.role === 'host' && room.canStart,
+          details={score} room={room && { canRematch: room.role === 'host' && room.canStart, returnToLobby: room.returnToLobby,
             request: room.role !== 'host' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
           record={room ? record : undefined} rematch={() => room ? room.rematch() : setPractice(newPractice(settings))}
           back={room ? '/room' : '/games'} navigate={navigate} />}

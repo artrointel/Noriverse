@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { roomRoles } from '../../../../packages/protocol/rooms.ts';
@@ -10,6 +10,7 @@ import type { RoomResult } from '../../../../packages/protocol/room-history.ts';
 import { games } from './game-catalog.ts';
 import { formatPlayTime } from './game-time.tsx';
 import { Avatar } from './avatar.tsx';
+import { Grouper } from './grouper.tsx';
 
 type Ranking = { entries: RoomResult[]; participants: Participant[]; test?: boolean; matchId?: string; roomTitle?: string; finished?: boolean };
 type View = 'ranking' | 'history';
@@ -127,26 +128,27 @@ function RankingDialog({ data, initial, close }: { data: Ranking; initial: View;
   </dialog>;
 }
 
-export function RoomRankingBoard({ status, ...data }: Ranking & { status?: ReactNode }) {
+export function RoomRankingBoard(data: Ranking) {
   const { t } = useTranslation();
-  const title = useId();
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<boolean>();
   const testing = Boolean(data.test || data.participants.some(player => player.mock));
   const testAvailable = testing || data.entries.some(entry => entry.test);
   const test = testAvailable && (scope ?? testing);
   const ranking = forRankingScope(data, test);
-  return <section className="surface lobby-panel room-ranking-board" aria-labelledby={title}>
-    <header className="room-panel-heading"><h2 id={title}>{t(test ? 'roomTestRanking' : 'roomRanking')}</h2>
-      <button type="button" className="button button-secondary" onClick={() => setOpen(true)}>{t('viewRoomHistory')}</button>
-    </header>
-    {status}
-    {testAvailable && <select className="ranking-scope" aria-label={t('roomRankingScope')}
-      value={test ? 'test' : 'room'} onChange={event => setScope(event.target.value === 'test')}>
-      <option value="room">{t('roomRanking')}</option>
-      <option value="test">{t('roomTestRanking')}</option>
-    </select>}
-    <RankingRows {...ranking} />
+  const title = t(test ? 'roomTestRanking' : 'roomRanking');
+  return <section className="room-ranking-board" aria-label={title}>
+    <Grouper title={title} initiallyOpen>
+      <div className="lobby-ranking-content">
+        {testAvailable && <select className="ranking-scope" aria-label={t('roomRankingScope')}
+          value={test ? 'test' : 'room'} onChange={event => setScope(event.target.value === 'test')}>
+          <option value="room">{t('roomRanking')}</option>
+          <option value="test">{t('roomTestRanking')}</option>
+        </select>}
+        <RankingRows {...ranking} />
+        <button type="button" className="button button-secondary" onClick={() => setOpen(true)}>{t('viewRoomHistory')}</button>
+      </div>
+    </Grouper>
     {open && <RankingDialog data={ranking} initial="history" close={() => setOpen(false)} />}
   </section>;
 }

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createLocalBoard, decideLocalBoard, endLocalBoard, moveLocalBoard, rematchLocalBoard } from '../apps/web/src/games/local-round.ts';
-import { blankMatch, matchInProgress, readMatchSnapshot } from '../apps/web/src/network/room-match.ts';
+import { blankMatch, matchInProgress, readMatchSnapshot, resumeMatchClock } from '../apps/web/src/network/room-match.ts';
 import { countdownCue, countdownDuration, outcomeDuration, resultDelay } from '../apps/web/src/games/round-cues.ts';
 import { resolveTurnTimeout } from '../apps/web/src/games/turn-clock.ts';
+import { createFlickRound, defaultFlickSettings } from '../apps/web/src/games/alkkagi/rules.ts';
 
 test('legacy snapshots retain defaults and a rejoin cannot roll the same round back', () => {
   const legacy = { type: 'snapshot', id: 'round-one', history: [112], startedAt: 10_000, finishedAt: 0, allowDoubleThree: false, sentAt: 10_150 };
@@ -69,4 +70,41 @@ test('late clock snapshots cannot restore an expired deadline after an online ex
   const moved = readMatchSnapshot({ ...first, history: [112], deadline: 27_000 }, extended, 17_010);
   assert.deepEqual(moved?.history, [112]);
   assert.equal(moved?.deadline, 27_000);
+});
+
+test('recovery freezes the round and preserves remaining time without changing match identity', () => {
+  const initial = { ...blankMatch, type: 'snapshot', id: 'recovery', startedAt: 1000, beginsAt: 5000,
+    turnLimit: 10 as const, deadline: 15_000, sentAt: 5100 };
+  const guest = readMatchSnapshot(initial, blankMatch, 5300);
+  assert(guest);
+  const stopped = { ...initial, pausedAt: 12_000, disconnectedSeats: ['guest'], sentAt: 12_000 };
+  const pausedGuest = readMatchSnapshot(stopped, guest, 12_200);
+  assert(pausedGuest);
+  assert.deepEqual(pausedGuest.disconnectedSeats, ['guest']);
+  assert.equal(matchInProgress(pausedGuest, 13_000), false);
+  assert.equal(readMatchSnapshot(initial, pausedGuest, 13_000), undefined);
+
+  const resumed = resumeMatchClock(stopped, 19_000);
+  assert.equal(resumed.startedAt, initial.startedAt);
+  assert.equal(resumed.disconnectedSeats, undefined);
+  assert.equal(resumed.beginsAt, 12_000);
+  assert.equal(resumed.deadline, 22_000);
+  assert.equal(resumed.deadline - 19_000, initial.deadline - stopped.pausedAt);
+  const recoveredGuest = readMatchSnapshot({ ...resumed, type: 'snapshot', sentAt: 19_000 }, pausedGuest, 19_500);
+  assert(recoveredGuest);
+  assert.equal(recoveredGuest.clockOffset, 200);
+  assert.equal(matchInProgress(recoveredGuest, 19_000), true);
+  assert.equal(readMatchSnapshot(stopped, recoveredGuest, 19_600), undefined);
+});
+
+test('an existing multiplayer pause updates its disconnected seats without restarting the clock', () => {
+  const initial = { ...blankMatch, type: 'snapshot', id: 'multiplayer-recovery', game: 'physics', startedAt: 1000,
+    physics: createFlickRound(defaultFlickSettings, 4), physicsSeats: ['host', 'guest', 'guest2', 'guest3'] };
+  const first = readMatchSnapshot({ ...initial, pausedAt: 6_000, disconnectedSeats: ['guest', 'guest2'] }, blankMatch, 6_000);
+  assert(first);
+  const partial = readMatchSnapshot({ ...initial, pausedAt: 6_000, disconnectedSeats: ['guest2'] }, first, 12_000);
+  assert.equal(partial?.pausedAt, 6_000);
+  assert.deepEqual(partial?.disconnectedSeats, ['guest2']);
+  assert.equal(readMatchSnapshot({ ...initial, pausedAt: 6_000, disconnectedSeats: ['host'] }, first, 12_000), undefined);
+  assert.equal(readMatchSnapshot({ ...initial, pausedAt: 6_000, disconnectedSeats: ['guest2', 'guest2'] }, first, 12_000), undefined);
 });

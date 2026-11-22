@@ -1,5 +1,6 @@
 import { RoomRankingControl } from './room-ranking.tsx';
-import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState } from 'react';
+import { MatchRecoveryContext, MatchRecoveryDialog } from './match-recovery.tsx';
 import type { KeyboardEvent, PointerEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { touchResolution } from '../../../../packages/protocol/rooms.ts';
@@ -46,6 +47,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   stageContext?: { mode: string; map: string };
 }) {
   const { t, i18n } = useTranslation();
+  const paused = Boolean(useContext(MatchRecoveryContext));
   const shell = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLDivElement>(null);
   const mount = useRef<HTMLDivElement>(null);
@@ -158,6 +160,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   }, [status, expanded, resolution, actualSize.frame.width]);
 
   useLayoutEffect(() => { engine.current?.refreshInputBounds(); }, [actualSize, expanded]);
+  useEffect(() => { if (status === 'ready') engine.current?.setPaused(paused); }, [paused, status]);
 
   const deciding = Boolean(decision);
   const hasResult = Boolean(result);
@@ -313,7 +316,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
           <span>{stageContext.mode}</span><strong>{stageContext.map}</strong>
         </div>}
         <div className="stage-actions">
-          {resultHidden && <button ref={resultButton} className="button stage-result-trigger" type="button" aria-label={t('viewResult')} onClick={onShowResult}>{t('viewResult')}</button>}
+          {resultHidden && <button ref={resultButton} className="button stage-result-trigger attention-button" type="button" aria-label={t('viewResult')} onClick={onShowResult}>{t('viewResult')}</button>}
           {info && <details className="stage-info" ref={gameInfo} onKeyDown={event => {
             if (event.key === 'Escape' && event.currentTarget.open) {
               event.preventDefault();
@@ -395,6 +398,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         </div>
       )}
       <div className="visually-hidden" aria-live="polite">{focusLabel}</div>
+      <MatchRecoveryDialog />
       <dialog ref={gameHelp} id={helpId} className="surface profile-dialog stage-help-dialog" aria-labelledby={helpId + '-title'}
         aria-describedby={helpId + '-body'} onKeyDown={event => { if (event.key === 'Escape') event.stopPropagation(); }}>
         <header className="room-panel-heading">

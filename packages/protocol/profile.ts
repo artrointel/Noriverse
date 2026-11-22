@@ -1,12 +1,14 @@
 import { isGameId } from './games.ts';
 import type { GameId } from './games.ts';
 import type { EarnedBadge } from './badges.ts';
+import { explorerIds } from './explorers.ts';
 
 export const profileIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 export { gameIds as profileGames, isGameId as isProfileGame } from './games.ts';
 export type ProfileGame = GameId;
-export const avatarIds = ['mint', 'amber', 'lunar', 'ink', 'violet', 'die', 'heart', 'star', 'clover', 'cloud',
+export const basicAvatarIds = ['mint', 'amber', 'lunar', 'ink', 'violet', 'die', 'heart', 'star', 'clover', 'cloud',
   'pixelCherry', 'pixelAxolotl', 'pixelUfo', 'pixelPotion', 'pixelFox'] as const;
+export const avatarIds = [...basicAvatarIds, ...explorerIds] as const;
 export type AvatarId = (typeof avatarIds)[number];
 export const defaultAvatar: AvatarId = 'mint';
 export type AvatarLayers = { avatar: AvatarId; avatarBackground?: string | null };
@@ -25,6 +27,7 @@ export type PresenceMode = 'online' | 'offline';
 export const avatarLevel: Record<AvatarId, number> = {
   mint: 1, amber: 1, lunar: 1, ink: 1, violet: 1, die: 1, heart: 1, star: 1, clover: 1, cloud: 1,
   pixelCherry: 1, pixelAxolotl: 1, pixelUfo: 1, pixelPotion: 1, pixelFox: 1,
+  toring: 1, solori: 1, kommi: 1, noeulbi: 1, muruon: 1, parumi: 1, pulsori: 1, guriong: 1, bilmong: 1, talgak: 1, jiena: 1,
 };
 export const secondsPerLevel = 3600;
 
@@ -68,7 +71,7 @@ export type OwnProfile = PublicProfile & { presence?: PresenceMode };
 export type FriendRoom = { code: string; game: ProfileGame; joinable: boolean };
 export type FriendSummary = ProfileSummary & { online?: boolean; lastOnlineAt?: number; room?: FriendRoom };
 export type FriendAction = 'request' | 'accept' | 'decline' | 'remove' | 'cancel';
-export type FriendList = { friends: FriendSummary[]; incoming: ProfileSummary[]; outgoing: ProfileSummary[] };
+export type FriendList = { friends: FriendSummary[]; incoming: (ProfileSummary & { requestId?: string })[]; outgoing: ProfileSummary[] };
 
 export function readFriendUpdate(value: unknown) {
   if (!value || typeof value !== 'object' || !('id' in value) || !('added' in value)

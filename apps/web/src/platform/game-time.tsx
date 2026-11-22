@@ -1,7 +1,8 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useContext, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import { secondsRemaining } from '../games/turn-clock.ts';
+import { MatchRecoveryContext } from './match-recovery.tsx';
 
 export function formatPlayTime(seconds: number) {
   const minutes = Math.floor(seconds / 60);
@@ -10,10 +11,11 @@ export function formatPlayTime(seconds: number) {
 }
 
 export function useElapsedPlayTime(startedAt: number, finishedAt = 0) {
+  const pausedAt = useContext(MatchRecoveryContext)?.since;
   const [seconds, setSeconds] = useState(() => startedAt ? elapsedPlaySeconds(startedAt, finishedAt || Date.now()) : 0);
   useEffect(() => {
-    if (!startedAt || finishedAt) {
-      setSeconds(startedAt ? elapsedPlaySeconds(startedAt, finishedAt) : 0);
+    if (!startedAt || finishedAt || pausedAt) {
+      setSeconds(startedAt ? elapsedPlaySeconds(startedAt, finishedAt || pausedAt || 0) : 0);
       return;
     }
     let timeout: number;
@@ -25,7 +27,7 @@ export function useElapsedPlayTime(startedAt: number, finishedAt = 0) {
     }
     update();
     return () => window.clearTimeout(timeout);
-  }, [startedAt, finishedAt]);
+  }, [startedAt, finishedAt, pausedAt]);
   return seconds;
 }
 
@@ -36,6 +38,7 @@ export function PlayTime({ startedAt }: { startedAt: number }) {
 }
 
 export function useCountdown(deadline: number, onSecond?: (seconds: number) => void) {
+  const pausedAt = useContext(MatchRecoveryContext)?.since;
   const [seconds, setSeconds] = useState(() => secondsRemaining(deadline, Date.now()));
   const lastNotice = useRef<{ deadline: number; seconds: number }>(undefined);
   const notify = useEffectEvent((seconds: number) => onSecond?.(seconds));
@@ -43,6 +46,10 @@ export function useCountdown(deadline: number, onSecond?: (seconds: number) => v
     if (!deadline) {
       lastNotice.current = undefined;
       setSeconds(0);
+      return;
+    }
+    if (pausedAt) {
+      setSeconds(secondsRemaining(deadline, pausedAt));
       return;
     }
     let timeout: number | undefined;
@@ -61,6 +68,6 @@ export function useCountdown(deadline: number, onSecond?: (seconds: number) => v
     }
     update();
     return () => window.clearTimeout(timeout);
-  }, [deadline]);
+  }, [deadline, pausedAt]);
   return seconds;
 }

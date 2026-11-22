@@ -17,6 +17,7 @@ export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, i
   const worldSize = id === 'physics' ? alkkagiWorldSize : tableSize;
   const origin = id === 'physics' ? alkkagiWorldOrigin : 0;
   let size = initialSize;
+  let sceneTime = 0;
   let camera: Phaser.Cameras.Scene2D.Camera | undefined;
   const cueLayer = createRoundAnnouncement(parent, cue => {
     switch (cue) {
@@ -54,13 +55,15 @@ export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, i
         scene.create.call(this);
         onReady();
       },
-      update(this: Phaser.Scene, time: number, delta: number) {
-        scene.update?.call(this, time, delta);
+      update(this: Phaser.Scene, _time: number, delta: number) {
+        sceneTime += delta;
+        scene.update?.call(this, sceneTime, delta);
         cueLayer.render(announcement());
       },
     },
   });
   return {
+    setPaused(paused: boolean) { if (paused) game.scene.pause(id); else game.scene.resume(id); },
     resize(next: RenderSize) { size = next; applyResolution(game); },
     refreshInputBounds() {
       if (!camera) return;

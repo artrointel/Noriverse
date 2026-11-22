@@ -3,7 +3,10 @@ import type { ComponentPropsWithoutRef } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { isProfileGame, profileIdPattern } from '../../../../packages/protocol/profile.ts';
+import { isExplorerId } from '../../../../packages/protocol/explorers.ts';
+import type { ExplorerId } from '../../../../packages/protocol/explorers.ts';
 import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
+import type { RoomActivity } from '../../../../packages/protocol/rooms.ts';
 import type { GameId } from '../../../../packages/protocol/games.ts';
 
 export type Navigate = (destination: string, replace?: boolean) => void;
@@ -35,6 +38,8 @@ export function readRoute(url: URL) {
   if (!section) return { page: 'home' } as const;
   if (section === 'profile' && !id) return { page: 'profile' } as const;
   if (section === 'friends' && !id) return { page: 'friends' } as const;
+  if (section === 'characters' && !id) return { page: 'explorers' } as const;
+  if (section === 'characters' && !step && isExplorerId(id)) return { page: 'explorer', characterId: id } as const;
   if (section === 'profiles' && id && !step && profileIdPattern.test(id)) return { page: 'publicProfile', profileId: id } as const;
   if (section === 'games' && !id) return { page: 'games' } as const;
   if (section === 'games' && isProfileGame(id) && !extra) {
@@ -44,10 +49,25 @@ export function readRoute(url: URL) {
   return { page: 'missing' } as const;
 }
 
+export function roomActivityForRoute(route: ReturnType<typeof readRoute>): RoomActivity {
+  switch (route.page) {
+    case 'room': return 'lobby';
+    case 'home': return 'home';
+    case 'profile': case 'publicProfile': return 'profile';
+    case 'friends': return 'friends';
+    case 'games': case 'detail': return 'library';
+    case 'setup': case 'createRoom': return 'setup';
+    case 'explorers': case 'explorer': return 'characters';
+    case 'play': return `play:${route.id}`;
+    default: return 'other';
+  }
+}
+
 type GameMode = 'local' | 'online';
 export type { GameMode };
 export const gamePath = (id: GameId, step?: 'setup' | 'play', mode: GameMode = 'local') =>
   '/games/' + id + (step ? '/' + step : '') + (mode === 'local' ? '' : '?mode=' + mode);
+export const explorerPath = (id?: ExplorerId) => id ? '/characters/' + id : '/characters';
 
 export function useNavigation() {
   const [entry, setEntry] = useState(() => ({ url: readLocation(), previous: readPrevious() }));
@@ -101,7 +121,7 @@ export function BackLink({ navigate, fallback, fallbackLabel }: { navigate: Navi
   const route = previous && readRoute(new URL(previous, location.origin));
   const label = route && (route.page === 'room' ? 'room' : route.page === 'createRoom' ? 'newRoom' : route.page === 'profile' ? 'myProfile'
     : route.page === 'publicProfile' ? 'publicProfile' : route.page === 'friends' ? 'friends'
-    : route.page === 'games' ? 'backToGames' : route.page === 'home' ? 'home'
+    : route.page === 'explorers' || route.page === 'explorer' ? 'explorers' : route.page === 'games' ? 'backToGames' : route.page === 'home' ? 'home'
     : route.page === 'setup' ? 'settings' : 'id' in route ? route.id : undefined);
   return <RouteLink className="back-link" href={label && previous ? previous : fallback} navigate={navigate} onClick={event => {
     if (!label || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

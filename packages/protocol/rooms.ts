@@ -11,7 +11,24 @@ export { roomCapacity, isGameId as isRoomGame } from './games.ts';
 export const roomRoles = ['host', 'guest', 'guest2', 'guest3'] as const;
 export type Role = (typeof roomRoles)[number];
 export const isRoomRole = (value: unknown): value is Role => roomRoles.some(role => role === value);
-export interface Participant { role: Role; profile?: ProfileSummary; memberId?: string; mock?: boolean }
+const roomActivityPages = ['lobby', 'home', 'profile', 'library', 'friends', 'setup', 'characters', 'other'] as const;
+export type RoomActivity = (typeof roomActivityPages)[number] | `play:${RoomGame}`;
+export function readRoomActivity(value: unknown): RoomActivity | undefined {
+  if (typeof value !== 'string') return;
+  if (!value.startsWith('play:')) return roomActivityPages.find(page => page === value);
+  const game = value.slice(5);
+  if (isGameId(game)) return `play:${game}`;
+}
+export interface Participant { role: Role; profile?: ProfileSummary; memberId?: string; mock?: boolean; activity?: RoomActivity }
+export type RoomLink = 'direct' | 'relay';
+export type RoomLinks = Partial<Record<Role, RoomLink>>;
+export function readRoomLinks(value: unknown): RoomLinks | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  const entries = Object.entries(value);
+  if (entries.every(([role, path]) => isRoomRole(role) && (path === 'direct' || path === 'relay'))) {
+    return Object.fromEntries(entries) as RoomLinks;
+  }
+}
 export type TouchPoint = { x: number; y: number; effect?: TouchParticle };
 export const touchResolution = 1000;
 
@@ -39,6 +56,7 @@ interface IceCandidate {
   candidate?: string;
   sdpMid?: string | null;
   sdpMLineIndex?: number | null;
+  usernameFragment?: string | null;
 }
 export type Signal =
   | { type: 'offer' | 'answer'; sdp: string }
@@ -51,11 +69,14 @@ export function readRelayData(value: unknown): RelayData | undefined {
     && value.type.length > 0 && value.type.length <= 48 && value.type !== 'touch') return value as RelayData;
 }
 export type RoomMessage =
-  | (Signal & { peer?: Role })
+  | (Signal & { peer?: Role; attempt?: string })
+  | { type: 'upgrade-start'; peer: Role; attempt: string }
+  | { type: 'room-links'; paths: RoomLinks }
+  | { type: 'room-activity'; peer: Role; activity: RoomActivity }
   | { type: 'welcome'; role: Role; token: string; title?: string }
-  | { type: 'roster'; participants: Participant[] }
+  | { type: 'roster'; participants: Participant[]; away?: Participant[] }
   | { type: 'paired' | 'peer-left'; peer?: Role }
-  | { type: 'relay-request' | 'relay-open'; peer: Role }
+  | { type: 'direct-lost' | 'relay-request' | 'relay-open'; peer: Role }
   | { type: 'relay-data'; peer: Role; data: RelayData }
   | { type: 'room-closed' }
   | { type: 'error'; reason: 'missing' | 'full' | 'token' };
@@ -71,11 +92,13 @@ export function readSignal(raw: unknown, role: Role): Signal | undefined {
     if (candidate && typeof candidate.candidate === 'string'
       && candidate.candidate.length <= 2048
       && (candidate.sdpMid == null || typeof candidate.sdpMid === 'string')
-      && (candidate.sdpMLineIndex == null || Number.isInteger(candidate.sdpMLineIndex))) {
+      && (candidate.sdpMLineIndex == null || Number.isInteger(candidate.sdpMLineIndex))
+      && (candidate.usernameFragment == null || (typeof candidate.usernameFragment === 'string' && candidate.usernameFragment.length <= 256))) {
       return { type: 'ice', candidate: {
         candidate: candidate.candidate,
         sdpMid: candidate.sdpMid,
         sdpMLineIndex: candidate.sdpMLineIndex,
+        usernameFragment: candidate.usernameFragment,
       } };
     }
   }

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { avatarIds, avatarLevel, readName, secondsPerLevel, touchEffects, winRate } from '../../../../packages/protocol/profile.ts';
-import type { ProfilePreferences, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
+import { avatarLevel, basicAvatarIds, readName, secondsPerLevel, touchEffects, winRate } from '../../../../packages/protocol/profile.ts';
+import type { AvatarId, ProfilePreferences, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
+import { explorerIds, isExplorerId } from '../../../../packages/protocol/explorers.ts';
 import { apiAvailable, fetchPublicProfile } from '../network/api.ts';
 import { Avatar } from './avatar.tsx';
 import { readBrowserProfile } from './browser-profile.ts';
 import { gameIds, games, matchesGame } from './game-catalog.ts';
-import { BackLink, gamePath, routeHref, RouteLink } from './navigation.tsx';
+import { BackLink, explorerPath, gamePath, routeHref, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import { randomPlayerName } from './player-names.ts';
 import { DiceIcon } from './dice-icon.tsx';
@@ -17,6 +18,9 @@ import { PresenceControl } from './presence-control.tsx';
 import { formatPlayTime } from './game-time.tsx';
 import type { useProfile } from './use-profile.ts';
 import { ProfileBadges } from './profile-badges.tsx';
+import { explorerCopy } from './explorers.ts';
+import { NotificationDot } from './notification-dot.tsx';
+import { Grouper } from './grouper.tsx';
 
 export function NameDialog({ name, close, save }: {
   name?: string; close: () => void; save: (name: string) => Promise<void>;
@@ -71,11 +75,12 @@ export function NameDialog({ name, close, save }: {
   );
 }
 
-export function ProfileNav({ profile, navigate }: { profile?: PublicProfile; navigate: Navigate }) {
+export function ProfileNav({ profile, navigate, unreadRequests }: { profile?: PublicProfile; navigate: Navigate; unreadRequests: boolean }) {
   const { t } = useTranslation();
   return (
     <div className="profile-nav">
-      <RouteLink href="/profile" navigate={navigate} className="profile-nav-link" aria-label={t('myProfile')}>
+      <RouteLink href="/profile" navigate={navigate} className="profile-nav-link notification-anchor"
+        aria-label={[t('myProfile'), unreadRequests ? t('unreadFriendRequests') : undefined].filter(Boolean).join(' · ')}>
         {profile && <span className="profile-nav-tag">
           <strong>{profile.name}</strong>{apiAvailable && <small>{t('levelValue', { level: profile.level })}</small>}
         </span>}
@@ -86,6 +91,7 @@ export function ProfileNav({ profile, navigate }: { profile?: PublicProfile; nav
             </svg>
           )}
         </span>
+        <NotificationDot visible={unreadRequests} />
       </RouteLink>
       {profile && apiAvailable && <div className="profile-preview">
         <div className="profile-preview-person">
@@ -98,10 +104,10 @@ export function ProfileNav({ profile, navigate }: { profile?: PublicProfile; nav
   );
 }
 
-function AvatarDialog({ profile, save, close }: {
-  profile: PublicProfile; save: (preferences: ProfilePreferences) => Promise<void>; close: () => void;
+function AvatarDialog({ profile, save, close, navigate }: {
+  profile: PublicProfile; save: (preferences: ProfilePreferences) => Promise<void>; close: () => void; navigate: Navigate;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const [avatar, setAvatar] = useState(profile.avatar);
   const [transparent, setTransparent] = useState(!profile.avatarBackground);
@@ -109,6 +115,8 @@ function AvatarDialog({ profile, save, close }: {
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
   const background = transparent ? null : color;
+  const characterId = isExplorerId(avatar) ? avatar : undefined;
+  const character = characterId ? explorerCopy(characterId, i18n.resolvedLanguage) : undefined;
   useEffect(() => {
     const modal = dialog.current;
     modal?.showModal();
@@ -124,14 +132,47 @@ function AvatarDialog({ profile, save, close }: {
     catch { setFailed(true); setSaving(false); }
   }
 
+  function choiceButton(choice: AvatarId, showName: boolean) {
+    const locked = avatarLevel[choice] > profile.level;
+    const name = isExplorerId(choice) ? explorerCopy(choice, i18n.resolvedLanguage).name : t('avatar_' + choice);
+    return <button key={choice} type="button" aria-label={name} title={name} aria-pressed={choice === avatar}
+      disabled={saving || locked} onClick={() => setAvatar(choice)}>
+      <Avatar appearance={{ avatar: choice }} size={54} characterOnly />
+      {showName && <span className="avatar-option-name">{name}</span>}
+      {locked && <small>{t('levelValue', { level: avatarLevel[choice] })}</small>}
+    </button>;
+  }
+
   return <dialog ref={dialog} className="profile-dialog avatar-dialog surface" aria-labelledby="avatar-dialog-title"
     onCancel={event => { event.preventDefault(); if (!saving) close(); }}>
     <h2 id="avatar-dialog-title">{t('chooseAvatar')}</h2>
     <form className="avatar-editor" onSubmit={event => { event.preventDefault(); void saveDraft(); }}>
       <div className="avatar-preview">
         <div className="avatar-preview-board"><Avatar appearance={{ avatar, avatarBackground: background }} size={88} /></div>
-        <fieldset className="avatar-background">
-          <legend>{t('avatarBackground')}</legend>
+        <div className="avatar-preview-details">
+          <div aria-live="polite" aria-atomic="true">
+            <strong>{character?.name ?? t('avatar_' + avatar)}</strong>
+            {character && <><small>{character.motif} · {character.role}</small><p>{character.summary}</p></>}
+          </div>
+          {characterId && character && <RouteLink className="avatar-explorer-link" href={explorerPath(characterId)} navigate={navigate}>
+            {t('explorerDetails', { name: character.name })}
+          </RouteLink>}
+        </div>
+      </div>
+      <div className="avatar-sections">
+        <Grouper title={t('avatarCharacter')} initiallyOpen>
+          <div className="avatar-character-content">
+            <fieldset>
+              <legend>{t('explorerCrew')}</legend>
+              <div className="avatar-options avatar-explorer-options">{explorerIds.map(choice => choiceButton(choice, true))}</div>
+            </fieldset>
+            <details className="avatar-basic">
+              <summary>{t('avatarBasic')}</summary>
+              <div className="avatar-options">{basicAvatarIds.map(choice => choiceButton(choice, false))}</div>
+            </details>
+          </div>
+        </Grouper>
+        <Grouper title={t('avatarBackground')}>
           <div className="avatar-background-controls">
             <button type="button" className="button button-secondary" aria-pressed={transparent}
               onClick={() => setTransparent(true)} disabled={saving}>{t('avatarTransparent')}</button>
@@ -140,22 +181,11 @@ function AvatarDialog({ profile, save, close }: {
             {!transparent && <input type="color" className="avatar-color" aria-label={t('avatarColor')} value={color}
               disabled={saving} onChange={event => setColor(event.target.value)} />}
           </div>
-        </fieldset>
+        </Grouper>
+        <Grouper title={t('avatarBorder')}>
+          <p className="avatar-border-note muted">{t('avatarBorderComingSoon')}</p>
+        </Grouper>
       </div>
-      <fieldset className="avatar-characters">
-        <legend>{t('avatarCharacter')}</legend>
-        <div className="avatar-options">
-          {avatarIds.map(choice => {
-            const locked = avatarLevel[choice] > profile.level;
-            const name = t('avatar_' + choice);
-            return <button key={choice} type="button" aria-label={name} title={name} aria-pressed={choice === avatar}
-              disabled={saving || locked} onClick={() => setAvatar(choice)}>
-              <Avatar appearance={{ avatar: choice }} size={54} characterOnly />
-              {locked && <small>{t('levelValue', { level: avatarLevel[choice] })}</small>}
-            </button>;
-          })}
-        </div>
-      </fieldset>
       {failed && <p role="alert">{t('profileError')}</p>}
       <div className="panel-actions">
         <button type="submit" className="button button-primary" disabled={saving}>{t('saveSettings')}</button>
@@ -353,12 +383,12 @@ export function ProfilePage({ own, id, model, friends, navigate, edit, onDeleted
           {profile && apiAvailable && <button type="button" className="button button-secondary" onClick={() => void share()}>
             {t(copied ? 'copied' : 'shareProfile')}
           </button>}
-          {apiAvailable && <RouteLink className="button button-secondary" href="/friends" navigate={navigate}>{t('manageFriends')}
+          {apiAvailable && <RouteLink className="button button-secondary notification-anchor" href="/friends" navigate={navigate}>{t('manageFriends')}
             {onlineCount !== undefined && friendCount !== undefined && <small className="profile-friend-count">
               <span aria-hidden="true">({onlineCount}/{friendCount})</span>
               <span className="visually-hidden">{t('friendPresenceCount', { online: onlineCount, total: friendCount })}</span>
             </small>}
-            {friends.incoming.length > 0 && <span className="lobby-count" aria-label={t('incomingFriends')}>{friends.incoming.length}</span>}
+            <NotificationDot visible={friends.unreadIncoming} label={t('unreadFriendRequests')} />
           </RouteLink>}
         </div>}
         {!own && profile && <div className="panel-actions"><FriendButton id={profile.id} model={friends} /></div>}
@@ -371,7 +401,7 @@ export function ProfilePage({ own, id, model, friends, navigate, edit, onDeleted
       </section>}
       {own && profile && touchOpen && <TouchEffectDialog selected={profile.touchEffect ?? 'soft'} save={touchEffect => model.setPreferences({ touchEffect })}
         close={() => setTouchOpen(false)} />}
-      {own && profile && avatarOpen && <AvatarDialog profile={profile} save={model.setPreferences} close={() => setAvatarOpen(false)} />}
+      {own && profile && avatarOpen && <AvatarDialog profile={profile} save={model.setPreferences} close={() => setAvatarOpen(false)} navigate={navigate} />}
       {profile && apiAvailable && (
         <>
           <section className="surface stat-card profile-favorites">

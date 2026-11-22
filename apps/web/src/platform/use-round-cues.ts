@@ -1,12 +1,14 @@
-import { useEffect, useEffectEvent, useState } from 'react';
+import { useContext, useEffect, useEffectEvent, useState } from 'react';
 import { countdownDuration, resultDelay } from '../games/round-cues.ts';
 import type { OutcomeCue } from '../games/round-cues.ts';
+import { MatchRecoveryContext } from './match-recovery.tsx';
 
 export function useRoundStart(id: string, online: { state?: string; roundReady: () => void } | undefined,
   sharedStart: number, onLocalStart: (at: number) => void) {
   const [readyId, setReadyId] = useState('');
   const [local, setLocal] = useState<{ id: string; at: number }>();
   const [opened, setOpened] = useState<{ id: string; at: number }>();
+  const paused = Boolean(useContext(MatchRecoveryContext));
   const requestReady = useEffectEvent(() => online?.roundReady());
   const beginsAt = online || sharedStart ? sharedStart : local?.id === id ? local.at : 0;
   const connected = online?.state === 'connected';
@@ -19,10 +21,10 @@ export function useRoundStart(id: string, online: { state?: string; roundReady: 
   }, [id, readyId, connected, beginsAt]);
 
   useEffect(() => {
-    if (!beginsAt) return;
+    if (!beginsAt || paused) return;
     const timer = window.setTimeout(() => setOpened({ id, at: beginsAt }), Math.max(0, beginsAt - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [id, beginsAt]);
+  }, [id, beginsAt, paused]);
 
   return {
     beginsAt,

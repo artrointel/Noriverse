@@ -1,7 +1,8 @@
 import { DurableObject } from 'cloudflare:workers';
-import { isRoomRole, maxRelayMessageLength, readRelayData, readSignal, roomCapacity, roomHeartbeat, roomRoles } from '../../packages/protocol/rooms.ts';
-import type { Participant, Role, RoomGame, RoomMessage } from '../../packages/protocol/rooms.ts';
+import { isRoomRole, maxRelayMessageLength, readRelayData, readRoomActivity, readRoomLinks, readSignal, roomCapacity, roomHeartbeat, roomRoles } from '../../packages/protocol/rooms.ts';
+import type { Participant, Role, RoomActivity, RoomGame, RoomMessage } from '../../packages/protocol/rooms.ts';
 import type { ProfileSummary } from '../../packages/protocol/profile.ts';
+import { profileIdPattern } from '../../packages/protocol/profile.ts';
 import type { Env } from './bindings.ts';
 import { notifyFriends } from './profiles.ts';
 import { minimumRoomPlayers } from '../../packages/protocol/games.ts';
@@ -11,7 +12,7 @@ import { roomStreakBadges } from '../../packages/protocol/room-badges.ts';
 
 interface Reservation { host: string; hostJoined?: boolean; guest?: string; guest2?: string; guest3?: string; game?: RoomGame; expires: number;
   profiles?: Partial<Record<Role, ProfileSummary>>; memberIds?: Partial<Record<Role, string>>; closedAt?: number; title?: string }
-type AttachedSeat = { role: Role; token?: string; relay?: boolean };
+type AttachedSeat = { role: Role; token?: string; relay?: boolean; upgrade?: string; activity?: RoomActivity };
 const unclaimedRoomLifetime = 30 * 60 * 1000;
 const guests = roomRoles.filter(role => role !== 'host');
 const hasOpenSeat = (room: Reservation) => roomRoles.filter(role => room[role]).length < roomCapacity[room.game ?? 'omok'];
@@ -145,8 +146,9 @@ export class Room extends DurableObject<Env> {
   }
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
-    const role = this.attachedSeat(socket)?.role;
-    if (!role || this.socketFor(role) !== socket || typeof message !== 'string' || message.length > maxRelayMessageLength) return;
+    const seat = this.attachedSeat(socket);
+    if (!seat || this.socketFor(seat.role) !== socket || typeof message !== 'string' || message.length > maxRelayMessageLength) return;
+    const { role } = seat;
     try {
       const raw: unknown = JSON.parse(message);
       if (role === 'host' && raw && typeof raw === 'object' && 'type' in raw && raw.type === 'room-result') {
@@ -171,25 +173,53 @@ export class Room extends DurableObject<Env> {
       const requested = raw && typeof raw === 'object' && 'peer' in raw ? raw.peer : 'guest';
       const target = role === 'host' ? requested : 'host';
       if (raw && typeof raw === 'object' && 'type' in raw) {
+        if (raw.type === 'room-activity') {
+          const activity = 'activity' in raw ? readRoomActivity(raw.activity) : undefined;
+          if (!activity || activity === seat.activity) return;
+          socket.serializeAttachment({ ...seat, activity });
+          for (const peer of roomRoles) {
+            const member = this.socketFor(peer);
+            if (member) send(member, { type: 'room-activity', peer: role, activity });
+          }
+          return;
+        }
+        if (raw.type === 'room-links' && role === 'host' && 'paths' in raw && this.allowRelayMessage(socket)) {
+          const paths = readRoomLinks(raw.paths);
+          if (paths) for (const peer of guests) {
+            const guest = this.socketFor(peer);
+            if (guest) send(guest, { type: 'room-links', paths });
+          }
+          return;
+        }
         if (role === 'host' && raw.type === 'repair') {
           for (const peer of guests) if ((!('peer' in raw) || requested === peer) && !this.pair(socket, peer)) send(socket, { type: 'peer-left', peer });
           return;
         }
-        if (isRoomRole(target) && target !== role && (raw.type === 'relay-request' || raw.type === 'relay-open' || raw.type === 'relay-data')) {
+        if (isRoomRole(target) && target !== role && (raw.type === 'direct-lost' || raw.type === 'relay-request'
+          || raw.type === 'relay-open' || raw.type === 'relay-data' || raw.type === 'upgrade-start' || raw.type === 'relay-close')) {
           const other = this.socketFor(target);
           if (!other || !this.allowRelayMessage(socket)) return;
           const guest = role === 'host' ? other : socket;
           const attachment = this.attachedSeat(guest);
           if (!attachment) return;
-          if (raw.type === 'relay-request' && role !== 'host' && !attachment.relay) {
-            send(other, { type: 'relay-request', peer: role });
-          } else if (raw.type === 'relay-open' && role === 'host' && !attachment.relay) {
-            guest.serializeAttachment({ ...attachment, relay: true });
+          if ((raw.type === 'direct-lost' || raw.type === 'relay-request') && role !== 'host') {
+            send(other, { type: raw.type, peer: role });
+          } else if (raw.type === 'relay-open' && role === 'host') {
+            guest.serializeAttachment({ ...attachment, relay: true, upgrade: undefined });
             send(guest, { type: 'relay-open', peer: 'host' });
             send(socket, { type: 'relay-open', peer: target });
           } else if (raw.type === 'relay-data' && attachment.relay && 'data' in raw) {
             const data = readRelayData(raw.data);
             if (data) send(other, { type: 'relay-data', peer: role, data });
+          } else if (role === 'host' && attachment.relay && 'attempt' in raw && typeof raw.attempt === 'string'
+            && profileIdPattern.test(raw.attempt)) {
+            if (raw.type === 'upgrade-start') {
+              guest.serializeAttachment({ ...attachment, upgrade: raw.attempt });
+              send(other, { type: 'upgrade-start', peer: role, attempt: raw.attempt });
+              send(socket, { type: 'upgrade-start', peer: target, attempt: raw.attempt });
+            } else if (raw.type === 'relay-close' && attachment.upgrade === raw.attempt) {
+              guest.serializeAttachment({ ...attachment, relay: false, upgrade: undefined });
+            }
           }
           return;
         }
@@ -198,7 +228,12 @@ export class Room extends DurableObject<Env> {
       const signal = readSignal(raw, role);
       if (signal && isRoomRole(target) && role !== target) {
         const other = this.socketFor(target);
-        if (other) send(other, { ...signal, peer: role });
+        if (!other) return;
+        const guest = this.attachedSeat(role === 'host' ? other : socket);
+        const attempt = raw && typeof raw === 'object' && 'attempt' in raw ? raw.attempt : undefined;
+        if (attempt === undefined || (typeof attempt === 'string' && guest?.relay && attempt === guest.upgrade)) {
+          send(other, { ...signal, peer: role, attempt });
+        }
       }
     } catch {
       socket.close(1007);
@@ -234,7 +269,7 @@ export class Room extends DurableObject<Env> {
     const guest = this.socketFor(role);
     if (!guest) return false;
     const attachment = this.attachedSeat(guest);
-    if (attachment?.relay) guest.serializeAttachment({ ...attachment, relay: false });
+    if (attachment?.relay) guest.serializeAttachment({ ...attachment, relay: false, upgrade: undefined });
     send(guest, { type: 'paired', peer: 'host' });
     send(host, { type: 'paired', peer: role });
     return true;
@@ -351,14 +386,17 @@ export class Room extends DurableObject<Env> {
 
   private sendRoster(reservation: Reservation, excluded?: WebSocket) {
     const participants: Participant[] = [];
+    const away: Participant[] = [];
     const sockets: WebSocket[] = [];
     for (const role of roomRoles) {
+      const participant = { role, profile: reservation.profiles?.[role], memberId: reservation.memberIds?.[role] };
       const socket = this.socketFor(role, excluded);
-      if (!socket) continue;
-      sockets.push(socket);
-      participants.push({ role, profile: reservation.profiles?.[role], memberId: reservation.memberIds?.[role] });
+      if (socket) {
+        sockets.push(socket);
+        participants.push({ ...participant, activity: this.attachedSeat(socket)?.activity });
+      } else if (reservation[role] && participant.memberId) away.push(participant);
     }
-    for (const socket of sockets) send(socket, { type: 'roster', participants });
+    for (const socket of sockets) send(socket, { type: 'roster', participants, away });
   }
 
   private socketFor(role: Role, excluded?: WebSocket) {
