@@ -8,7 +8,7 @@ import { formatPlayTime } from './game-time.tsx';
 import { RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
 import type { ReactNode } from 'react';
-import { BlurredSurface } from './blurred-surface.tsx';
+import { Popup } from './popup.tsx';
 
 export function GameResult({ report, winner, title, surrendered, timedOut, scores, details, visible, onClose, room, record, rematch, back, navigate }: {
   report: MatchReport;
@@ -37,14 +37,7 @@ export function GameResult({ report, winner, title, surrendered, timedOut, score
 
   const label = title ?? (winner === 'draw' ? t('draw') : t('winner', { stone: t(sideLabel(report.game, winner)) }));
   return (
-    <BlurredSurface className="result-card" role="dialog" aria-labelledby="match-result-title"
-      onKeyDown={event => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          onClose();
-        }
-      }}>
-      <button type="button" className="settings-close result-close" aria-label={t('viewBoard')} onClick={onClose}><span aria-hidden="true" /></button>
+    <Popup mode="board" className="result-card" aria-labelledby="match-result-title" onDismiss={onClose} closeLabel={t('viewBoard')}>
       <div className="result-medal" aria-hidden="true">✦</div>
       <p>{t('matchResult', { game: t(report.game) })}</p>
       <h2 id="match-result-title" ref={heading} tabIndex={-1}>{label}</h2>
@@ -68,6 +61,6 @@ export function GameResult({ report, winner, title, surrendered, timedOut, score
           className="button button-secondary">{t(room ? 'goToRoom' : 'backToGames')}</RouteLink>
         {saved === 'failed' && <button type="button" className="button button-secondary" onClick={() => setAttempt(value => value + 1)}>{t('saveResult')}</button>}
       </div>
-    </BlurredSurface>
+    </Popup>
   );
 }

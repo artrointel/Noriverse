@@ -1,3 +1,4 @@
+import { Popup } from './popup.tsx';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -25,23 +26,16 @@ function Achievement({ id, earnedAt }: { id: BadgeId; earnedAt?: number }) {
 function BadgeGuide({ badges, close }: { badges: EarnedBadge[]; close: () => void }) {
   const { t } = useTranslation();
   const title = useId();
-  const ref = useRef<HTMLDialogElement>(null);
   const [current, setCurrent] = useState<'earned' | 'unearned'>('earned');
-  useEffect(() => {
-    const dialog = ref.current;
-    dialog?.showModal();
-    return () => dialog?.close();
-  }, []);
   const earned = new Map(badges.map(badge => [badge.id, badge.earnedAt]));
   const tabs = [
     { id: 'earned', label: 'badgesEarned', empty: 'badgesEarnedEmpty', badges: badgeIds.filter(id => earned.has(id)) },
     { id: 'unearned', label: 'badgesUnearned', empty: 'badgesUnearnedEmpty', badges: badgeIds.filter(id => !earned.has(id)) },
   ] as const;
-  return <dialog ref={ref} className="surface profile-dialog badge-guide" aria-labelledby={title} onCancel={event => { event.preventDefault(); close(); }}>
+  return <Popup className="badge-guide" aria-labelledby={title} onDismiss={close}>
     <header className="room-panel-heading">
       <h2 id={title}>{t('badgeGuide')}</h2>
       <small>{earned.size} / {badgeIds.length}</small>
-      <button className="settings-close" type="button" onClick={close} aria-label={t('close')}><span aria-hidden="true" /></button>
     </header>
     <div className="badge-guide-tabs" role="tablist" aria-label={t('badges')} onKeyDown={event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -64,7 +58,7 @@ function BadgeGuide({ badges, close }: { badges: EarnedBadge[]; close: () => voi
         </li>)}
       </ul> : <p className="muted">{t(tab.empty)}</p>}
     </div>)}
-  </dialog>;
+  </Popup>;
 }
 
 export function ProfileBadges({ badges = [] }: { badges?: EarnedBadge[] }) {

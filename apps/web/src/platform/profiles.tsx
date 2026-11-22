@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { Popup } from './popup.tsx';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { avatarLevel, basicAvatarIds, readName, secondsPerLevel, touchEffects, winRate } from '../../../../packages/protocol/profile.ts';
 import type { AvatarId, ProfilePreferences, PublicProfile, TouchEffect } from '../../../../packages/protocol/profile.ts';
@@ -26,15 +27,9 @@ export function NameDialog({ name, close, save }: {
   name?: string; close: () => void; save: (name: string) => Promise<void>;
 }) {
   const { t, i18n } = useTranslation();
-  const element = useRef<HTMLDialogElement>(null);
   const [value, setValue] = useState(() => name ?? readBrowserProfile()?.name ?? '');
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    const dialog = element.current;
-    dialog?.showModal();
-    return () => { dialog?.close(); };
-  }, []);
 
   async function submit() {
     const clean = readName(value);
@@ -51,8 +46,8 @@ export function NameDialog({ name, close, save }: {
   }
 
   return (
-    <dialog ref={element} className="profile-dialog surface" aria-labelledby="profile-prompt"
-      onCancel={event => { event.preventDefault(); if (!busy) close(); }}>
+    <Popup aria-labelledby="profile-prompt"
+      onDismiss={close} locked={busy}>
       <form onSubmit={event => { event.preventDefault(); void submit(); }}>
         <h2 id="profile-prompt">{t(name ? 'editName' : 'profilePrompt')}</h2>
         <p className="muted">{t(apiAvailable ? 'profileNotice' : 'browserProfileNotice')}</p>
@@ -71,7 +66,7 @@ export function NameDialog({ name, close, save }: {
           <button type="button" className="button button-secondary" onClick={close} disabled={busy}>{t('later')}</button>
         </div>
       </form>
-    </dialog>
+    </Popup>
   );
 }
 
@@ -108,7 +103,6 @@ function AvatarDialog({ profile, save, close, navigate }: {
   profile: PublicProfile; save: (preferences: ProfilePreferences) => Promise<void>; close: () => void; navigate: Navigate;
 }) {
   const { t, i18n } = useTranslation();
-  const dialog = useRef<HTMLDialogElement>(null);
   const [avatar, setAvatar] = useState(profile.avatar);
   const [transparent, setTransparent] = useState(!profile.avatarBackground);
   const [color, setColor] = useState(profile.avatarBackground ?? '#7863c4');
@@ -117,11 +111,6 @@ function AvatarDialog({ profile, save, close, navigate }: {
   const background = transparent ? null : color;
   const characterId = isExplorerId(avatar) ? avatar : undefined;
   const character = characterId ? explorerCopy(characterId, i18n.resolvedLanguage) : undefined;
-  useEffect(() => {
-    const modal = dialog.current;
-    modal?.showModal();
-    return () => { modal?.close(); };
-  }, []);
 
   async function saveDraft() {
     if (saving || avatarLevel[avatar] > profile.level) return;
@@ -143,8 +132,8 @@ function AvatarDialog({ profile, save, close, navigate }: {
     </button>;
   }
 
-  return <dialog ref={dialog} className="profile-dialog avatar-dialog surface" aria-labelledby="avatar-dialog-title"
-    onCancel={event => { event.preventDefault(); if (!saving) close(); }}>
+  return <Popup className="avatar-dialog" aria-labelledby="avatar-dialog-title"
+    onDismiss={close} locked={saving}>
     <h2 id="avatar-dialog-title">{t('chooseAvatar')}</h2>
     <form className="avatar-editor" onSubmit={event => { event.preventDefault(); void saveDraft(); }}>
       <div className="avatar-preview">
@@ -192,7 +181,7 @@ function AvatarDialog({ profile, save, close, navigate }: {
         <button type="button" className="button button-secondary" onClick={close} disabled={saving}>{t('cancel')}</button>
       </div>
     </form>
-  </dialog>;
+  </Popup>;
 }
 
 function GameHistory({ profile }: { profile: PublicProfile }) {
@@ -237,17 +226,11 @@ function GameHistory({ profile }: { profile: PublicProfile }) {
 
 function TouchEffectDialog({ selected, save, close }: { selected: TouchEffect; save: (effect: TouchEffect) => Promise<void>; close: () => void }) {
   const { t } = useTranslation();
-  const dialog = useRef<HTMLDialogElement>(null);
   const [effect, setEffect] = useState(selected);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    const element = dialog.current;
-    element?.showModal();
-    return () => { element?.close(); };
-  }, []);
-  return <dialog className="surface profile-dialog" ref={dialog} aria-labelledby="touch-effect-title"
-    onCancel={event => { event.preventDefault(); if (!saving) close(); }}>
+  return <Popup aria-labelledby="touch-effect-title"
+    onDismiss={close} locked={saving}>
     <form onSubmit={async event => {
       event.preventDefault();
       if (saving) return;
@@ -272,7 +255,7 @@ function TouchEffectDialog({ selected, save, close }: { selected: TouchEffect; s
         <button className="button button-secondary" type="button" onClick={close} disabled={saving}>{t('cancel')}</button>
       </div>
     </form>
-  </dialog>;
+  </Popup>;
 }
 
 function DeleteIcon() {
@@ -284,14 +267,8 @@ function DeleteIcon() {
 
 function DeleteProfileDialog({ confirm, close }: { confirm: () => Promise<void>; close: () => void }) {
   const { t } = useTranslation();
-  const dialog = useRef<HTMLDialogElement>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    const modal = dialog.current;
-    modal?.showModal();
-    return () => { modal?.close(); };
-  }, []);
 
   async function submit() {
     if (busy) return;
@@ -303,12 +280,11 @@ function DeleteProfileDialog({ confirm, close }: { confirm: () => Promise<void>;
 
   function dismiss() {
     if (busy) return;
-    dialog.current?.close();
     close();
   }
 
-  return <dialog className="surface profile-dialog profile-delete-dialog" ref={dialog} aria-labelledby="delete-profile-title"
-    aria-describedby="delete-profile-help" onCancel={event => { event.preventDefault(); dismiss(); }}>
+  return <Popup className="profile-delete-dialog" aria-labelledby="delete-profile-title"
+    aria-describedby="delete-profile-help" onDismiss={dismiss} locked={busy}>
     <form onSubmit={event => { event.preventDefault(); void submit(); }}>
       <header className="profile-delete-heading">
         <span className="profile-delete-icon"><DeleteIcon /></span>
@@ -321,7 +297,7 @@ function DeleteProfileDialog({ confirm, close }: { confirm: () => Promise<void>;
         <button type="submit" className="button profile-delete-confirm" disabled={busy}>{t(busy ? 'deletingProfile' : 'deleteProfile')}</button>
       </div>
     </form>
-  </dialog>;
+  </Popup>;
 }
 
 export function ProfilePage({ own, id, model, friends, navigate, edit, onDeleted }: {

@@ -1,3 +1,4 @@
+import { Popup } from './popup.tsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
@@ -131,19 +132,12 @@ function FriendGroups({ friends, navigate, action, showLastOnline = false }: {
 export function InviteDialog({ owner, navigate, invite, close }: { owner: string | undefined; navigate: Navigate; invite: (id: string) => Promise<boolean>; close: () => void }) {
   const { t } = useTranslation();
   const model = useFriends(owner, 'full');
-  const dialog = useRef<HTMLDialogElement>(null);
   const [sent, setSent] = useState<string[]>([]);
   const [sending, setSending] = useState<string>();
   const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    const element = dialog.current;
-    element?.showModal();
-    return () => { element?.close(); };
-  }, []);
-  return <dialog className="surface profile-dialog invite-dialog" ref={dialog} aria-labelledby="invite-dialog-title"
-    onCancel={event => { event.preventDefault(); close(); }}>
+  return <Popup className="invite-dialog" aria-labelledby="invite-dialog-title"
+    onDismiss={close}>
     <div className="settings-heading"><h2 id="invite-dialog-title">{t('inviteFriend')}</h2>
-      <button className="settings-close" type="button" aria-label={t('close')} onClick={close}><span aria-hidden="true" /></button>
     </div>
     {model.failed ? <p role="alert">{t('friendsUnavailable')}</p> : !model.friends ? <p role="status">{t('profileLoading')}</p>
       : model.friends.length === 0 ? <p>{t('emptyFriends')}</p>
@@ -158,7 +152,7 @@ export function InviteDialog({ owner, navigate, invite, close }: { owner: string
         }}>{t(complete ? 'inviteSent' : 'inviteFriend')}</button>;
       }} />}
     {failed && <p role="alert">{t('inviteError')}</p>}
-  </dialog>;
+  </Popup>;
 }
 
 export function FriendButton({ id, model, allowRemoval = false }: { id: string; model: Friends; allowRemoval?: boolean }) {

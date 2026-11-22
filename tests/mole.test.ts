@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { advanceMole, createMoleRound, defaultMoleSettings, feverDuration, giantDuration,
-  moleHardLimit, moleOutcome, nextMoleAt, readMoleRound, readMoleSettings, resignMole, shiftMoleClock, startMoleRound, strikeMole } from '../apps/web/src/games/mole/rules.ts';
+  moleHardLimit, moleOutcome, moleRemaining, nextMoleAt, readMoleRound, readMoleSettings, resignMole, shiftMoleClock, startMoleRound, strikeMole } from '../apps/web/src/games/mole/rules.ts';
 import type { MoleRound, MoleTarget } from '../apps/web/src/games/mole/rules.ts';
+import { hammerHeadOffset, hammerSwing } from '../apps/web/src/games/mole/hammer.ts';
 
 const begins = 10_000;
 
@@ -24,10 +25,64 @@ test('3 x 3, 4 x 4 and timed settings share a seeded opening across players', ()
     const first = advanceMole(playing, nextMoleAt(playing)!);
     assert(first);
     assert.deepEqual(first.boards.host!.targets, first.boards.guest3!.targets);
+    assert.equal(first.boards.host!.targets.length, 2);
     assert(first.boards.host!.targets.every(target => target.cell < size ** 2));
     assert.deepEqual(readMoleRound(JSON.parse(JSON.stringify(first))), first);
   }
   assert.equal(readMoleSettings({ size: 5, seconds: 10, mode: 'timed' }), undefined);
+});
+
+test('target overlap starts early and late characters still remain visible long enough to react', () => {
+  const config = { ...defaultMoleSettings, mode: 'endless' } as const;
+  const round = startMoleRound(createMoleRound(config, ['host'], 10), begins);
+  const early = advanceMole(round, nextMoleAt(round)!);
+  assert(early);
+  const next = advanceMole(early, nextMoleAt(early)!);
+  assert(next);
+  assert(next.boards.host!.targets.length >= 3);
+  const lateAt = begins + 145_000;
+  const late = advanceMole({ ...round, boards: { host: { ...round.boards.host!, until: begins + moleHardLimit } } }, lateAt);
+  assert(late);
+  assert(late.boards.host!.targets.every(target => target.until - lateAt >= 1300));
+  assert(late.boards.host!.next - lateAt >= 450);
+});
+
+test('hammer swings approach from several directions, land on target and rebound', () => {
+  const starts = new Set<string>();
+  for (const id of [1, 2, 3, 4]) {
+    const swing = hammerSwing(id, false);
+    starts.add(JSON.stringify(swing.pose(0)));
+    const windup = swing.pose(0);
+    const contact = swing.pose(swing.contactAt);
+    const raisedHead = hammerHeadOffset(102, windup.angle, swing.mirrored);
+    const landedHead = hammerHeadOffset(102, contact.angle, swing.mirrored);
+    assert(raisedHead.y + windup.y < landedHead.y - 15);
+    assert.equal(swing.pose(swing.contactAt).y || 0, 0);
+    assert.equal(swing.pose(swing.contactAt).x || 0, 0);
+    assert(swing.pose((swing.contactAt + swing.endAt) / 2).y < 0);
+    assert.equal(swing.pose(swing.endAt).alpha, 0);
+  }
+  assert.equal(starts.size, 4);
+});
+
+test('fever pauses only its player timer and preserves the stored remaining time after resuming', () => {
+  const round = startMoleRound(createMoleRound(defaultMoleSettings, ['host', 'guest'], 1), begins);
+  Object.assign(round.boards.host!, { combo: 29, best: 29, caught: 29 });
+  const now = begins + 59_750;
+  const fever = strikeMole(withTarget(round, 'crew', now), 'host', 1, now);
+  assert(fever);
+  const board = fever.boards.host!;
+  assert.equal(board.strike?.timeDelta, 0);
+  assert.equal(moleRemaining(board, now), 250);
+  assert.equal(moleRemaining(board, now + 4800), 250);
+  const pastOriginalDeadline = advanceMole(fever, now + 1000);
+  assert(pastOriginalDeadline);
+  assert.equal(pastOriginalDeadline.boards.host!.out, false);
+  assert.equal(pastOriginalDeadline.boards.guest!.out, true);
+  assert.equal(moleRemaining(board, now + feverDuration + 100), 150);
+  assert.equal(advanceMole(fever, now + feverDuration + 250)?.boards.host!.out, true);
+  const restored = shiftMoleClock(fever, 3200);
+  assert.equal(moleRemaining(restored.boards.host!, now + 3300), 250);
 });
 
 test('30-combo fever doubles gains and penalties for five seconds and attacks a rival', () => {

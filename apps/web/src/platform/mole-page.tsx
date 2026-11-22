@@ -4,7 +4,7 @@ import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, ProfileSummary, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import type { Role } from '../../../../packages/protocol/rooms.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
-import { advanceMole, createMoleRound, moleOutcome, nextMoleAt, resignMole, startMoleRound, strikeMole } from '../games/mole/rules.ts';
+import { advanceMole, createMoleRound, moleHardLimit, moleOutcome, nextMoleAt, resignMole, startMoleRound, strikeMole } from '../games/mole/rules.ts';
 import type { MoleRound, MoleSettings } from '../games/mole/rules.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import { RoomPlayerAvatar } from './avatar.tsx';
@@ -25,7 +25,7 @@ export function MolePage({ room, settings, ownProfile, navigate, dark, antialias
   showTouches: boolean; onTouchDisplay: (value: boolean) => void; touchStyle: TouchEffect;
   record?: (report: MatchReport) => Promise<boolean>;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [practice, setPractice] = useState(() => newPractice(settings));
   const [cursor, setCursor] = useState<number | null>(null);
   const [closedResult, setClosedResult] = useState('');
@@ -74,7 +74,7 @@ export function MolePage({ room, settings, ownProfile, navigate, dark, antialias
   }
 
   const labels = useMemo(() => ({
-    score: t('moleScore'), time: t('moleClock'), combo: t('moleCombo'), fever: t('moleFever'),
+    score: t('moleScore'), time: t('moleClock'), combo: t('moleCombo'),
     giant: t('moleGiant'), fog: t('moleFog'), decoys: t('moleDecoys'),
   }), [t]);
   const outcome = room ? moleOutcome(round, role) : 'practice';
@@ -92,9 +92,10 @@ export function MolePage({ room, settings, ownProfile, navigate, dark, antialias
     const name = profile?.name ?? t(participant?.mock ? 'mockSeat' : player === role ? 'me' : player === 'host' ? 'host' : 'anonymousSeat', { number: index + 1 });
     return { player, profile, name, data: round.boards[player]!, result: room && moleOutcome(round, player) };
   });
-  const rivals = players.filter(player => player.player !== role).map(({ name, data }) => {
+  const rivals = players.filter(player => player.player !== role).map(({ player, name, data }) => {
     const letters = Array.from(name);
-    return { name: letters.length > 7 ? letters.slice(0, 7).join('') + '…' : name, score: data.score, out: data.out };
+    return { role: player, name: letters.length > 7 ? letters.slice(0, 7).join('') + '…' : name,
+      score: data.score, out: data.out, strike: data.strike, feverUntil: data.feverUntil };
   });
   const stats = <section className="sichuan-score" aria-label={t('sichuanPlayerStats')}>
     {players.map(({ player, profile, name, data, result }) => <div key={player}>
@@ -136,6 +137,8 @@ export function MolePage({ room, settings, ownProfile, navigate, dark, antialias
             }
           },
           mole: { id, size, board, labels, hit, active: canMove, clockOffset, start: round.start, rivals,
+            language: i18n.resolvedLanguage === 'ko' ? 'ko' : 'en',
+            hardEnd: round.settings.mode === 'endless' ? round.start + moleHardLimit : undefined,
             limit: round.settings.mode === 'endless' ? 60 : round.settings.seconds } }} />
     </div>
   </div>;

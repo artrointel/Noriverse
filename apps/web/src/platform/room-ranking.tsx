@@ -1,3 +1,4 @@
+import { Popup } from './popup.tsx';
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -102,30 +103,23 @@ function MatchHistory({ entries }: Pick<Ranking, 'entries'>) {
 function RankingDialog({ data, initial, close }: { data: Ranking; initial: View; close: () => void }) {
   const { t } = useTranslation();
   const title = useId();
-  const dialog = useRef<HTMLDialogElement>(null);
   const [view, setView] = useState(initial);
   const rankingTitle = t(data.test ? 'roomTestRanking' : 'roomRanking');
-  useEffect(() => {
-    const element = dialog.current;
-    element?.showModal();
-    return () => { element?.close(); };
-  }, []);
 
-  return <dialog ref={dialog} className="surface profile-dialog room-ranking-dialog" aria-labelledby={title}
-    onCancel={event => { event.preventDefault(); close(); }}>
+  return <Popup className="room-ranking-dialog" aria-labelledby={title}
+    onDismiss={close}>
     <header className="room-panel-heading">
       <div>
         <h2 id={title}>{view === 'ranking' ? rankingTitle : t(data.test ? 'roomTestHistory' : 'roomHistory')}</h2>
         {data.roomTitle && <p className="ranking-room-title">{data.roomTitle}</p>}
       </div>
-      <button className="settings-close" type="button" aria-label={t('close')} onClick={close}><span aria-hidden="true" /></button>
     </header>
     {view === 'ranking' ? <RankingRows {...data} /> : <MatchHistory entries={data.entries} />}
     {initial === 'ranking' && <button type="button" className="button button-secondary"
       onClick={() => setView(view === 'ranking' ? 'history' : 'ranking')}>
       {view === 'ranking' ? t('viewRoomHistory') : rankingTitle}
     </button>}
-  </dialog>;
+  </Popup>;
 }
 
 export function RoomRankingBoard(data: Ranking) {
@@ -134,7 +128,7 @@ export function RoomRankingBoard(data: Ranking) {
   const [scope, setScope] = useState<boolean>();
   const testing = Boolean(data.test || data.participants.some(player => player.mock));
   const testAvailable = testing || data.entries.some(entry => entry.test);
-  const test = testAvailable && (scope ?? testing);
+  const test = testAvailable && (scope ?? (testing || !data.entries.some(entry => !entry.test)));
   const ranking = forRankingScope(data, test);
   const title = t(test ? 'roomTestRanking' : 'roomRanking');
   return <section className="room-ranking-board" aria-label={title}>
@@ -145,7 +139,7 @@ export function RoomRankingBoard(data: Ranking) {
           <option value="room">{t('roomRanking')}</option>
           <option value="test">{t('roomTestRanking')}</option>
         </select>}
-        <RankingRows {...ranking} />
+        <RankingRows {...ranking} participants={ranking.entries.length ? ranking.participants : []} />
         <button type="button" className="button button-secondary" onClick={() => setOpen(true)}>{t('viewRoomHistory')}</button>
       </div>
     </Grouper>

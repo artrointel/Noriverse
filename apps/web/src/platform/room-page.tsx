@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { Popup } from './popup.tsx';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 import { isRoomGame, roomCapacity, roomCodePattern, roomRoles } from '../../../../packages/protocol/rooms.ts';
@@ -72,20 +73,13 @@ export function CreateRoomPage({ selected, select, navigate }: {
 
 function RoomSettingsDialog({ room, close }: { room: Room; close: () => void }) {
   const { t } = useTranslation();
-  const dialog = useRef<HTMLDialogElement>(null);
   const [draft, setDraft] = useState(room.settings);
   const [valid, setValid] = useState(true);
-  useEffect(() => {
-    const element = dialog.current;
-    element?.showModal();
-    return () => { element?.close(); };
-  }, []);
   const changed = JSON.stringify(draft) !== JSON.stringify(room.settings);
-  return <dialog ref={dialog} className="surface profile-dialog room-rules-dialog" aria-labelledby="room-rules-title"
-    onCancel={event => { event.preventDefault(); close(); }}>
+  return <Popup className="room-rules-dialog" aria-labelledby="room-rules-title"
+    onDismiss={close}>
     <header className="room-panel-heading">
       <h2 id="room-rules-title">{t('setupTitle', { game: t(room.game) })}</h2>
-      <button className="settings-close" type="button" aria-label={t('close')} onClick={close}><span aria-hidden="true" /></button>
     </header>
     <form onSubmit={event => { event.preventDefault(); if (changed && valid && room.configureMatch(draft)) close(); }}>
       <div className="setup-dialog-body">
@@ -96,22 +90,15 @@ function RoomSettingsDialog({ room, close }: { room: Room; close: () => void }) 
         <button type="submit" className="button button-primary" disabled={!valid || !changed}>{t('saveSettings')}</button>
       </footer>
     </form>
-  </dialog>;
+  </Popup>;
 }
 
 function RoomGamesDialog({ room, choices, participants, close }: { room: Room; choices: RoomGame[]; participants: number; close: () => void }) {
   const { t } = useTranslation();
-  const dialog = useRef<HTMLDialogElement>(null);
   const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    const element = dialog.current;
-    element?.showModal();
-    return () => { element?.close(); };
-  }, []);
 
-  return <dialog ref={dialog} className="surface profile-dialog room-games-dialog" aria-labelledby="room-games-title"
-    onCancel={event => { event.preventDefault(); if (!room.changingGame) close(); }}>
-    <button className="settings-close" type="button" aria-label={t('close')} disabled={room.changingGame} onClick={close}><span aria-hidden="true" /></button>
+  return <Popup className="room-games-dialog" aria-labelledby="room-games-title"
+    onDismiss={close} locked={room.changingGame}>
     <h2 id="room-games-title">{t('changeRoomGame')}</h2>
     <p className="muted">{t('roomGameChoices', { count: participants })}</p>
     {room.started && !room.finishedAt && <p className="muted">{t('changeLiveGame')}</p>}
@@ -123,7 +110,7 @@ function RoomGamesDialog({ room, choices, participants, close }: { room: Room; c
     }} />
     {room.changingGame && <p role="status">{t('loading')}</p>}
     {failed && <p role="alert">{t('changeGameError')}</p>}
-  </dialog>;
+  </Popup>;
 }
 
 function ParticipantStats({ id, game, own, latest }: { id: string; game: RoomGame; own?: PublicProfile; latest?: Room['roomHistory'][number] }) {
@@ -249,6 +236,8 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
     <GameFeature game={activeGame} heading={t(activeGame)}>
       <div className="lobby-feature-rules"><GameRulesSummary game={activeGame} settings={room.settings} /></div>
       <div className="lobby-feature-panels">
+        {room.roomHistory.length > 0 && <RoomRankingBoard key={room.code} entries={room.roomHistory} participants={participants}
+          roomTitle={room.title} test={room.testMatch && !room.mockControls} />}
         <section className="lobby-participants" aria-label={t('participants')}>
           <header className="room-panel-heading"><h2>{t('participants')}</h2><div className="lobby-participant-tools">
             <span className="lobby-count">{participants.length}/{capacity}</span>
@@ -305,7 +294,6 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           {room.role === 'host' && <button className="button button-secondary lobby-invite" type="button"
             disabled={!friends.owner || participants.length >= capacity} onClick={() => setInviteOpen(true)}>{t('inviteFriend')}</button>}
         </section>
-        <RoomRankingBoard entries={room.roomHistory} participants={participants} roomTitle={room.title} test={room.testMatch && !room.mockControls} />
       </div>
       <div className="panel-actions lobby-feature-actions">
         {canEdit && <button type="button" className="button button-secondary" disabled={room.changingGame || !room.matchId}

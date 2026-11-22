@@ -1,3 +1,4 @@
+import { Popup } from './popup.tsx';
 import { RoomRankingControl } from './room-ranking.tsx';
 import { useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState } from 'react';
 import { MatchRecoveryContext, MatchRecoveryDialog } from './match-recovery.tsx';
@@ -58,9 +59,9 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const requestedSize = useRef({ frame: { width: tableSize, height: sceneHeight }, buffer: { width: tableSize, height: sceneHeight } });
   const [actualSize, setActualSize] = useState(requestedSize.current);
   const resultButton = useRef<HTMLButtonElement>(null);
-  const gameSettings = useRef<HTMLDetailsElement>(null);
+  const [gameSettingsOpen, setGameSettingsOpen] = useState(false);
   const gameInfo = useRef<HTMLDetailsElement>(null);
-  const gameHelp = useRef<HTMLDialogElement>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const helpId = useId();
   const burstId = useRef(0);
   const [bursts, setBursts] = useState<{ id: number; x: number; y: number; remote: boolean; effect: TouchParticle }[]>([]);
@@ -230,17 +231,14 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         : previous === 'native' ? null : previous);
     };
     const onEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented) setExpanded(previous => previous === 'page' ? null : previous);
+      if (event.key === 'Escape' && !event.defaultPrevented && !document.querySelector('dialog.popup-surface[open]')) {
+        setExpanded(previous => previous === 'page' ? null : previous);
+      }
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
-    function closeSettings(event: globalThis.PointerEvent) {
-      if (gameSettings.current?.open && event.target instanceof Node && !gameSettings.current.contains(event.target)) gameSettings.current.open = false;
-    }
-    document.addEventListener('pointerdown', closeSettings);
     window.addEventListener('keydown', onEscape);
     return () => {
       document.removeEventListener('fullscreenchange', onFullscreenChange);
-      document.removeEventListener('pointerdown', closeSettings);
       window.removeEventListener('keydown', onEscape);
     };
   }, []);
@@ -335,23 +333,20 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
             aria-label={t('gameHelp')} title={t('gameHelp')} aria-haspopup="dialog" aria-controls={helpId}
             onClick={() => {
               if (gameInfo.current) gameInfo.current.open = false;
-              gameHelp.current?.showModal();
+              setHelpOpen(true);
             }}>?</button>
           <button className="button button-secondary stage-control" type="button" onClick={() => void toggleFullscreen()}>
             {t(expanded ? 'restore' : 'fullscreen')}
           </button>
           <RoomRankingControl />
-          <details className="stage-settings" ref={gameSettings} onKeyDown={event => {
-            if (event.key === 'Escape' && event.currentTarget.open) {
-              event.preventDefault();
-              event.currentTarget.open = false;
-              event.currentTarget.querySelector('summary')?.focus();
-            }
-          }}>
-            <summary className="button button-secondary stage-control stage-control-icon" aria-label={t('inGameSettings')} onClick={() => {
-              if (gameInfo.current?.open) gameInfo.current.open = false;
-            }}><GearIcon /></summary>
-            <div className="surface stage-settings-panel">
+          <button type="button" className="button button-secondary stage-control stage-control-icon" aria-label={t('inGameSettings')}
+            aria-haspopup="dialog" onClick={() => {
+              if (gameInfo.current) gameInfo.current.open = false;
+              setGameSettingsOpen(true);
+            }}><GearIcon /></button>
+          {gameSettingsOpen && <Popup className="stage-settings-dialog" aria-labelledby={helpId + '-settings'} onDismiss={() => setGameSettingsOpen(false)}>
+            <h2 id={helpId + '-settings'}>{t('inGameSettings')}</h2>
+            <div className="stage-settings-panel">
               <label><input type="checkbox" role="switch" checked={showTouches} onChange={event => onTouchDisplay(event.target.checked)} />{t('touchEffects')}</label>
               <label><input type="checkbox" checked={antialias} onChange={event => onAntialias(event.target.checked)} />{t('antialias')}</label>
               {antialias !== roundAntialias && <small>{t('graphicsHelp')}</small>}
@@ -368,7 +363,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
                 {actualSize.frame.width !== actualSize.buffer.width && <small>{t('resolutionDisplay', actualSize.frame)}</small>}
               </>}
             </div>
-          </details>
+          </Popup>}
         </div>
       </div>
       <div className="stage-field" ref={field}>
@@ -400,11 +395,10 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
       )}
       <div className="visually-hidden" aria-live="polite">{focusLabel}</div>
       <MatchRecoveryDialog />
-      <dialog ref={gameHelp} id={helpId} className="surface profile-dialog stage-help-dialog" aria-labelledby={helpId + '-title'}
-        aria-describedby={helpId + '-body'} onKeyDown={event => { if (event.key === 'Escape') event.stopPropagation(); }}>
+      {helpOpen && <Popup id={helpId} className="stage-help-dialog" onDismiss={() => setHelpOpen(false)} aria-labelledby={helpId + '-title'}
+        aria-describedby={helpId + '-body'}>
         <header className="room-panel-heading">
           <h2 id={helpId + '-title'}>{t('gameHelp')}</h2>
-          <button className="settings-close" type="button" aria-label={t('close')} onClick={() => gameHelp.current?.close()}><span aria-hidden="true" /></button>
         </header>
         <p id={helpId + '-body'}>{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp'
           : id === 'memory' ? 'memoryHelp' : id === 'sketch' ? 'sketchHelp' : id === 'liar' ? 'liarHelp' : id === 'slime' ? 'slimeHelp'
@@ -412,7 +406,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
           {(id === 'omok' || id === 'chess') && <> {t('previewMoveHelp')}</>}
           {id === 'othello' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
         </p>
-      </dialog>
+      </Popup>}
     </section>
   );
 }

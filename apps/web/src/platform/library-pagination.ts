@@ -1,5 +1,5 @@
-export function cardsPerPage(columns: number, cardHeight: number, gap: number, top: number, viewportHeight: number) {
-  const available = viewportHeight - Math.min(Math.max(0, top), viewportHeight / 2) - 60;
+export function cardsPerPage(columns: number, cardHeight: number, gap: number, viewportHeight: number) {
+  const available = viewportHeight - 220;
   const rows = Math.max(1, Math.floor((available + gap) / (cardHeight + gap)));
   return Math.max(1, columns) * rows;
 }

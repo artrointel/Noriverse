@@ -4,8 +4,8 @@ import type { ProfileGame } from '../../../../packages/protocol/profile.ts';
 import type { Emoji } from '../../../../packages/protocol/reactions.ts';
 import { playReactionCue } from './reaction-sounds.ts';
 
-type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'distantCombo' | 'paper' | 'countdown' | 'go' | 'badge'
-  | 'moleBop' | 'moleArmor' | 'moleTrap' | 'moleBonus' | 'moleFever' | 'moleFog';
+type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'distantCombo' | 'paper' | 'countdown' | 'go' | 'badge';
+type MoleEffect = 'bop' | 'armor' | 'trap' | 'bonus' | 'fever' | 'fog' | 'giant';
 type Channel = 'music' | 'effects';
 type VoiceBus = Channel | 'distantEffects';
 export type AudioLevels = Record<Channel, number>;
@@ -214,7 +214,7 @@ function tone(when: number, hz: number, duration: number, volume: number, channe
   oscillator.stop(when + duration + 0.01);
 }
 
-function texture(when: number, duration: number, volume: number, center: number, channel: Channel = 'effects') {
+function texture(when: number, duration: number, volume: number, center: number, channel: VoiceBus = 'effects') {
   if (!graph) return;
   const { context, noise } = graph;
   const source = context.createBufferSource();
@@ -240,6 +240,41 @@ export function playReactionSound(emoji: Emoji) {
     (at, length, gain, center) => texture(time + at, length, gain, center));
 }
 
+export function playMoleSound(effect: MoleEffect, distant = false, variation = 0) {
+  if (!levels.effects || graph?.context.state !== 'running' || document.hidden) return;
+  const time = graph.context.currentTime;
+  const bus = distant ? 'distantEffects' : 'effects';
+  const volume = distant ? .30 : 1;
+  const pitch = 1 + (variation % 4 - 1.5) * .045;
+  switch (effect) {
+    case 'bop':
+    case 'giant':
+      tone(time, (effect === 'giant' ? 130 : 177) * pitch, .085, .20 * volume, bus, 'sine', 55);
+      texture(time, .047, .19 * volume, 1500, bus);
+      tone(time + .018, 910 * pitch, .083, .086 * volume, bus, 'triangle', 465);
+      break;
+    case 'armor':
+      texture(time, .065, .26 * volume, 2750, bus);
+      tone(time, 610 * pitch, .135, .15 * volume, bus, 'triangle', 320);
+      tone(time + .025, 1420 * pitch, .09, .062 * volume, bus);
+      break;
+    case 'trap':
+      tone(time, 333, .14, .19 * volume, bus, 'triangle', 183);
+      tone(time + .09, 180, .19, .16 * volume, bus, 'sine', 86);
+      break;
+    case 'bonus':
+    case 'fever':
+      (effect === 'fever' ? [67, 71, 74, 79] : [72, 76, 84]).forEach((note, index) => {
+        tone(time + index * .052, frequency(note), .17, .14 * volume, bus, 'triangle');
+      });
+      break;
+    case 'fog':
+      texture(time, .23, .14 * volume, 1100, bus);
+      tone(time, 285, .25, .07 * volume, bus, 'sine', 195);
+      break;
+  }
+}
+
 export function playSound(effect: Effect, strength = 1) {
   if (!levels.effects) return true;
   if (!graph || graph.context.state !== 'running' || document.hidden) return false;
@@ -263,30 +298,6 @@ export function playSound(effect: Effect, strength = 1) {
     case 'paper':
       texture(time, .065, .19, 1550);
       texture(time + .019, .095, .12, 2880);
-      break;
-    case 'moleBop':
-      tone(time, 180 - 24 * strength, .085, .20, 'effects', 'sine', 55);
-      texture(time, .047, .19, 1500);
-      tone(time + .018, 820 + strength * 120, .083, .086, 'effects', 'triangle', 465);
-      break;
-    case 'moleArmor':
-      texture(time, .065, .26, 2750);
-      tone(time, 610, .135, .15, 'effects', 'triangle', 320);
-      tone(time + .025, 1420, .09, .062, 'effects', 'sine');
-      break;
-    case 'moleTrap':
-      tone(time, 333, .14, .19, 'effects', 'triangle', 183);
-      tone(time + .09, 180, .19, .16, 'effects', 'sine', 86);
-      break;
-    case 'moleBonus':
-    case 'moleFever':
-      (effect === 'moleFever' ? [67, 71, 74, 79] : [72, 76, 84]).forEach((note, index) => {
-        tone(time + index * .052, frequency(note), .17, .14, 'effects', 'triangle');
-      });
-      break;
-    case 'moleFog':
-      texture(time, .23, .14, 1100);
-      tone(time, 285, .25, .07, 'effects', 'sine', 195);
       break;
     case 'place':
       texture(time, .045, .35, 1900);

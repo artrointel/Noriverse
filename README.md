@@ -44,6 +44,8 @@ Pages 빌드는 저장소 하위 경로에서 에셋을 불러오고, 초대·�
 
 새 온라인 게임을 추가하거나 공용 방 프로토콜과 프로필 저장값을 바꿀 때는 `npm exec -- wrangler deploy`로 Worker부터 배포합니다. Pages 워크플로는 공개 Worker에 테스트 프로필을 만들어 저장과 조회가 성공하는지 확인한 다음 웹을 배포합니다. 방 프로토콜을 변경한 경우 반영 후 두 브라우저에서 방 생성, 참가 및 기존 방의 게임 변경을 확인합니다.
 
+Worker와 Pages를 함께 자동 배포하려면 GitHub Actions에 Worker 편집 권한의 `CLOUDFLARE_API_TOKEN`을 저장소 시크릿으로, `CLOUDFLARE_ACCOUNT_ID`를 저장소 변수로 등록합니다. 두 값이 등록된 경우 워크플로가 현재 커밋의 Worker를 먼저 배포하고 공개 저장 검증을 실행합니다. 두 값을 비워 두면 기존의 Worker 수동 배포 흐름을 사용합니다. [Cloudflare GitHub Actions 안내](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)
+
 동일 출처에서는 HttpOnly 쿠키를 사용합니다. Pages와 Worker를 서로 다른 출처로 운영할 때는 Pages의 퍼스트파티 쿠키에 익명 세션을 저장하고 Worker 요청에 전달합니다. Worker는 지정된 Pages 출처만 허용합니다. 로컬 Wrangler의 기록과 배포된 Worker의 기록은 별개입니다.
 
 저장소 코드는 [MIT 라이선스](LICENSE)를 적용합니다. 이후 비공개로 전환해도 이미 MIT로 배포한 버전의 권한은 유지됩니다.

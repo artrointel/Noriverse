@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { cardsPerPage, pageNumbers } from '../apps/web/src/platform/library-pagination.ts';
 
 test('library pages use complete rows and retain a row on short screens', () => {
-  assert.equal(cardsPerPage(5, 180, 14, 200, 900), 15);
-  assert.equal(cardsPerPage(2, 120, 12, 280, 440), 2);
-  assert.equal(cardsPerPage(1, 220, 14, 510, 320), 1);
+  assert.equal(cardsPerPage(5, 180, 14, 900), 15);
+  assert.equal(cardsPerPage(2, 120, 12, 440), 2);
+  assert.equal(cardsPerPage(1, 220, 14, 320), 1);
 });
 
 test('small page counts are fully shown and long lists keep the current page reachable', () => {

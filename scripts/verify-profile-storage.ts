@@ -39,6 +39,9 @@ try {
   for (const [index, avatar] of explorerIds.entries()) {
     const avatarBackground = index % 2 ? null : '#7863c4';
     const saved = await save({ avatar, avatarBackground }).catch(error => {
+      if (error instanceof Error && error.cause === 400) {
+        throw new Error(`The Worker at ${api.origin} rejected avatar ${avatar}. Deploy the matching Worker before publishing Pages.`, { cause: error });
+      }
       throw new Error(`Failed to save avatar ${avatar}`, { cause: error });
     });
     const restored = await reload();

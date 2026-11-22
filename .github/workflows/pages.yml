@@ -28,14 +28,6 @@ jobs:
         id: pages
       - run: npm ci
       - run: npm test
-      - name: Verify profile storage on the configured Worker
-        env:
-          NORIVERSE_WORKER: ${{ vars.NORIVERSE_API_ORIGIN }}
-          NORIVERSE_PAGES_ORIGIN: ${{ steps.pages.outputs.origin }}
-        run: |
-          if [ -n "$NORIVERSE_WORKER" ]; then
-            npm run test:profile-storage -- "$NORIVERSE_WORKER" "$NORIVERSE_PAGES_ORIGIN"
-          fi
       - name: Build frontend
         run: |
           npm run build -- --base "${PAGES_BASE%/}/"
@@ -44,6 +36,26 @@ jobs:
           PAGES_BASE: ${{ steps.pages.outputs.base_path }}
           VITE_GITHUB_PAGES: 'true'
           VITE_API_ORIGIN: ${{ vars.NORIVERSE_API_ORIGIN }}
+      - name: Deploy the matching Worker when CI credentials are configured
+        if: ${{ vars.NORIVERSE_API_ORIGIN != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Using the manually deployed Worker."
+          elif [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Configure CLOUDFLARE_ACCOUNT_ID for the Worker deployment token."
+            exit 1
+          else
+            npm exec -- wrangler deploy
+          fi
+      - name: Verify profile storage on the configured Worker
+        if: ${{ vars.NORIVERSE_API_ORIGIN != '' }}
+        env:
+          NORIVERSE_WORKER: ${{ vars.NORIVERSE_API_ORIGIN }}
+          NORIVERSE_PAGES_ORIGIN: ${{ steps.pages.outputs.origin }}
+        run: npm run test:profile-storage -- "$NORIVERSE_WORKER" "$NORIVERSE_PAGES_ORIGIN"
       - uses: actions/upload-pages-artifact@v4
         with:
           path: dist

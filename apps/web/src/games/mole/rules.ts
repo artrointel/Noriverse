@@ -12,6 +12,7 @@ export const feverDuration = 5_000;
 export const giantDuration = 3_000;
 const firstSpawn = 350;
 const strikeInterval = 80;
+const maxTargets = (grid: number) => grid + 2;
 const targetKinds = ['crew', 'armored', 'trap', 'bonus'] as const;
 type TargetKind = typeof targetKinds[number];
 type AttackKind = 'fog' | 'decoys';
@@ -67,13 +68,23 @@ function changed(round: MoleRound, boards: MoleRound['boards']): MoleRound {
   return { ...round, boards, winners: winnerSeats(round, boards), revision: round.revision + 1 };
 }
 
+function deadline(round: MoleRound, until: number) {
+  return round.settings.mode === 'endless' ? Math.min(until, round.start + moleHardLimit) : until;
+}
+
+export function moleRemaining(board: MoleBoard, now: number, hardEnd = Infinity) {
+  if (board.out) return 0;
+  if (now < board.feverUntil) return Math.max(0, board.until - board.feverUntil);
+  return Math.max(0, Math.min(hardEnd, board.until) - now);
+}
+
 export function nextMoleAt(round: MoleRound) {
   if (!round.start || round.winners) return;
   let next = Infinity;
   for (const role of round.players) {
     const board = round.boards[role]!;
     if (board.out) continue;
-    next = Math.min(next, board.until, board.next, ...board.targets.map(target => target.until));
+    next = Math.min(next, deadline(round, board.until), board.next, ...board.targets.map(target => target.until));
   }
   return Number.isFinite(next) ? next : undefined;
 }
@@ -83,11 +94,12 @@ export function advanceMole(round: MoleRound, now: number): MoleRound | undefine
   if (next === undefined || now < next) return;
   const boards = { ...round.boards };
   const grid = round.settings.size;
-  const speed = Math.min(1, (now - round.start) / (round.settings.mode === 'endless' ? 112_000 : 90_000));
+  const elapsed = now - round.start;
+  const pressure = Math.min(1, elapsed / (round.settings.mode === 'endless' ? 160_000 : 110_000));
   for (const role of round.players) {
     const board = boards[role]!;
     if (board.out) continue;
-    if (board.until <= now) {
+    if (deadline(round, board.until) <= now) {
       boards[role] = { ...board, out: true, targets: [] };
       continue;
     }
@@ -98,24 +110,32 @@ export function advanceMole(round: MoleRound, now: number): MoleRound | undefine
       if (expired.length) boards[role] = { ...board, targets, combo };
       continue;
     }
-    const interval = Math.round((grid === 4 ? 760 : 865) - speed * 510);
+    const interval = Math.round((grid === 4 ? 670 : 735) - pressure * 225);
     const nextAt = now + interval;
     const free = Array.from({ length: grid ** 2 }, (_, cell) => cell).filter(cell => !targets.some(target => target.cell === cell));
-    if (board.giantUntil > now || !free.length || targets.length >= grid + 1) {
+    if (board.giantUntil > now || !free.length || targets.length >= maxTargets(grid)) {
       boards[role] = { ...board, targets, combo, next: Math.max(board.giantUntil, nextAt) };
       continue;
     }
-    const index = board.sequence + 1;
-    const roll = randomAt(round.seed, index, 1);
-    const kind: TargetKind = board.decoys ? 'trap'
-      : index % 22 === 0 && board.until - now >= giantDuration + 1900 ? 'bonus'
-        : index > 5 && roll < .12 + speed * .12 ? 'trap'
-        : index > 6 && roll > .79 ? 'armored' : 'crew';
-    const lifetime = Math.round((grid === 4 ? 1710 : 1590) - speed * 1200) + (kind === 'armored' ? 340 : kind === 'bonus' ? 200 : 0);
-    const character = kind === 'trap' ? 4 : kind === 'bonus' ? 5 : kind === 'armored' ? 3 : Math.floor(randomAt(round.seed, index, 3) * 3);
-    targets.push({ id: index, cell: free[Math.floor(randomAt(round.seed, index, 2) * free.length)], character, kind,
-      hp: kind === 'armored' ? speed > .64 ? 3 : 2 : 1, from: now, until: now + lifetime });
-    boards[role] = { ...board, targets, combo, sequence: index, next: nextAt, decoys: Math.max(0, board.decoys - 1) };
+    let { sequence, decoys } = board;
+    const paired = sequence === 0 || randomAt(round.seed, sequence + 1, 4) < .29 + pressure * .23;
+    const count = Math.min(paired ? 2 : 1, free.length, maxTargets(grid) - targets.length);
+    for (let spawned = 0; spawned < count; spawned++) {
+      const index = ++sequence;
+      const roll = randomAt(round.seed, index, 1);
+      const visibleMs = Math.round((grid === 4 ? 2150 : 2010) - pressure * 645);
+      const kind: TargetKind = decoys ? 'trap'
+        : index % 29 === 0 && deadline(round, board.until) - now >= giantDuration + visibleMs + 200 ? 'bonus'
+          : index > 3 && roll < .12 + pressure * .06 ? 'trap'
+            : index > 2 && roll > .82 - pressure * .07 ? 'armored' : 'crew';
+      const lifetime = visibleMs + (kind === 'armored' ? 330 : kind === 'bonus' ? 200 : 0);
+      const character = kind === 'trap' ? 4 : kind === 'bonus' ? 5 : kind === 'armored' ? 3 : Math.floor(randomAt(round.seed, index, 3) * 3);
+      const [cell] = free.splice(Math.floor(randomAt(round.seed, index, 2) * free.length), 1);
+      targets.push({ id: index, cell, character, kind,
+        hp: kind === 'armored' ? pressure > .72 ? 3 : 2 : 1, from: now, until: now + lifetime });
+      decoys = Math.max(0, decoys - 1);
+    }
+    boards[role] = { ...board, targets, combo, sequence, next: nextAt, decoys };
   }
   return changed(round, boards);
 }
@@ -125,7 +145,7 @@ function sendAttack(round: MoleRound, boards: MoleRound['boards'], actor: Role, 
   for (let offset = 1; offset < round.players.length; offset++) {
     const role = round.players[(at + offset) % round.players.length];
     const rival = boards[role]!;
-    if (rival.out || rival.until <= now) continue;
+    if (rival.out || deadline(round, rival.until) <= now) continue;
     boards[role] = attack === 'fog' ? { ...rival, fogUntil: Math.max(rival.fogUntil, now + 2200) }
       : { ...rival, decoys: Math.min(4, rival.decoys + 3) };
     return;
@@ -135,7 +155,7 @@ function sendAttack(round: MoleRound, boards: MoleRound['boards'], actor: Role, 
 export function strikeMole(round: MoleRound, actor: Role, targetId: unknown, now: number): MoleRound | undefined {
   const board = round.boards[actor];
   if (typeof targetId !== 'number' || !Number.isSafeInteger(targetId) || !round.start || round.winners
-    || !board || board.out || !round.players.includes(actor) || now < round.start || now >= board.until
+    || !board || board.out || !round.players.includes(actor) || now < round.start || now >= deadline(round, board.until)
     || (board.strike && now - board.strike.at < strikeInterval)) return;
   const giant = targetId === 0 && board.giantUntil > now;
   const target = !giant ? board.targets.find(target => target.id === targetId && target.until > now) : undefined;
@@ -144,23 +164,27 @@ export function strikeMole(round: MoleRound, actor: Role, targetId: unknown, now
   const scoredCatch = kind === 'crew' || kind === 'armored' || kind === 'bonus';
   const combo = kind === 'trap' ? 0 : board.combo + Number(scoredCatch);
   const triggersFever = scoredCatch && combo % feverThreshold === 0;
-  const fever = board.feverUntil > now || triggersFever;
+  const feverUntil = triggersFever ? now + feverDuration : board.feverUntil;
+  const fever = feverUntil > now;
   const points = ({ crew: 10, armored: 25, bonus: 35, trap: -20, giant: 6, armor: 0 }[kind]) * (fever ? 2 : 1);
   let until = board.until;
   if (round.settings.mode === 'endless') {
     const speed = Math.min(1, (now - round.start) / 125_000);
-    if (scoredCatch) until = Math.min(round.start + moleHardLimit, until + Math.round(90 + 1270 * (1 - speed) ** 2));
-    if (kind === 'trap') until = Math.max(now, until - (fever ? 3200 : 1600));
+    if (scoredCatch) until = Math.min(Math.max(until, round.start + moleHardLimit), until + Math.round(85 + 865 * (1 - speed) ** 2));
+    if (kind === 'trap') until = Math.max(now, board.feverUntil, until - (fever ? 3200 : 1600));
   }
-  const out = until <= now;
+  const timeDelta = until - board.until;
+  // Add only newly frozen time, including when fever is refreshed before its previous end.
+  until += Math.max(0, feverUntil - Math.max(now, board.feverUntil));
+  const out = deadline(round, until) <= now;
   const targets = out || kind === 'bonus' ? [] : board.targets.flatMap(item =>
     item !== target ? [item] : kind === 'armor' ? [{ ...item, hp: item.hp - 1 }] : []);
   const boards: MoleRound['boards'] = { ...round.boards, [actor]: {
     ...board, targets, out, until, combo, best: Math.max(board.best, combo), caught: board.caught + Number(scoredCatch),
-    score: board.score + points, feverUntil: triggersFever ? now + feverDuration : board.feverUntil,
+    score: board.score + points, feverUntil,
     giantUntil: kind === 'bonus' ? now + giantDuration : board.giantUntil,
     next: kind === 'bonus' ? now + giantDuration : board.next,
-    strike: { id: (board.strike?.id ?? 0) + 1, at: now, kind, cell: target?.cell ?? -1, points, timeDelta: until - board.until, fever },
+    strike: { id: (board.strike?.id ?? 0) + 1, at: now, kind, cell: target?.cell ?? -1, points, timeDelta, fever },
   } };
   if (triggersFever || kind === 'bonus') sendAttack(round, boards, actor, 'fog', now);
   if (kind === 'bonus' || scoredCatch && combo % 15 === 0) sendAttack(round, boards, actor, 'decoys', now);
@@ -211,7 +235,7 @@ export function readMoleRound(raw: unknown): MoleRound | undefined {
       || ![board.combo, board.best, board.caught, board.sequence, board.next, board.until, board.feverUntil,
         board.giantUntil, board.fogUntil].every(value => integer(value)) || board.combo > board.best || board.best > board.caught
       || !integer(board.decoys, 4) || typeof board.out !== 'boolean' || typeof board.resigned !== 'boolean'
-      || !Array.isArray(board.targets) || board.targets.length > config.size + 1
+      || !Array.isArray(board.targets) || board.targets.length > maxTargets(config.size)
       || new Set(board.targets.map(target => target?.cell)).size !== board.targets.length
       || new Set(board.targets.map(target => target?.id)).size !== board.targets.length
       || !board.targets.every(target => target && target.id > 0 && integer(target.id, board.sequence) && integer(target.cell, config.size ** 2 - 1)

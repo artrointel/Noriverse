@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PresenceControl } from './presence-control.tsx';
@@ -8,6 +8,7 @@ import { musicMoods } from './music-arrangements.ts';
 import type { AudioLevels } from './audio.ts';
 import type { usePreferences } from './preferences.ts';
 import { GearIcon } from './gear-icon.tsx';
+import { Popup } from './popup.tsx';
 import { Grouper } from './grouper.tsx';
 
 export function SettingsMenu({ preferences, levels, onVolume, path, presence }: {
@@ -19,53 +20,21 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
 }) {
   const { t, i18n } = useTranslation();
   const track = useSyncExternalStore(subscribeMusicTrack, getMusicTrack);
-  const menu = useRef<HTMLDetailsElement>(null);
-  const trigger = useRef<HTMLElement>(null);
-
-  function close(restoreFocus = false) {
-    if (menu.current) {
-      menu.current.open = false;
-      for (const section of menu.current.querySelectorAll<HTMLDetailsElement>('details.grouper')) section.open = false;
-    }
-    if (restoreFocus) trigger.current?.focus();
-  }
-
-  useEffect(() => { close(); }, [path]);
-  useEffect(() => {
-    function outside(event: PointerEvent) {
-      if (menu.current?.open && event.target instanceof Node && !menu.current.contains(event.target)) close();
-    }
-    function escape(event: KeyboardEvent) {
-      if (menu.current?.open && event.key === 'Escape' && !event.defaultPrevented) {
-        event.preventDefault();
-        close(true);
-      }
-    }
-    document.addEventListener('pointerdown', outside);
-    document.addEventListener('keydown', escape);
-    return () => {
-      document.removeEventListener('pointerdown', outside);
-      document.removeEventListener('keydown', escape);
-    };
-  }, []);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { setOpen(false); }, [path]);
 
   const languageSummary = (preferences.language === 'system' ? t('system') + ' · ' : '') + (i18n.resolvedLanguage === 'ko' ? '한국어' : 'English');
   const themeSummary = (preferences.theme === 'system' ? t('system') + ' · ' : '') + t(preferences.dark ? 'dark' : 'light');
 
   return (
-    <details className="preferences" ref={menu} onToggle={event => {
-      if (event.target === event.currentTarget && !event.currentTarget.open) close();
-    }}>
-      <summary ref={trigger} aria-label={t('openSettings')} title={t('openSettings')} aria-controls="settings-popover">
+    <div className="preferences">
+      <button type="button" className="preferences-trigger" aria-label={t('openSettings')} title={t('openSettings')}
+        aria-haspopup="dialog" aria-controls={open ? 'settings-popover' : undefined} aria-expanded={open} onClick={() => setOpen(true)}>
         <GearIcon />
-      </summary>
-      <div className="preferences-panel" id="settings-popover">
-        <div className="settings-heading">
-          <h2>{t('openSettings')}</h2>
-          <button type="button" className="settings-close" aria-label={t('closeSettings')} onClick={() => close(true)}>
-            <span aria-hidden="true" />
-          </button>
-        </div>
+      </button>
+      {open && <Popup id="settings-popover" className="preferences-dialog" aria-labelledby="preferences-title" onDismiss={() => setOpen(false)}>
+        <h2 id="preferences-title">{t('openSettings')}</h2>
+        <div className="preferences-content">
         <Grouper title={t('language')} summaryValue={languageSummary} variant="panel">
           <div className="setting-segments">
             {([{ value: 'system', label: t('system') }, { value: 'ko', label: '한국어' },
@@ -129,7 +98,8 @@ export function SettingsMenu({ preferences, levels, onVolume, path, presence }: 
           <span aria-hidden="true">{t(preferences.muted ? 'disabled' : 'enabled')}</span><i aria-hidden="true" />
         </button>
         </div>
-      </div>
-    </details>
+        </div>
+      </Popup>}
+    </div>
   );
 }

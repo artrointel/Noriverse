@@ -123,7 +123,7 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
   const [pageAnchor, setPageAnchor] = useState(0);
   const [capacity, setCapacity] = useState(4);
   const grid = useRef<HTMLDivElement>(null);
-  const previewSlot = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLSpanElement>(null);
   const lastCard = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const visibleQuery = useDeferredValue(query);
@@ -147,19 +147,17 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
       const style = getComputedStyle(container);
       const columns = style.gridTemplateColumns.split(/\s+/).filter(Boolean).length;
       setCapacity(cardsPerPage(columns, card.offsetHeight, Number.parseFloat(style.rowGap) || 0,
-        container.getBoundingClientRect().top + window.scrollY, window.innerHeight));
+        viewport.current?.offsetHeight ?? document.documentElement.clientHeight));
     }
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(container);
     observer.observe(card);
-    if (previewSlot.current) observer.observe(previewSlot.current);
-    window.addEventListener('resize', measure);
+    if (viewport.current) observer.observe(viewport.current);
     return () => {
       observer.disconnect();
-      window.removeEventListener('resize', measure);
     };
-  }, [pageGames[0], selected, scope, playerCount, activeTags, visibleQuery]);
+  }, [pageGames[0]]);
 
   function resetView() {
     setPageAnchor(0);
@@ -256,7 +254,8 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
         </div>
         {favoriteError && <p role="alert" className="muted favorite-error">{t('profileError')}</p>}
         <div className="catalog-layout">
-          <div ref={previewSlot} className="catalog-preview-slot" data-open={Boolean(selected)} inert={!selected}>
+          <span ref={viewport} className="catalog-viewport-height" aria-hidden="true" />
+          <div className="catalog-preview-slot" data-open={Boolean(selected)} inert={!selected}>
             <div className="catalog-preview-clip">
               {selection && <GamePreview id={selection} active={Boolean(selected)} navigate={navigate} onClose={closePreview} />}
             </div>
