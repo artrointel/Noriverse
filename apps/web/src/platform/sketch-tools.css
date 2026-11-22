@@ -9,7 +9,7 @@
   text-align: center;
   text-wrap: balance;
   overflow-wrap: anywhere;
-  font: 400 clamp(1.7rem, 7.6vw, 4.65rem)/1.08 "Sketch Jua", ui-rounded, sans-serif;
+  font-size: clamp(1.7rem, 7.6vw, 4.65rem); font-weight: 400; line-height: 1.08;
   color: #fff1a7;
   paint-order: stroke fill;
   -webkit-text-stroke: .085em #281c50;

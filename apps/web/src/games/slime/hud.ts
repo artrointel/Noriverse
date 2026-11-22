@@ -1,3 +1,4 @@
+import { gameFontFamily } from '../game-font.ts';
 import type Phaser from 'phaser';
 import type { OrbitControl } from './controls.ts';
 import { orbitGutter, orbitPixel, orbitSidebar, orbitTabHeight } from './layout.ts';
@@ -12,14 +13,13 @@ export type OrbitHudView = {
 };
 
 export const orbitSpriteKey = 'jelly-orbit';
-export const orbitFont = '"Sketch Jua", "Malgun Gothic", sans-serif';
 export const orbitPalette = [0, 0xc395ff, 0xff9e89, 0x83edda, 0xffc86b, 0xb6b5cc];
 export const orbitFrame = (color: number, state = 0) => (color - 1) * 16 + state * 4;
 const { x: left, y: top, width, height: sidebarHeight } = orbitSidebar;
 const center = left + width / 2;
 
 export function orbitText(scene: Phaser.Scene, x: number, y: number, size: number, color = '#ecedff') {
-  return scene.add.text(x, y, '', { fontFamily: orbitFont, fontSize: size, color }).setOrigin(.5);
+  return scene.add.text(x, y, '', { fontFamily: gameFontFamily, fontSize: size, color }).setOrigin(.5);
 }
 
 export function drawOrbitColorMark(graphics: Phaser.GameObjects.Graphics, x: number, y: number, color: number, alpha: number) {

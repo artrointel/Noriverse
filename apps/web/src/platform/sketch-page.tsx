@@ -106,7 +106,6 @@ export function SketchPage({ room, settings, ownProfile, navigate, dark, antiali
   const visible = Boolean(report && !pending && closedResult !== id);
 
   useEffect(() => { if (correct) playSound('place'); }, [epoch, correct]);
-  useEffect(() => { void document.fonts.load('1rem "Sketch Jua"').catch(() => undefined); }, []);
   useEffect(() => {
     if (!opensAt) return;
     const timer = window.setTimeout(() => setCompletedIntro(opensAt), Math.max(0, opensAt - Date.now()));

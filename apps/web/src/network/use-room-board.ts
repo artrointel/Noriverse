@@ -40,10 +40,13 @@ import { defaultMemorySettings } from '../games/memory/rules.ts';
 import { advanceOrbit, applyOrbitInput, createOrbitRound, nextOrbitAt, orbitGravityMs, resignOrbit } from '../games/slime/rules.ts';
 import type { OrbitInput, OrbitRound } from '../games/slime/rules.ts';
 import { advanceMole, createMoleRound, defaultMoleSettings, nextMoleAt, resignMole, startMoleRound, strikeMole } from '../games/mole/rules.ts';
+import { advanceBurger, applyBurgerAction, createBurgerRound, defaultBurgerMinutes, nextBurgerAt, resignBurger, startBurgerRound } from '../games/burger/rules.ts';
+import type { BurgerAction } from '../games/burger/rules.ts';
 
 const lobbySlots = assignReactionSlots(roomRoles);
 const arcadeBroadcastInterval = 85;
-const matchDeadline = (match: Match) => (match.mole ? nextMoleAt(match.mole) : undefined)
+const matchDeadline = (match: Match) => (match.burger ? nextBurgerAt(match.burger) : undefined)
+  ?? (match.mole ? nextMoleAt(match.mole) : undefined)
   ?? (match.slime ? nextOrbitAt(match.slime) : undefined) ?? match.liar?.deadline
   ?? (match.sketch && match.sketchConfig ? nextSketchEvent(match.sketch, match.sketchConfig) : undefined)
   ?? (match.puzzle ? puzzleEnd(match.puzzle) : match.deadline);
@@ -323,7 +326,8 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     const liar = current.liar && current.liarConfig ? { ...current.liar, deadline: beginsAt + current.liarConfig.seconds * 1000 } : undefined;
     const slime = current.slime && { ...current.slime, tickAt: beginsAt + orbitGravityMs };
     const mole = current.mole && startMoleRound(current.mole, beginsAt);
-    update({ ...current, beginsAt, deadline: nextDeadline(current.turnLimit, beginsAt), sketch, liar, slime, mole });
+    const burger = current.burger && startBurgerRound(current.burger, beginsAt);
+    update({ ...current, beginsAt, deadline: nextDeadline(current.turnLimit, beginsAt), sketch, liar, slime, mole, burger });
     snapshot();
   }
 
@@ -340,7 +344,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     snapshot();
   }
 
-  function syncArcade(game: Pick<Match, 'mole' | 'slime'>, finishedAt: number) {
+  function syncArcade(game: Pick<Match, 'mole' | 'slime' | 'burger'>, finishedAt: number) {
     update({ ...match.current, ...game, finishedAt });
     const broadcast = arcadeBroadcast.current;
     const delay = arcadeBroadcastInterval - (performance.now() - broadcast.sentAt);
@@ -365,6 +369,15 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     const strike = strikeMole(current.mole, actor, target, now);
     if (!strike) return false;
     syncArcade({ mole: strike }, strike.winners ? now : 0);
+    return true;
+  }
+
+  function commitBurger(actor: Role, action: unknown) {
+    const current = match.current, now = Date.now();
+    if (!current.burger || !matchInProgress(current, now)) return false;
+    const burger = applyBurgerAction(current.burger, actor, action, now);
+    if (!burger) return false;
+    syncArcade({ burger }, burger.winners ? now : 0);
     return true;
   }
 
@@ -453,6 +466,12 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
   function expireTurn(now: number) {
     const current = match.current;
     if (current.pausedAt) return false;
+    if (current.burger) {
+      const burger = advanceBurger(current.burger, now);
+      if (!burger) return false;
+      syncArcade({ burger }, burger.winners ? now : 0);
+      return true;
+    }
     if (current.mole) {
       const next = advanceMole(current.mole, now);
       if (!next) return false;
@@ -535,6 +554,12 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     if (current.liar) return commitLiar(actor, { kind: 'resign' });
     const now = Date.now();
     if (!matchInProgress(current, now)) return false;
+    if (current.burger) {
+      const burger = resignBurger(current.burger, actor);
+      if (!burger) return false;
+      syncArcade({ burger }, burger.winners ? now : 0);
+      return true;
+    }
     if (current.mole) {
       const mole = resignMole(current.mole, actor);
       if (!mole) return false;
@@ -719,6 +744,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
           if (raw.type === 'sketch-sync' && current.sketch) { snapshot(peer); return; }
           if (raw.type === 'round-ready' || raw.type === 'puzzle-ready') { markRoundReady(peer); return; }
           if (!matchInProgress(current, Date.now())) return;
+          if (raw.type === 'burger-action' && 'action' in raw) { commitBurger(peer, raw.action); return; }
           if (raw.type === 'mole-action' && 'target' in raw) { commitMole(peer, raw.target); return; }
           if (raw.type === 'slime-action' && 'action' in raw) { commitOrbit(peer, raw.action); return; }
           if (raw.type === 'puzzle-action' && 'action' in raw) { commitPuzzle(peer, raw.action); return; }
@@ -914,6 +940,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
       mockSeats: mocks.length ? mocks : undefined, puzzle,
       slime: current.game === 'slime' ? createOrbitRound(seats) : undefined,
       mole: current.moleConfig ? createMoleRound(current.moleConfig, seats) : undefined,
+      burger: current.burgerMinutes ? createBurgerRound(current.burgerMinutes, seats) : undefined,
       sketch: current.sketchConfig ? makeSketchRound(seats, drawingDeck.current[0], chooseSketchMap(current.sketchConfig.map)) : undefined,
       liar: current.liarConfig ? makeLiarRound(seats, current.liarConfig.language, Math.random, previous?.liar?.result?.word) : undefined,
       physicsSeats, physics: physicsSeats ? createFlickRound(current.flickSettings ?? defaultFlickSettings, physicsSeats.length) : undefined });
@@ -926,6 +953,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     puzzle: game === 'sichuan' && round.puzzleConfig ? round.puzzleConfig : defaultSichuanRoomSettings,
     memory: game === 'memory' && round.puzzleConfig ? round.puzzleConfig : defaultMemorySettings, sketch: round.sketchConfig ?? defaultSketchSettings,
     liar: round.liarConfig ?? defaultLiarSettings, mole: round.moleConfig ?? defaultMoleSettings,
+    burger: round.burgerMinutes ?? defaultBurgerMinutes,
   };
 
   function configureMatch(settings: MatchSettings) {
@@ -963,6 +991,12 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     playStartedAt: matchBeginsAt(round),
     displayStart: matchBeginsAt(round) ? matchBeginsAt(round) + (round.clockOffset ?? 0) : 0,
     roundOutcome: role ? matchOutcome(round, role) : undefined,
+    burger: round.burger,
+    burgerAction(action: BurgerAction) {
+      const current = match.current, own = seat.current?.role;
+      if (!own || !readyForPlay() || !current.burger || current.finishedAt) return false;
+      return own === 'host' ? commitBurger(own, action) : Boolean(link.current?.send({ type: 'burger-action', id: current.id, action }));
+    },
     mole: round.mole,
     moleAction(target: number) {
       const current = match.current, own = seat.current?.role;

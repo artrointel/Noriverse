@@ -9,6 +9,7 @@ import type { SketchHudView } from './sketch/hud.ts';
 import type { LiarHudView } from './liar/hud.ts';
 import type { OrbitView } from './slime/scene.ts';
 import type { MoleView } from './mole/scene.ts';
+import type { BurgerView } from './burger/scene.ts';
 
 export interface GameView {
   history: number[];
@@ -30,6 +31,7 @@ export interface GameView {
   liar?: LiarHudView;
   slime?: OrbitView;
   mole?: MoleView;
+  burger?: BurgerView;
   sketch?: { board: readonly Ink[]; color: number; width: number; brush: number; map: SketchMap; epoch: string;
     send: (lines: Ink[]) => void; hud: SketchHudView; online: boolean };
   sichuan?: { board: readonly Tile[]; size: SichuanSize; theme: SichuanTheme; selected?: number;

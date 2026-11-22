@@ -20,6 +20,7 @@ export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, i
   let sceneTime = 0;
   let camera: Phaser.Cameras.Scene2D.Camera | undefined;
   const cueLayer = createRoundAnnouncement(parent, cue => {
+    if (scene.announcementSound) return scene.announcementSound(cue);
     switch (cue) {
       case '1': case '2': case '3': return playSound('countdown', 4 - Number(cue));
       case 'go': return playSound('go');
@@ -38,9 +39,10 @@ export function mountGame(parent: HTMLElement, id: GameId, antialias: boolean, i
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent,
-    width: initialSize.width,
-    height: initialSize.height,
-    render: { antialias, antialiasGL: antialias, transparent: id === 'sketch',
+    width: size.width,
+    height: size.height,
+    render: { antialias: !scene.pixelArt && antialias, antialiasGL: !scene.pixelArt && antialias,
+      pixelArt: scene.pixelArt, transparent: id === 'sketch',
       mipmapFilter: isTilePuzzle(id) && antialias ? 'LINEAR_MIPMAP_LINEAR' : undefined },
     backgroundColor: current().dark ? '#272132' : '#e8ddd1',
     scale: { mode: Phaser.Scale.NONE },

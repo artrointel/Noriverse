@@ -1,3 +1,4 @@
+import { gameFontFamily } from '../game-font.ts';
 import type Phaser from 'phaser';
 import type { Move } from 'chess.js';
 import type { GameView } from '../game-view.ts';
@@ -144,7 +145,7 @@ export function chessScene(view: () => GameView) {
       showGhost = createMoveGhost(this, 51);
       createStoneShadow(this);
       for (let i = 0; i < 8; i++) {
-        const style = { color: '#fff0d4', fontSize: '10px', fontStyle: 'bold' };
+        const style = { color: '#fff0d4', fontSize: '10px', fontFamily: gameFontFamily };
         this.add.text(offset + (i + .5) * cell, 456, 'abcdefgh'[i], style).setOrigin(.5);
         this.add.text(23, offset + (i + .5) * cell, String(8 - i), style).setOrigin(.5);
       }

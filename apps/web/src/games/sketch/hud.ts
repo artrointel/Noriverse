@@ -1,3 +1,4 @@
+import { gameFontFamily } from '../game-font.ts';
 import type Phaser from 'phaser';
 import { tableSize } from '../table.ts';
 import { brushStyles, eraserBrush, inkColors, maxEraserWidth, maxInkWidth } from './ink.ts';
@@ -42,7 +43,7 @@ export function createSketchHud(scene: Phaser.Scene) {
   const textLabels: Phaser.GameObjects.Text[] = [];
   const text = (x: number, y: number, size: number) => {
     const label = scene.add.text(x, y, '', {
-      fontFamily: '"Sketch Jua", "Malgun Gothic", sans-serif', fontSize: size, color: '#fff8ee',
+      fontFamily: gameFontFamily, fontSize: size, color: '#fff8ee',
       stroke: '#21142f', strokeThickness: 2,
     }).setOrigin(.5).setResolution(2);
     textLabels.push(label);

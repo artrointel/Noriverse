@@ -25,6 +25,8 @@ import { orbitOutcome, readOrbitRound } from '../games/slime/rules.ts';
 import type { OrbitRound } from '../games/slime/rules.ts';
 import { moleOutcome, readMoleRound, readMoleSettings, shiftMoleClock } from '../games/mole/rules.ts';
 import type { MoleRound, MoleSettings } from '../games/mole/rules.ts';
+import { burgerOutcome, readBurgerMinutes, readBurgerRound, shiftBurgerClock } from '../games/burger/rules.ts';
+import type { BurgerMinutes, BurgerRound } from '../games/burger/rules.ts';
 
 export type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: number; finishedAt: number; allowDoubleThree: boolean; overline: OmokOverline;
   history: number[]; physics?: FlickRound; physicsSeats?: Role[]; flickSettings?: FlickSettings; power?: FlickPower;
@@ -34,6 +36,7 @@ export type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: n
   liarConfig?: LiarSettings; liar?: LiarView | LiarRound;
   slime?: OrbitRound;
   moleConfig?: MoleSettings; mole?: MoleRound;
+  burgerMinutes?: BurgerMinutes; burger?: BurgerRound;
   mockSeats?: Role[];
   turnLimit: TurnLimit; deadline: number; beginsAt?: number; clockOffset?: number; pausedAt?: number; pausedMs?: number;
   disconnectedSeats?: Role[] };
@@ -45,6 +48,7 @@ export function lobbyMatch(game: RoomGame, settings: MatchSettings): Match {
     turnLimit: isTurnBasedGame(game) ? turnLimit : 0, sketchConfig: game === 'sketch' ? sketch : undefined,
     liarConfig: game === 'liar' ? liar : undefined,
     moleConfig: game === 'mole' ? mole : undefined,
+    burgerMinutes: game === 'burger' ? settings.burger : undefined,
     puzzleConfig: game === 'memory' ? memory : game === 'sichuan' ? puzzle : undefined, flickSettings: game === 'physics' ? flick : undefined,
     physics: game === 'physics' ? createFlickRound(flick) : undefined };
 }
@@ -57,7 +61,8 @@ export function matchColor(match: Match, role: Role): FlickPlayer | undefined {
 export function inRound(match: Match, role: Role) {
   return !match.mockSeats?.includes(role) && (!match.puzzle || match.puzzle.players.includes(role)) && (!match.physicsSeats || match.physicsSeats.includes(role))
     && (!match.sketch || match.sketch.players.includes(role)) && (!match.liar || match.liar.players.includes(role))
-    && (!match.slime || match.slime.players.includes(role)) && (!match.mole || match.mole.players.includes(role));
+    && (!match.slime || match.slime.players.includes(role)) && (!match.mole || match.mole.players.includes(role))
+    && (!match.burger || match.burger.players.includes(role));
 }
 
 export function mockSeatsFor(game: RoomGame, participants: readonly Participant[], count: number) {
@@ -85,6 +90,7 @@ export function matchWinner(match: Match) {
 
 export function matchOutcome(match: Match, role: Role): Exclude<MatchOutcome, 'practice'> | undefined {
   if (!match.finishedAt) return;
+  if (match.burger) return burgerOutcome(match.burger, role);
   if (match.mole) return moleOutcome(match.mole, role);
   if (match.slime) return orbitOutcome(match.slime, role);
   if (match.liar) return liarOutcome(match.liar, role);
@@ -125,12 +131,13 @@ export function resumeMatchClock(match: Match, now: number): Match {
     timeoutPending: match.timeoutPending && { ...match.timeoutPending, at: shift(match.timeoutPending.at) },
     puzzle, slime,
     mole: match.mole && shiftMoleClock(match.mole, duration),
+    burger: match.burger && shiftBurgerClock(match.burger, duration),
     sketch: match.sketch && { ...match.sketch, opensAt: shift(match.sketch.opensAt), deadline: shift(match.sketch.deadline) },
     liar: match.liar && { ...match.liar, deadline: shift(match.liar.deadline) } };
 }
 
 function matchRevision(match: Match) {
-  return match.mole?.revision ?? match.slime?.revision ?? match.liar?.revision ?? match.sketch?.revision ?? match.puzzle?.revision ?? match.physics?.revision ?? match.history.length;
+  return match.burger?.revision ?? match.mole?.revision ?? match.slime?.revision ?? match.liar?.revision ?? match.sketch?.revision ?? match.puzzle?.revision ?? match.physics?.revision ?? match.history.length;
 }
 
 function followsSnapshot(current: Match, next: Match) {
@@ -179,6 +186,11 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
   if (game === 'slime' && (Boolean(raw.startedAt) !== Boolean(slime) || Boolean(raw.finishedAt) !== Boolean(slime?.winner)
     || mockSeats?.some(role => slime && !slime.players.includes(role)))) return;
   const moleConfig = game === 'mole' && 'moleConfig' in raw ? readMoleSettings(raw.moleConfig) : undefined;
+  const burgerMinutes = game === 'burger' && 'burgerMinutes' in raw ? readBurgerMinutes(raw.burgerMinutes) : undefined;
+  const burger = burgerMinutes && 'burger' in raw ? readBurgerRound(raw.burger) : undefined;
+  if (game === 'burger' && (!burgerMinutes || Boolean(raw.startedAt) !== Boolean(burger)
+    || Boolean(raw.finishedAt) !== Boolean(burger?.winners) || (burger && (burger.minutes !== burgerMinutes
+      || mockSeats?.some(role => !burger.players.includes(role)))))) return;
   const mole = moleConfig && 'mole' in raw ? readMoleRound(raw.mole) : undefined;
   if (game === 'mole' && (!moleConfig || Boolean(raw.startedAt) !== Boolean(mole) || Boolean(raw.finishedAt) !== Boolean(mole?.winners)
     || (mole && (mole.settings.mode !== moleConfig.mode || mole.settings.seconds !== moleConfig.seconds || mole.settings.size !== moleConfig.size
@@ -217,6 +229,7 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
     || (beginsAt > 0 && (!raw.startedAt || beginsAt < raw.startedAt)))) return;
   const playStart = beginsAt ?? raw.startedAt;
   if (mole && mole.start !== playStart) return;
+  if (burger && burger.start !== playStart) return;
   if (slime && (slime.winner ? !playStart
     : playStart ? slime.tickAt < playStart : slime.tickAt !== 0)) return;
   if (!isTurnLimit(nextLimit) || typeof nextDeadlineAt !== 'number' || !Number.isSafeInteger(nextDeadlineAt)
@@ -233,7 +246,7 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
   const next: Match = { id: raw.id, game, hostColor: nextHostColor, startedAt: raw.startedAt, finishedAt: raw.finishedAt, allowDoubleThree: raw.allowDoubleThree,
     overline: nextOverline, history, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, timeoutPending: pending,
     turnLimit: nextLimit, deadline: nextDeadlineAt, beginsAt, clockOffset, pausedAt, pausedMs, disconnectedSeats,
-    puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, slime, moleConfig, mole, flickSettings, physicsSeats, mockSeats };
+    puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, slime, moleConfig, mole, burgerMinutes, burger, flickSettings, physicsSeats, mockSeats };
   if (pending && (!nextLimit || pending.color !== matchTurn(next))) return;
   if (disconnectedSeats?.some(role => !inRound(next, role))) return;
   if (followsSnapshot(current, next)) return next;

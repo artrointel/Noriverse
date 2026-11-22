@@ -1,3 +1,4 @@
+import { gameFontFamily } from '../game-font.ts';
 import type Phaser from 'phaser';
 import hudArt from '../../assets/sichuan-hud.webp';
 
@@ -28,9 +29,8 @@ export function createSichuanHud(scene: Phaser.Scene, memory = false) {
     .setDisplaySize(width, height).setDepth(8);
   image(240, 560, 'panel', 472, 156);
   image(240, 543, 'rail', 424, 49);
-  const fontFamily = 'system-ui, "Malgun Gothic", sans-serif';
   const text = (x: number, y: number, fontSize: number, bold = false) => scene.add.text(x, y, '', {
-    fontFamily, fontSize, fontStyle: bold ? 'bold' : 'normal', color: '#fff7e2',
+    fontFamily: gameFontFamily, fontSize, fontStyle: bold ? 'bold' : 'normal', color: '#fff7e2',
   }).setResolution(2).setOrigin(0, .5).setDepth(9);
   const status = text(31, 503, 15, true);
   const description = text(446, 503, 11).setOrigin(1, .5).setColor('#e1d2f2');

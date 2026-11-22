@@ -1,3 +1,4 @@
+import { gameFontFamily } from '../game-font.ts';
 import type Phaser from 'phaser';
 import type { SceneFactory } from '../scene-loader.ts';
 import type { Role } from '../../../../../packages/protocol/rooms.ts';
@@ -37,7 +38,6 @@ const pose = { emerge: 0, idle: 1, blink: 2, hide: 3, startled: 4, hit: 5 } as c
 const propsKey = 'mole-props';
 const holeFrame = 0, hammerFrame = 1, burstFrame = 2, panelFrame = 3;
 const half = tableSize / 2;
-const font = 'Jua, sans-serif';
 const gold = '#fff2a8';
 const silver = '#f6ecff';
 type TargetArt = { root: Phaser.GameObjects.Container; sprite: Phaser.GameObjects.Image;
@@ -83,7 +83,7 @@ export const moleScene: SceneFactory = view => {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const motion = () => !reducedMotion.matches;
   const worldTime = (data: MoleView) => Date.now() - data.clockOffset;
-  const textStyle = (size: number, color = silver) => ({ fontFamily: font, fontSize: size, color, stroke: '#231533', strokeThickness: 3 });
+  const textStyle = (size: number, color = silver) => ({ fontFamily: gameFontFamily, fontSize: size, color, stroke: '#231533', strokeThickness: 3 });
 
   function reset(scene: Phaser.Scene, data: MoleView) {
     key = data.id + ':' + data.size;

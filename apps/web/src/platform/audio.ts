@@ -34,6 +34,7 @@ const gameTracks: Record<ProfileGame, readonly MusicTrack[]> = {
   liar: ['midnightCourier', 'velvetCarousel', 'paperConstellation', 'rooftopStatic'],
   slime: ['orbit', 'skyRelay', 'prismDrive', 'paperComet'],
   mole: ['starBop', 'lemonSprint', 'melonSurf', 'highlandParade'],
+  burger: ['lemonSprint', 'melonSurf', 'highlandParade'],
 };
 
 function randomTrack<T extends MusicTrack>(tracks: readonly T[], previous?: string | null, lastMatchTrack?: MusicTrack): T {
@@ -62,6 +63,35 @@ export function onAudioReady(listener: () => void) {
   audioReadyListeners.add(listener);
   document.addEventListener('visibilitychange', listener);
   return () => { audioReadyListeners.delete(listener); document.removeEventListener('visibilitychange', listener); };
+}
+
+const recordedBuffers = new Map<string, Promise<AudioBuffer>>();
+
+export function playRecordedEffect(url: string, volume: number, loop = false) {
+  if (!graph) return;
+  const { context, effects } = graph;
+  let buffer = recordedBuffers.get(url);
+  if (!buffer) {
+    buffer = fetch(url).then(response => {
+      if (!response.ok) throw new Error('Audio sample unavailable');
+      return response.arrayBuffer();
+    }).then(data => context.decodeAudioData(data));
+    recordedBuffers.set(url, buffer);
+  }
+  let source: AudioBufferSourceNode | undefined;
+  let stopped = false;
+  void buffer.then(decoded => {
+    if (stopped || context.state !== 'running') return;
+    source = context.createBufferSource();
+    const gain = context.createGain();
+    gain.gain.value = volume;
+    source.buffer = decoded;
+    source.loop = loop;
+    source.connect(gain).connect(effects);
+    source.onended = () => { source?.disconnect(); gain.disconnect(); };
+    source.start();
+  }).catch(() => { recordedBuffers.delete(url); });
+  return () => { stopped = true; source?.stop(); };
 }
 const playingNotes = new Set<AudioScheduledSourceNode>();
 

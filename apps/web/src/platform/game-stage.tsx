@@ -18,6 +18,8 @@ import type { RenderResolution } from '../games/render-resolution.ts';
 import { tableSize } from '../games/table.ts';
 import { orbitSceneHeight } from '../games/slime/rules.ts';
 import { orbitKeys } from '../games/slime/controls.ts';
+import { burgerSceneHeight, fitBurgerPixels, maxBurgerPixelStep } from '../games/burger/layout.ts';
+import { loadGameFont } from '../games/game-font.ts';
 import { sichuanSceneHeight } from '../games/sichuan/options.ts';
 import { liarSceneHeight } from '../games/liar/rules.ts';
 import { sketchSceneHeight } from '../games/sketch/hud.ts';
@@ -55,9 +57,11 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const engine = useRef<ReturnType<typeof mountGame>>(null);
   const centered = useRef(false);
   const sceneHeight = isTilePuzzle(id) ? sichuanSceneHeight : id === 'liar' ? liarSceneHeight : id === 'sketch' ? sketchSceneHeight
-    : id === 'slime' ? orbitSceneHeight : tableSize;
+    : id === 'slime' ? orbitSceneHeight : id === 'burger' ? burgerSceneHeight : tableSize;
   const requestedSize = useRef({ frame: { width: tableSize, height: sceneHeight }, buffer: { width: tableSize, height: sceneHeight } });
   const [actualSize, setActualSize] = useState(requestedSize.current);
+  const [pixelStep, setPixelStep] = useState(2);
+  const [appliedPixelStep, setAppliedPixelStep] = useState(2);
   const resultButton = useRef<HTMLButtonElement>(null);
   const [gameSettingsOpen, setGameSettingsOpen] = useState(false);
   const gameInfo = useRef<HTMLDetailsElement>(null);
@@ -80,7 +84,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   const notifyReady = useEffectEvent(() => onReady?.());
   const boardLabel = id === 'physics' ? 'physicsBoard' : id === 'othello' ? 'othelloBoard' : id === 'chess' ? 'chessBoard' : id === 'sichuan' ? 'sichuanBoard'
     : id === 'memory' ? 'memoryBoard' : id === 'sketch' ? 'sketchCanvas' : id === 'liar' ? 'liarTable' : id === 'slime' ? 'slimeBoard'
-      : id === 'mole' ? 'moleBoard' : 'board';
+      : id === 'mole' ? 'moleBoard' : id === 'burger' ? 'burgerBoard' : 'board';
 
   useLayoutEffect(() => { current.current = view; announcement.current = announcements; });
   useEffect(() => { setMatchMusic(id, matchId); }, [id, matchId]);
@@ -98,7 +102,10 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
       if (!element || !stage || !layout) return;
       const fitWindow = resolution === 'auto' || matchMedia('(pointer: coarse)').matches;
       let availableHeight = Infinity;
-      if (expanded) availableHeight = Math.max(1, element.clientHeight - (footerControls?.offsetHeight ?? 0));
+      if (expanded) {
+        const footerHeight = footerControls && getComputedStyle(footerControls).position !== 'absolute' ? footerControls.offsetHeight : 0;
+        availableHeight = Math.max(1, element.clientHeight - footerHeight);
+      }
       else if (fitWindow) {
         const visibleHeight = viewport?.scale === 1 ? viewport.height : window.innerHeight;
         availableHeight = availableStageHeight(visibleHeight, header?.offsetHeight ?? 0, stage.offsetHeight, canvas?.offsetHeight ?? 0);
@@ -107,9 +114,13 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
       const inset = (property: string) => Number.parseFloat(style.getPropertyValue(property)) || 0;
       const availableWidth = expanded ? element.clientWidth
         : layout.clientWidth - inset('padding-left') - inset('padding-right') - inset('--stage-sidebar-width') - inset('column-gap');
-      const frame = renderFrameSize(resolution, availableWidth, availableHeight, sceneHeight);
+      const fitted = renderFrameSize(resolution, availableWidth, availableHeight, sceneHeight);
+      const density = window.devicePixelRatio || 1;
+      const pixelFit = id === 'burger' ? fitBurgerPixels(fitted.width, fitted.height, density, pixelStep) : undefined;
+      const frame = pixelFit?.frame ?? fitted;
       if (!frame.width) return;
-      const buffer = renderBufferSize(resolution, frame, sceneHeight, window.devicePixelRatio);
+      if (pixelFit) setAppliedPixelStep(pixelFit.step);
+      const buffer = pixelFit?.buffer ?? renderBufferSize(resolution, frame, sceneHeight, density);
       const previous = requestedSize.current;
       if (frame.width === previous.frame.width && buffer.width === previous.buffer.width) return;
       requestedSize.current = { frame, buffer };
@@ -142,7 +153,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
       window.removeEventListener('resize', measure);
       viewport?.removeEventListener('resize', measure);
     };
-  }, [resolution, expanded, sceneHeight]);
+  }, [resolution, expanded, sceneHeight, id, pixelStep]);
 
   useEffect(() => {
     if (status !== 'ready' || expanded || resolution !== 'auto' || centered.current) return;
@@ -211,7 +222,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
     setStatus('loading');
     void Promise.all([import('../games/scenes.ts'), sceneLoaders[id]()]).then(async ([{ mountGame, loadRoundAnnouncementAssets }, createScene]) => {
       if (canceled) return;
-      await loadRoundAnnouncementAssets();
+      await Promise.all([loadRoundAnnouncementAssets(), loadGameFont()]);
       if (canceled) return;
       instance = mountGame(element, id, roundAntialias, requestedSize.current.buffer, () => current.current, createScene, () => announcement.current, () => {
         if (!canceled) { setStatus('ready'); notifyReady(); }
@@ -267,6 +278,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (view.burger) return;
     if (view.slime) {
       const input = orbitKeys.get(event.key);
       if (event.target !== event.currentTarget || !input || event.altKey || event.ctrlKey || event.metaKey) return;
@@ -314,6 +326,12 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         {stageContext && <div className="stage-context">
           <span>{stageContext.mode}</span><strong>{stageContext.map}</strong>
         </div>}
+        {id === 'burger' && <label className="burger-pixel-control">
+          <span>{t('burgerPixelSize')}</span>
+          <input type="range" min={1} max={maxBurgerPixelStep} step={1} value={pixelStep}
+            onChange={event => setPixelStep(Number(event.currentTarget.value))} />
+          <output>{appliedPixelStep} px · {actualSize.buffer.width} × {actualSize.buffer.height}</output>
+        </label>}
         <div className="stage-actions">
           {resultHidden && <button ref={resultButton} className="button stage-result-trigger attention-button" type="button" aria-label={t('viewResult')} onClick={onShowResult}>{t('viewResult')}</button>}
           {info && <details className="stage-info" ref={gameInfo} onKeyDown={event => {
@@ -348,8 +366,8 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
             <h2 id={helpId + '-settings'}>{t('inGameSettings')}</h2>
             <div className="stage-settings-panel">
               <label><input type="checkbox" role="switch" checked={showTouches} onChange={event => onTouchDisplay(event.target.checked)} />{t('touchEffects')}</label>
-              <label><input type="checkbox" checked={antialias} onChange={event => onAntialias(event.target.checked)} />{t('antialias')}</label>
-              {antialias !== roundAntialias && <small>{t('graphicsHelp')}</small>}
+              {id !== 'burger' && <label><input type="checkbox" checked={antialias} onChange={event => onAntialias(event.target.checked)} />{t('antialias')}</label>}
+              {id !== 'burger' && antialias !== roundAntialias && <small>{t('graphicsHelp')}</small>}
               <label className="stage-resolution">
                 <span>{t('resolution')}</span>
                 <select value={resolution} onChange={event => onResolution(readResolution(event.target.value))}>
@@ -402,7 +420,7 @@ export function GameStage({ id, matchId, antialias, resolution, onResolution, on
         </header>
         <p id={helpId + '-body'}>{t(id === 'physics' ? 'physicsHelp' : id === 'othello' ? 'othelloHelp' : id === 'chess' ? 'chessHelp' : id === 'sichuan' ? 'sichuanHelp'
           : id === 'memory' ? 'memoryHelp' : id === 'sketch' ? 'sketchHelp' : id === 'liar' ? 'liarHelp' : id === 'slime' ? 'slimeHelp'
-            : id === 'mole' ? 'moleHelp' : 'boardHelp')}
+            : id === 'mole' ? 'moleHelp' : id === 'burger' ? 'burgerHelp' : 'boardHelp')}
           {(id === 'omok' || id === 'chess') && <> {t('previewMoveHelp')}</>}
           {id === 'othello' && <span className="touch-move-help"> {t('touchMoveHelp')}</span>}
         </p>

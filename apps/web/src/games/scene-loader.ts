@@ -1,11 +1,14 @@
 import type Phaser from 'phaser';
 import type { GameId } from '../../../../packages/protocol/games.ts';
 import type { GameView } from './game-view.ts';
+import type { RoundCue } from './round-cues.ts';
 
 export type SceneFactory = (view: () => GameView) => {
   preload?(this: Phaser.Scene): void;
   create(this: Phaser.Scene): void;
   update?(this: Phaser.Scene, time: number, delta: number): void;
+  announcementSound?(cue: RoundCue): boolean;
+  pixelArt?: boolean;
 };
 
 export const sceneLoaders: Record<GameId, () => Promise<SceneFactory>> = {
@@ -19,4 +22,5 @@ export const sceneLoaders: Record<GameId, () => Promise<SceneFactory>> = {
   liar: () => import('./liar/scene.ts').then(module => module.liarScene),
   slime: () => import('./slime/scene.ts').then(module => module.slimeScene),
   mole: () => import('./mole/scene.ts').then(module => module.moleScene),
+  burger: () => import('./burger/scene.ts').then(module => module.burgerScene),
 };

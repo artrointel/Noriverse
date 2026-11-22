@@ -56,7 +56,6 @@ function ReactionText({ text }: { text: string }) {
     fit();
     const observer = new ResizeObserver(fit);
     observer.observe(box);
-    void document.fonts.load('16px "Sketch Jua"').then(fit).catch(() => {});
     return () => observer.disconnect();
   }, [text]);
   return <span className="stage-reaction-text" ref={frame}><span ref={label} dir="auto">{text}</span></span>;
@@ -87,6 +86,7 @@ function ReactionBubble({ event }: { event: TimedReaction }) {
 
 export function ReactionLayer({ events, viewport = false }: { events: TimedReaction[]; viewport?: boolean }) {
   const { t } = useTranslation();
+  const layer = useRef<HTMLDivElement>(null);
   const [clock, setClock] = useState(0);
   const now = Math.max(clock, performance.now());
   const visible = events.filter(event => event.expiresAt > now);
@@ -97,7 +97,36 @@ export function ReactionLayer({ events, viewport = false }: { events: TimedReact
     return () => window.clearTimeout(timer);
   }, [clock, expiry]);
 
-  return <div className={viewport ? 'stage-reaction-layer viewport-reactions' : 'stage-reaction-layer'} role="log" aria-label={t('gameReactions')}>
+  useLayoutEffect(() => {
+    if (!viewport || !layer.current) return;
+    const element = layer.current;
+    const header = document.querySelector('.site-header');
+    const visual = window.visualViewport;
+    const measure = () => {
+      const viewportTop = visual?.offsetTop ?? 0;
+      const viewportBottom = viewportTop + (visual?.height ?? window.innerHeight);
+      const headerBottom = header?.getBoundingClientRect().bottom ?? viewportTop;
+      const top = Math.min(viewportBottom, Math.max(viewportTop, headerBottom));
+      element.style.setProperty('--reaction-viewport-top', top + 'px');
+      element.style.setProperty('--reaction-viewport-bottom', Math.max(0, window.innerHeight - viewportBottom) + 'px');
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (header) observer.observe(header);
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, { passive: true });
+    visual?.addEventListener('resize', measure);
+    visual?.addEventListener('scroll', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure);
+      visual?.removeEventListener('resize', measure);
+      visual?.removeEventListener('scroll', measure);
+    };
+  }, [viewport]);
+
+  return <div ref={layer} className={viewport ? 'stage-reaction-layer viewport-reactions' : 'stage-reaction-layer'} role="log" aria-label={t('gameReactions')}>
     {visible.map(event => <ReactionBubble key={event.id} event={event} />)}
   </div>;
 }

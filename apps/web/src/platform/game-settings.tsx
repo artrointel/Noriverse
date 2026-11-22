@@ -17,6 +17,7 @@ import { maxHintInterval, sketchCycles, sketchMaps, sketchTimes } from '../games
 import type { SketchSettings } from '../games/sketch/rules.ts';
 import { liarGuessSeconds, liarHintTimes, liarVoteSeconds } from '../games/liar/rules.ts';
 import { moleModes, moleSizes, moleTimes } from '../games/mole/rules.ts';
+import { burgerMinutes } from '../games/burger/rules.ts';
 
 export function GameFeature({ game, heading, children }: { game: GameId; heading: string; children?: ReactNode }) {
   const { t } = useTranslation();
@@ -116,6 +117,15 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
   online: boolean; onValidity: (valid: boolean) => void;
 }) {
   const { t } = useTranslation();
+  if (game === 'burger') return <SettingsSection title={t('setupBoardRules')}>
+    <SettingsSelect label={t('matchTimeLimit')} value={settings.burger} change={value => {
+      const minutes = burgerMinutes.find(option => option === Number(value));
+      if (minutes) change({ ...settings, burger: minutes });
+    }}>
+      {burgerMinutes.map(minutes => <option key={minutes} value={minutes}>{formatPlayTime(minutes * 60)}</option>)}
+    </SettingsSelect>
+    <p className="setup-help">{t('burgerDurationHelp')}</p>
+  </SettingsSection>;
   if (game === 'mole') {
     const mole = settings.mole;
     return <SettingsSection title={t('setupBoardRules')}>
@@ -201,7 +211,9 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
 export function GameRulesSummary({ game, settings }: { game: GameId; settings: MatchSettings }) {
   const { t } = useTranslation();
   const entries: [string, string][] = [];
-  if (game === 'mole') {
+  if (game === 'burger') {
+    entries.push([t('matchTimeLimit'), formatPlayTime(settings.burger * 60)]);
+  } else if (game === 'mole') {
     const { size, mode, seconds } = settings.mole;
     entries.push([t('sichuanGrid'), `${size} × ${size}`], [t('moleFormat'), t('mole_' + mode)],
       [t('matchTimeLimit'), mode === 'timed' ? formatPlayTime(seconds) : t('moleEndlessDuration')]);

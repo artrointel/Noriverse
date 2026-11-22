@@ -8,6 +8,7 @@ import sketchArt from '../assets/sketch-cover.webp';
 import liarArt from '../assets/liar-cover.webp';
 import slimeArt from '../assets/slime-cover.webp';
 import moleArt from '../assets/mole/cover.webp';
+import burgerArt from '../assets/burger/cover.webp';
 import type { GameId } from '../../../../packages/protocol/games.ts';
 export { gameIds } from '../../../../packages/protocol/games.ts';
 
@@ -24,6 +25,8 @@ export const games = {
     cardSubtitle: 'slimeCardSubtitle', searchNames: '별젤리 슬라임 낙하 퍼즐 jelly orbit slime falling puzzle 뿌요뿌요 puyo puyo puyopuyo ぷよぷよ' },
   mole: { art: moleArt, category: 'action', players: 'upToFourPlayers', description: 'moleCopy', rules: 'moleHelp',
     searchNames: '두더지 게임 두더지잡기 두더지망치 별길 탐사대 star bop mole whack arcade' },
+  burger: { art: burgerArt, category: 'action', players: 'upToFourPlayers', description: 'burgerCopy', rules: 'burgerHelp',
+    searchNames: '햄버거 타이쿤 버거 요리 경영 burger tycoon kitchen cooking' },
 } as const satisfies Record<GameId, { art: string; category: string; players: string; description: string; rules: string; searchNames: string;
   cardSubtitle?: string }>;
 

@@ -261,7 +261,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
             const activityLabel = activity?.startsWith('play:') ? t('roomActivity_play', { game: t(activity.slice(5)) })
               : activity ? t('roomActivity_' + activity) : undefined;
             const activityLine = activityLabel && <small className="lobby-participant-activity">{activityLabel}</small>;
-            const seatInfo = [t(role === 'host' ? 'host' : 'guest'), isTilePuzzle(activeGame) || activeGame === 'sketch' || activeGame === 'liar' || activeGame === 'slime' || activeGame === 'mole'
+            const seatInfo = [t(role === 'host' ? 'host' : 'guest'), isTilePuzzle(activeGame) || activeGame === 'sketch' || activeGame === 'liar' || activeGame === 'slime' || activeGame === 'mole' || activeGame === 'burger'
               || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)),
               own ? t('me') : undefined, participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
             return <li key={role}>

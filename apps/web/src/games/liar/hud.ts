@@ -1,3 +1,4 @@
+import { gameFontFamily } from '../game-font.ts';
 import type Phaser from 'phaser';
 import hudArt from '../../assets/liar-hud.webp';
 
@@ -20,7 +21,7 @@ export function createLiarHud(scene: Phaser.Scene) {
   const art = (x: number, y: number, frame: string, width: number, height: number) => scene.add.image(x, y, texture, frame)
     .setDisplaySize(width, height);
   const text = (x: number, y: number, size: number, color: string, bold = false) => scene.add.text(x, y, '', {
-    color, fontSize: size, fontStyle: bold ? 'bold' : 'normal', fontFamily: 'system-ui, "Malgun Gothic", sans-serif',
+    color, fontSize: size, fontStyle: bold ? 'bold' : 'normal', fontFamily: gameFontFamily,
   }).setResolution(2).setOrigin(.5);
   const fit = (label: Phaser.GameObjects.Text, value: string, max: number) => {
     label.setText(value).setScale(Math.min(1, max / Math.max(1, label.width)), 1);
