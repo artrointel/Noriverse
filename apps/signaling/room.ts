@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { isRoomRole, maxRelayMessageLength, readRelayData, readRoomActivity, readRoomLinks, readSignal, roomCapacity, roomHeartbeat, roomRoles } from '../../packages/protocol/rooms.ts';
+import { hostReturnGrace, isRoomRole, maxRelayMessageLength, readRelayData, readRoomActivity, readRoomLinks, readSignal, roomCapacity, roomHeartbeat, roomRoles } from '../../packages/protocol/rooms.ts';
 import type { Participant, Role, RoomActivity, RoomGame, RoomMessage } from '../../packages/protocol/rooms.ts';
 import type { ProfileSummary } from '../../packages/protocol/profile.ts';
 import { profileIdPattern } from '../../packages/protocol/profile.ts';
@@ -10,7 +10,7 @@ import { readRoomResult, roomStandings } from '../../packages/protocol/room-hist
 import type { RoomResult } from '../../packages/protocol/room-history.ts';
 import { roomStreakBadges } from '../../packages/protocol/room-badges.ts';
 
-interface Reservation { host: string; hostJoined?: boolean; guest?: string; guest2?: string; guest3?: string; game?: RoomGame; expires: number;
+interface Reservation { host: string; hostJoined?: boolean; hostAwayUntil?: number; guest?: string; guest2?: string; guest3?: string; game?: RoomGame; expires: number;
   profiles?: Partial<Record<Role, ProfileSummary>>; memberIds?: Partial<Record<Role, string>>; closedAt?: number; title?: string }
 type AttachedSeat = { role: Role; token?: string; relay?: boolean; upgrade?: string; activity?: RoomActivity };
 const unclaimedRoomLifetime = 30 * 60 * 1000;
@@ -37,7 +37,8 @@ export class Room extends DurableObject<Env> {
       const previous = await this.ctx.storage.get<Reservation>('reservation');
       if (previous) {
         const unclaimed = !previous.hostJoined && previous.expires > Date.now();
-        if ((!previous.closedAt && (unclaimed || this.socketFor('host'))) || !await this.finishRoom(previous)) return null;
+        if ((!previous.closedAt && (unclaimed || (previous.hostAwayUntil ?? 0) > Date.now() || this.socketFor('host')))
+          || !await this.finishRoom(previous)) return null;
       }
       this.closeRoomSockets();
       const reservation: Reservation = { host: crypto.randomUUID(), hostJoined: false, game, title, expires: Date.now() + unclaimedRoomLifetime,
@@ -112,8 +113,10 @@ export class Room extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server);
     const token = new URL(request.url).searchParams.get('seat');
     const host = this.socketFor('host', server);
-    if (!reservation || reservation.closedAt
-      || (!host && (token !== reservation.host || reservation.hostJoined || reservation.expires <= Date.now()))) {
+    const now = Date.now();
+    if (!reservation || reservation.closedAt || (!host && !(
+      token && (reservation.hostJoined ? (reservation.hostAwayUntil ?? 0) > now : token === reservation.host && reservation.expires > now)
+    ))) {
       send(server, { type: 'error', reason: 'missing' });
       server.close(1008);
     } else {
@@ -125,15 +128,22 @@ export class Room extends DurableObject<Env> {
         return new Response(null, { status: 101, webSocket: client });
       }
       const seat = token ?? crypto.randomUUID();
-      if (!token || (role === 'host' && !reservation.hostJoined) || !reservation.memberIds?.[role]) {
-        if (role === 'host') reservation.hostJoined = true;
+      if (!token || (role === 'host' && (!reservation.hostJoined || reservation.hostAwayUntil)) || !reservation.memberIds?.[role]) {
+        if (role === 'host') {
+          reservation.hostJoined = true;
+          delete reservation.hostAwayUntil;
+        }
         else reservation[role] = seat;
         reservation.memberIds = { ...reservation.memberIds, [role]: reservation.memberIds?.[role] ?? crypto.randomUUID() };
         await this.ctx.storage.put('reservation', reservation);
       }
       if (role === 'host') await this.ctx.storage.deleteAlarm();
       this.rememberBadgeMembers(reservation);
-      this.socketFor(role, server)?.close(1000, 'Seat replaced');
+      const replaced = this.socketFor(role, server);
+      if (replaced) {
+        replaced.serializeAttachment(null);
+        replaced.close(1000, 'Seat replaced');
+      }
       server.serializeAttachment({ role, token: seat });
       send(server, { type: 'welcome', role, token: seat, title: reservation.title });
       if (role === 'host') {
@@ -156,10 +166,11 @@ export class Room extends DurableObject<Env> {
         if (result && !result.test) await this.recordBadgeResult(socket, result);
         return;
       }
-      if (role !== 'host' && raw && typeof raw === 'object' && 'type' in raw && raw.type === 'leave') {
+      if (raw && typeof raw === 'object' && 'type' in raw && raw.type === 'leave') {
         await this.ctx.blockConcurrencyWhile(async () => {
           const reservation = await this.ctx.storage.get<Reservation>('reservation');
           if (!reservation || reservation[role] !== this.attachedSeat(socket)?.token || this.socketFor(role) !== socket) return;
+          if (role === 'host') { await this.finishRoom(reservation); return; }
           const next = { ...reservation, profiles: { ...reservation.profiles }, memberIds: { ...reservation.memberIds } };
           delete next[role];
           delete next.profiles[role];
@@ -250,7 +261,16 @@ export class Room extends DurableObject<Env> {
         if (this.socketFor('host', socket)) return;
         const reservation = await this.ctx.storage.get<Reservation>('reservation');
         if (!reservation || (attachment.token ? attachment.token !== reservation.host : reservation.hostJoined === false)) return;
-        await this.finishRoom(reservation);
+        if (reservation.closedAt) return;
+        reservation.hostAwayUntil = Date.now() + hostReturnGrace;
+        await this.ctx.storage.put('reservation', reservation);
+        await this.ctx.storage.setAlarm(reservation.hostAwayUntil);
+        for (const peer of guests) {
+          const guest = this.socketFor(peer);
+          if (guest) send(guest, { type: 'peer-left', peer: 'host' });
+        }
+        this.sendRoster(reservation, socket);
+        this.notifyRoomChange(reservation);
       });
       return;
     }
@@ -288,7 +308,8 @@ export class Room extends DurableObject<Env> {
     await this.ctx.blockConcurrencyWhile(async () => {
       const reservation = await this.ctx.storage.get<Reservation>('reservation');
       if (!reservation || (!reservation.closedAt && this.socketFor('host'))) return;
-      if (!reservation.closedAt && !reservation.hostJoined && reservation.expires > Date.now()) await this.ctx.storage.setAlarm(reservation.expires);
+      const expires = reservation.hostJoined ? reservation.hostAwayUntil ?? 0 : reservation.expires;
+      if (!reservation.closedAt && expires > Date.now()) await this.ctx.storage.setAlarm(expires);
       else await this.finishRoom(reservation);
     });
   }

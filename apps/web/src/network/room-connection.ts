@@ -90,6 +90,7 @@ export function connectToRoom(code: string, token: string | undefined, events: R
   }
 
   socket.onopen = () => {
+    if (disposed) return;
     heartbeat = window.setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) socket.send(roomHeartbeat.ping);
     }, 30_000);
@@ -181,7 +182,7 @@ export function connectToRoom(code: string, token: string | undefined, events: R
     if (next !== 'connecting') window.clearTimeout(peer.timer);
     if (next === 'connected') {
       window.clearTimeout(peer.repairTimer);
-      if (role !== 'host') reconnectSince = undefined;
+      if (role !== 'host' || connectedPeers().length === peers.size) reconnectSince = undefined;
       directRetries.delete(id);
       if (recoveryStarts.delete(id) && role !== 'host' && !peer.relay && peer.channel?.readyState === 'open') {
         peer.channel.send('{"type":"direct-resumed"}');
@@ -345,10 +346,10 @@ export function connectToRoom(code: string, token: string | undefined, events: R
     if (!events.playing()) {
       recoveryStarts.delete(id);
       directRetries.delete(id);
-    } else if (peers.get(id)?.state === 'connected') {
-      recoveryStarts.set(id, Date.now());
+    } else {
+      if (peers.get(id)?.state === 'connected') recoveryStarts.set(id, Date.now());
+      if (reconnectSince !== undefined && !recoveryStarts.has(id)) recoveryStarts.set(id, reconnectSince);
     }
-    if (reconnectSince !== undefined && !recoveryStarts.has(id)) recoveryStarts.set(id, reconnectSince);
     closePeer(id);
     const peer: Peer = { candidates: [], negotiation: Promise.resolve(), state: 'connecting' };
     peers.set(id, peer);
@@ -527,7 +528,7 @@ export function connectToRoom(code: string, token: string | undefined, events: R
     if (!isRoomRole(id) || id === role || (role !== 'host' && id !== 'host')) return;
     if (message.type === 'peer-left') {
       const peer = peers.get(id);
-      if (peer?.channel?.readyState !== 'open') {
+      if (id === 'host' || peer?.channel?.readyState !== 'open') {
         if (events.playing() && peer && !recoveryStarts.has(id)) recoveryStarts.set(id, Date.now());
         closePeer(id);
         refreshState('disconnected');
@@ -608,16 +609,21 @@ export function connectToRoom(code: string, token: string | undefined, events: R
       if (!disposed) await handle(JSON.parse(event.data) as RoomMessage);
     }).catch(() => { if (!disposed) refreshState('failed'); });
   };
-  socket.onclose = () => {
+  socket.onclose = event => {
     window.clearInterval(heartbeat);
     if (disposed || currentState === 'full' || currentState === 'missing' || currentState === 'closed') return;
-    if (role === 'host') { closePeers(); publishLinks(); state('closed'); return; }
+    if (event.reason === 'Seat replaced' || event.reason === 'Room closed') {
+      closePeers();
+      publishLinks();
+      state('closed');
+      return;
+    }
     const host = peers.get('host');
-    if (host?.state !== 'connected' || host.channel?.readyState !== 'open') {
+    if (role === 'host' || host?.state !== 'connected' || host.channel?.readyState !== 'open') {
       const since = recoveryStarts.get('host') ?? reconnectSince ?? Date.now();
       closePeers();
       refreshState('disconnected');
-      if (events.playing()) reopen(since);
+      if (role === 'host' || reconnectSince !== undefined || events.playing()) reopen(since);
     }
   };
 
@@ -657,11 +663,17 @@ export function connectToRoom(code: string, token: string | undefined, events: R
       return true;
     },
     close(leave = false) {
-      if (leave && role !== 'host' && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'leave' }));
       disposed = true;
       window.clearInterval(heartbeat);
       closePeers();
-      socket.close();
+      if (leave && socket.readyState < WebSocket.CLOSING) {
+        const release = () => socket.send('{"type":"leave"}');
+        if (socket.readyState === WebSocket.OPEN) release();
+        else socket.addEventListener('open', release, { once: true });
+        // Let the signaling service process the explicit departure before the socket closes.
+        const timer = window.setTimeout(() => socket.close(), 3000);
+        socket.addEventListener('close', () => window.clearTimeout(timer), { once: true });
+      } else socket.close();
     },
   };
 }

@@ -63,6 +63,7 @@ export type Signal =
   | { type: 'ice'; candidate: IceCandidate };
 export const maxRelayMessageLength = 48_000;
 export const roomHeartbeat = { ping: '{"type":"room-ping"}', pong: '{"type":"room-pong"}' } as const;
+export const hostReturnGrace = 30_000;
 export type RelayData = { type: string } & Record<string, unknown>;
 export function readRelayData(value: unknown): RelayData | undefined {
   if (value && typeof value === 'object' && 'type' in value && typeof value.type === 'string'
