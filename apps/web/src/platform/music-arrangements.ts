@@ -1,10 +1,13 @@
 import { encoreArrangements, playEncoreBacking } from './music-encore.ts';
 import type { EncoreBacking } from './music-encore.ts';
+import { sessionArrangements, playSessionBacking } from './music-sessions.ts';
+import type { SessionBacking } from './music-sessions.ts';
 
-type Backing = 'arcade' | 'piano' | 'funk' | 'waltz' | 'ambient' | 'bossa' | 'breakbeat' | 'march' | 'musicBox' | 'reggae' | EncoreBacking;
+type Backing = 'arcade' | 'piano' | 'funk' | 'waltz' | 'ambient' | 'bossa' | 'breakbeat' | 'march' | 'musicBox' | 'reggae' | EncoreBacking | SessionBacking;
 
 export type Arrangement<Style extends string = Backing> = {
   bpm: number; steps: number; swing: number;
+  stepsPerBeat?: 2 | 3 | 4;
   bars: readonly { chord: readonly [number, number, number]; melody: readonly number[] }[];
   lead: readonly [wave: OscillatorType, length: number, attack: number, gain: number];
   accompaniment: Style;
@@ -80,6 +83,7 @@ export const arrangements = {
     { chord: [48, 52, 55], melody: [0, 79, 0, 76, 72, 0, 76, 0] }, { chord: [50, 54, 57], melody: [0, 74, 0, 72, 69, 0, 66, 0] },
   ] },
   ...encoreArrangements,
+  ...sessionArrangements,
 } as const satisfies Record<string, Arrangement>;
 
 export type ArrangementTrack = keyof typeof arrangements;
@@ -94,16 +98,23 @@ export const musicMoods = {
   rooftopStatic: ['lofi', 'warm'], melonSurf: ['surf', 'playful'], mirrorSteps: ['disco', 'rhythmic'], meadowTrail: ['folk', 'bright'],
   pebbleDub: ['dub', 'slow'], prismDrive: ['synthwave', 'night'], pocketDetective: ['pizzicato', 'playful'],
   bambooClock: ['kalimba', 'rhythmic'], skyRelay: ['garage', 'energetic'], winterChorale: ['chorale', 'calm'],
+  cornerBooth: ['swingJazz', 'warm', 'night'], redPlatform: ['tango', 'dramatic'],
+  saturnWind: ['flute', 'cosmic', 'calm'], silkPond: ['zither', 'soft'], starlightTroupe: ['polka', 'playful', 'bright'],
+  glassDistrict: ['deepHouse', 'night', 'rhythmic'], moonbaseSignal: ['cinematic', 'tense', 'cosmic'],
+  harborSocial: ['salsa', 'warm', 'energetic'], greenCathedral: ['baroque', 'harpsichord'],
+  beforeFirstTrain: ['strings', 'melancholy', 'slow'],
 } as const;
 
-export type Voice = (note: number, length: number, gain: number, wave?: OscillatorType, attack?: number) => void;
+export type Voice = (note: number, length: number, gain: number, wave?: OscillatorType,
+  attack?: number, endNote?: number, sustain?: number) => void;
 export type Percussion = (length: number, gain: number, hz: number) => void;
 
 export function playArrangement(track: ArrangementTrack, beat: number, note: Voice, noise: Percussion) {
-  const { bpm, steps, swing, bars, lead, accompaniment }: Arrangement = arrangements[track];
+  const { bpm, steps, swing, stepsPerBeat = 2, bars, lead, accompaniment }: Arrangement = arrangements[track];
   const step = beat % steps;
-  const interval = 30 / bpm;
-  const { chord, melody } = bars[Math.floor(beat / steps) % bars.length];
+  const interval = 60 / (bpm * stepsPerBeat);
+  const barIndex = Math.floor(beat / steps) % bars.length;
+  const { chord, melody } = bars[barIndex];
   const [root, middle, upper] = chord;
   const pitch = melody[step];
   if (pitch) note(pitch, lead[1] * interval, lead[3], lead[0], lead[2]);
@@ -161,8 +172,20 @@ export function playArrangement(track: ArrangementTrack, beat: number, note: Voi
       if (step === 4) noise(.09, .13, 1950);
       else if (step % 2) noise(.034, .055, 6500);
       break;
-    default:
+    case 'lofi':
+    case 'surf':
+    case 'disco':
+    case 'folk':
+    case 'dub':
+    case 'synthwave':
+    case 'pizzicato':
+    case 'kalimba':
+    case 'garage':
+    case 'chorale':
       playEncoreBacking(accompaniment, step, chord, pitch, note, noise);
+      break;
+    default:
+      playSessionBacking(accompaniment, step, barIndex, interval, chord, pitch, note, noise);
   }
   return interval * (1 + (step % 2 ? -swing : swing));
 }

@@ -34,17 +34,23 @@ type MusicPlayback = {
 const trackTimeLimit = 10 * 60;
 const musicFadeSeconds = .85;
 const gameTracks: Record<ProfileGame, readonly MusicTrack[]> = {
-  omok: ['paperConstellation', 'rainAtMidnight', 'citrusTerrace', 'belowTheTide', 'rooftopStatic', 'pebbleDub'],
-  othello: ['citrusTerrace', 'neonAvenue', 'islandPostcard', 'highlandParade', 'mirrorSteps', 'meadowTrail'],
-  chess: ['chess', 'rainAtMidnight', 'paperConstellation', 'highlandParade', 'pocketDetective', 'winterChorale'],
-  physics: ['physics', 'midnightCourier', 'lemonSprint', 'highlandParade', 'melonSurf', 'skyRelay', 'prismDrive'],
-  sichuan: ['islandPostcard', 'velvetCarousel', 'neonAvenue', 'paperConstellation', 'bambooClock', 'rooftopStatic'],
-  memory: ['velvetCarousel', 'islandPostcard', 'meadowTrail'],
-  sketch: ['paperConstellation', 'melonSurf', 'velvetCarousel', 'islandPostcard', 'bambooClock'],
-  liar: ['midnightCourier', 'velvetCarousel', 'paperConstellation', 'rooftopStatic'],
-  slime: ['orbit', 'skyRelay', 'prismDrive', 'paperComet'],
-  mole: ['starBop', 'lemonSprint', 'melonSurf', 'highlandParade'],
-  burger: ['lemonSprint', 'melonSurf', 'highlandParade'],
+  omok: ['paperConstellation', 'rainAtMidnight', 'citrusTerrace', 'belowTheTide', 'rooftopStatic', 'pebbleDub',
+    'cornerBooth', 'silkPond', 'beforeFirstTrain'],
+  othello: ['citrusTerrace', 'neonAvenue', 'islandPostcard', 'highlandParade', 'mirrorSteps', 'meadowTrail',
+    'cornerBooth', 'greenCathedral'],
+  chess: ['chess', 'rainAtMidnight', 'paperConstellation', 'highlandParade', 'pocketDetective', 'winterChorale',
+    'redPlatform', 'greenCathedral', 'beforeFirstTrain'],
+  physics: ['physics', 'midnightCourier', 'lemonSprint', 'highlandParade', 'melonSurf', 'skyRelay', 'prismDrive',
+    'glassDistrict', 'moonbaseSignal'],
+  sichuan: ['islandPostcard', 'velvetCarousel', 'neonAvenue', 'paperConstellation', 'bambooClock', 'rooftopStatic',
+    'silkPond', 'saturnWind'],
+  memory: ['velvetCarousel', 'islandPostcard', 'meadowTrail', 'silkPond', 'greenCathedral', 'starlightTroupe'],
+  sketch: ['paperConstellation', 'melonSurf', 'velvetCarousel', 'islandPostcard', 'bambooClock',
+    'harborSocial', 'starlightTroupe', 'saturnWind'],
+  liar: ['midnightCourier', 'velvetCarousel', 'paperConstellation', 'rooftopStatic', 'redPlatform', 'moonbaseSignal'],
+  slime: ['orbit', 'skyRelay', 'prismDrive', 'paperComet', 'glassDistrict', 'moonbaseSignal', 'saturnWind'],
+  mole: ['starBop', 'lemonSprint', 'melonSurf', 'highlandParade', 'starlightTroupe', 'harborSocial'],
+  burger: ['lemonSprint', 'melonSurf', 'highlandParade', 'cornerBooth', 'harborSocial', 'starlightTroupe'],
 };
 
 function randomTrack<T extends MusicTrack>(tracks: readonly T[], previous?: string | null, lastMatchTrack?: MusicTrack): T {
@@ -422,7 +428,10 @@ function scheduleTrack(playback: MusicPlayback, time: number, horizon: number) {
     while (nextBeat < horizon) {
       const when = nextBeat;
       nextBeat += playArrangement(track as ArrangementTrack, beat++,
-        (note, length, gain, wave, attack) => tone(when, frequency(note), length, gain, output, wave, undefined, attack),
+        (note, length, gain, wave, attack, endNote, sustain) => {
+          const endHz = endNote === undefined ? undefined : frequency(endNote);
+          tone(when, frequency(note), length, gain, output, wave, endHz, attack, sustain);
+        },
         (length, gain, hz) => texture(when, length, gain, hz, output));
     }
   } else {
