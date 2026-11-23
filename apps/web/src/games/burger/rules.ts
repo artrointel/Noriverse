@@ -3,9 +3,9 @@ import type { Role } from '../../../../../packages/protocol/rooms.ts';
 import { explorerIds } from '../../../../../packages/protocol/explorers.ts';
 import { diningExitMs, diningReplyMs, diningSatisfaction, seatDiner, seatWalkMs, shiftDiner, tableCount } from './dining.ts';
 import type { Diner, DiningReaction, DiningSatisfaction } from './dining.ts';
-import { cardCount, cardModifiers, cardOffers, cardRerollLimit, grillUpgradeAvailable, isGrillUpgrade, ordersPerLevel, readBurgerCard, supplyAvailable, unlockLevels } from './cards.ts';
+import { cardCount, cardModifiers, cardOffers, cardRerollLimit, cardXpPercent, ordersPerLevel, readBurgerCard, supplyAvailable, unlockLevels, upgradeAvailable, validUpgradeHistory } from './cards.ts';
 import type { BurgerCard } from './cards.ts';
-import { burgerPressure, defaultBurgerDifficulty, endlessOrderReward, endlessReserveMs, readBurgerDifficulty } from './balance.ts';
+import { baseOrderXp, burgerCashPayout, burgerDifficultyAtLevel, burgerMenuPrice, burgerPressure, burgerPrices, burgerRankFromXp, burgerRewardRates, burgerXpToReach, defaultBurgerDifficulty, endlessBonusAtLevel, endlessOrderReward, endlessReserveMs, readBurgerDifficulty, roundBurgerXp } from './balance.ts';
 import type { BurgerDifficulty } from './balance.ts';
 
 export const burgerMinutes = [5, 10, 15, 'endless'] as const;
@@ -21,12 +21,14 @@ export const burgerPreparationMs = 20_000;
 export const burgerEndlessOpeningMs = 90_000;
 const pattyBurnPoint = 200;
 const autoFlipPoint = 180;
+const assemblyStepMs = 500;
+export const assemblyCooldownMs = 10_000;
 const heatUnitsPerPercent = 70_000;
 export const cupOverflow = 200;
 const millisecondsPerDrinkPercent = 20;
 const trayLimit = 8;
 const previousTrayLimit = 12;
-const queueLimit = 4;
+const burgerQueueLimit = 4;
 const stackLimit = 5;
 const pattyLimit = 2;
 const legacyStackLimit = 7;
@@ -49,26 +51,32 @@ export type PattyLocation = number | PattyKind | 'tray';
 type Layer = { ingredient: Ingredient; patty?: Patty; source?: PattyLocation };
 export type BurgerStack = { paper: boolean; bread?: Bread; layers: Layer[]; top: boolean; packed: boolean };
 type Cup = { amount: number; pourAt: number };
-type ServiceDrink = { kind: DrinkKind; amount: number };
+export type ServiceDrink = { kind: DrinkKind; amount: number };
 type BurgerOrigin = { area: 'assembly' | 'storage'; index: number };
-type ServiceTray = { burger?: BurgerStack; origin?: BurgerOrigin; drink?: ServiceDrink };
+type ServiceTray = { burger?: BurgerStack; origin?: BurgerOrigin; drink?: ServiceDrink; drinkOrigin?: number };
 type RequestedLayer = { ingredient: Ingredient; cooked?: Doneness };
 export type Order = { id: number; guest: number; bread: Bread; layers: RequestedLayer[]; reorderedAt?: number;
   drink?: { kind: DrinkKind; size: CupSize }; at: number; until: number; patienceMs?: number; price: number };
 export type BurgerFeedback = { id: number; at: number; kind: 'perfect' | 'mixed' | 'poor' | 'burnt' | 'raw' | 'left' | 'spill';
   money?: number; guest?: number; tip?: number; timeAdded?: number; line?: BurgerLine; order?: number };
 type Shoo = { sequence: number; order: number; at: number; left: boolean; variant: number };
+type AssemblyJob = { order: number; next: number; reorderedAt?: number };
 export type Counter = {
   grill: (Patty | null)[]; tray: Patty[]; burgers: [BurgerStack, BurgerStack]; cups: [Cup, Cup]; orders: Order[];
   service?: ServiceTray;
   diners?: Diner[];
   storage?: (BurgerStack | null)[];
+  storedDrinks?: (ServiceDrink | null)[];
   pattySequence?: number;
   playUntil?: number;
   salesStartedAt?: number;
   cards?: BurgerCard[];
+  xp?: number;
   draft?: { at: number; offers: BurgerCard[] };
   rerollsUsed?: number;
+  assemblyJob?: AssemblyJob;
+  assemblyReadyAt?: number;
+  submission?: { id: number; at: number };
   bankrupt?: boolean;
   closed?: boolean;
   shoo?: Shoo;
@@ -90,16 +98,20 @@ export type BurgerAction =
   | { type: 'pour' | 'spill'; drink: number; pouring?: boolean }
   | { type: 'stage-burger'; slot: number }
   | { type: 'store-burger'; slot: number; index: number }
-  | { type: 'stage-stored' | 'discard-stored'; index: number; serial?: number }
-  | { type: 'shift-stored'; from: number; to: number; serial?: number }
+  | ({ type: 'stage-stored' | 'discard-stored'; index: number } & StorageSelection)
+  | ({ type: 'shift-stored'; from: number; to: number } & StorageSelection)
+  | { type: 'store-drink'; drink: number | 'service'; index: number }
   | { type: 'stage-drink'; drink: number }
   | { type: 'return-burger'; to: number | 'origin' | 'trash'; serial?: number }
-  | { type: 'return-drink'; to: 'machine' | 'trash' }
+  | { type: 'return-drink'; to: 'origin' | 'machine' | 'trash' }
   | { type: 'choose-card'; card: BurgerCard; level: number; rerollsUsed?: number }
   | { type: 'reroll-cards'; level: number; rerollsUsed: number }
+  | { type: 'start-assembly'; order: number }
+  | { type: 'ring-bell' }
   | { type: 'serve' | 'shoo'; order: number };
 
 type TraySelection = { kind: PattyKind; index: number; serial?: number };
+type StorageSelection = { serial?: number; expectedDrink?: ServiceDrink | null };
 function trayIndex(counter: Counter, { kind, index, serial }: TraySelection) {
   if (!includes(pattyKinds, kind) || !integer(index, trayLimit - 1)) return -1;
   return serial === undefined ? counter.tray.flatMap((patty, i) => patty.kind === kind ? [i] : [])[index] ?? -1
@@ -119,7 +131,7 @@ const doneness = ['rare', 'medium', 'well'] as const;
 const sizes = ['small', 'medium', 'large'] as const;
 type BurgerSupply = Ingredient | Bread | DrinkKind | 'paper';
 const unlockLevel: Record<BurgerSupply, number> = { paper: 1, bun: 1, beef: 1, ...unlockLevels };
-const difficulty = [
+const legacyDifficultyTiers = [
   { min: 1, max: 1, interval: 24_000, patience: 86_000, drinks: 0 },
   { min: 2, max: 2, interval: 19_000, patience: 72_000, drinks: 0 },
   { min: 2, max: 3, interval: 15_000, patience: 58_000, drinks: .22 },
@@ -131,29 +143,55 @@ const difficulty = [
 ] as const;
 const endlessRewards = [25, 23, 20, 17, 14, 12, 10, 8] as const;
 
-export const burgerRank = (served: number) => 1 + Math.floor(served / ordersPerLevel);
-export const burgerLevel = (served: number) => Math.min(difficulty.length, burgerRank(served));
+type BurgerGrowth = Pick<Counter, 'served' | 'xp'>;
+const legacyRank = (served: number) => 1 + Math.floor(served / ordersPerLevel);
+export const burgerRank = (growth: BurgerGrowth | number) => typeof growth === 'number'
+  ? legacyRank(growth) : growth.xp === undefined ? legacyRank(growth.served) : burgerRankFromXp(growth.xp);
+export const burgerLevel = (growth: BurgerGrowth | number) => typeof growth === 'number' || growth.xp === undefined
+  ? Math.min(legacyDifficultyTiers.length, burgerRank(growth)) : burgerRank(growth);
+export function burgerGrowthProgress(counter: BurgerGrowth) {
+  if (counter.xp === undefined) return counter.served % ordersPerLevel / ordersPerLevel;
+  const rank = burgerRank(counter);
+  const base = burgerXpToReach(rank);
+  return (counter.xp - base) / (burgerXpToReach(rank + 1) - base);
+}
 export const burgerUnlockLevel = (item: BurgerSupply) => unlockLevel[item];
 export const burgerSupplyUnlocked = (item: BurgerSupply, value: number | Counter) =>
   typeof value === 'number' || !value.cards ? burgerUnlockLevel(item) <= burgerLevel(typeof value === 'number' ? value : value.served)
     : burgerUnlockLevel(item) === 1 || supplyAvailable(value.cards, item);
-export const burgerFacility = (counter: Counter, card: 'broom' | 'griddle' | 'assembly' | 'storage' | 'tray') => !counter.cards || counter.cards.includes(card);
+export const burgerFacility = (counter: Counter, card: 'broom' | 'griddle' | 'assembly' | 'storage' | 'tray' | 'orderStorage') =>
+  counter.cards ? counter.cards.includes(card) : card !== 'orderStorage';
 export const burgerTables = (counter: Counter) => counter.cards ? cardCount(counter.cards, 'table') : tableCount;
-const allowedGrill = (counter: Counter, slot: number) => slot < (burgerFacility(counter, 'griddle') ? grillCount : grillColumns);
+export const burgerGrillCapacity = (counter: Counter) => burgerFacility(counter, 'griddle') ? grillCount : grillColumns;
+export const burgerTrayCapacity = (counter: Counter) => burgerFacility(counter, 'tray') ? trayLimit : 4;
+const allowedGrill = (counter: Counter, slot: number) => slot < burgerGrillCapacity(counter);
 const assemblyLimit = (counter: Counter) => stackLimit + (counter.cards ? cardCount(counter.cards, 'picky') : 0);
 type BurgerBalance = Pick<BurgerRound, 'difficulty' | 'minutes'>;
-const endlessAge = (counter: Counter, now: number) => Math.max(0, now - (counter.salesStartedAt ?? now));
-const remainingDifficulty = (counter: Counter, round: BurgerBalance, now: number) => {
-  const target = difficulty[burgerLevel(counter.served) - 1];
-  if (!counter.cards) return { ...target, pressure: 1 };
+const endlessAge = (counter: Pick<Counter, 'salesStartedAt'>, now: number) => Math.max(0, now - (counter.salesStartedAt ?? now));
+export function burgerOrderDifficulty(counter: BurgerGrowth & Pick<Counter, 'cards' | 'salesStartedAt'>, round: BurgerBalance, now: number) {
+  const elapsedMs = round.minutes === 'endless' ? endlessAge(counter, now) : 0;
+  if (counter.xp !== undefined) return burgerLevelSettings(burgerLevel(counter), round.difficulty ?? defaultBurgerDifficulty, counter.cards, elapsedMs);
+  const target = legacyDifficultyTiers[burgerLevel(counter) - 1];
+  if (!counter.cards) return { ...target, jitter: 6700, pressure: 1 };
+  const pressure = round.difficulty ? burgerPressure(round.difficulty, elapsedMs) : 1;
   const modifiers = cardModifiers(counter.cards);
-  const pressure = round.difficulty ? burgerPressure(round.difficulty, round.minutes === 'endless' ? endlessAge(counter, now) : 0) : 1;
   const baseInterval = (target.interval + 24_000) / (round.difficulty ? 3 : 2);
-  return { ...target, pressure, min: Math.max(1, target.min - 1),
+  return { ...target, pressure, jitter: 6700, min: Math.max(1, target.min - 1),
     interval: Math.max(3000, Math.round(baseInterval / (modifiers.traffic * pressure))),
     patience: Math.round((target.patience + 86_000) / 2 * modifiers.patience / pressure),
     drinks: Math.min(.9, target.drinks * pressure) };
-};
+}
+export function burgerLevelSettings(level: number, difficulty: BurgerDifficulty, cards: readonly BurgerCard[] = [], elapsedMs = 0) {
+  const target = burgerDifficultyAtLevel(level);
+  const pressure = burgerPressure(difficulty, elapsedMs);
+  const { traffic, patience } = cardModifiers(cards);
+  return { ...target, pressure,
+    interval: Math.max(1, Math.round(target.interval / (traffic * pressure))),
+    patience: Math.max(1, Math.round(target.patience * patience / pressure)),
+    drinks: Math.min(.7, target.drinks * pressure) };
+}
+export const burgerGuestPatience = (baseMs: number, pressure: number, roll: number, jitter = 6700) =>
+  Math.round(1.5 * (baseMs + Math.floor(roll * jitter / pressure)));
 export const readBurgerMinutes = (value: unknown): BurgerMinutes | undefined =>
   value === 3 || value === 7 ? value : burgerMinutes.find(minutes => minutes === value);
 
@@ -165,7 +203,7 @@ export const burgerResigned = (round: BurgerRound, role: Role) =>
 
 export function createBurgerRound(minutes: BurgerMinutes, players: Role[], seed = Math.floor(Math.random() * 0x1_0000_0000),
   mode: BurgerMode = 'race', difficulty = defaultBurgerDifficulty): BurgerRound {
-  return { players, counters: Object.fromEntries(kitchenRoles({ mode, players }).map(role => [role, { ...emptyCounter(), money: 100, cards: [] }])),
+  return { players, counters: Object.fromEntries(kitchenRoles({ mode, players }).map(role => [role, { ...emptyCounter(), money: 100, cards: [], xp: 0 }])),
     seed, minutes, difficulty, ...(mode === 'coop' && { mode }), start: 0, end: 0, revision: 0 };
 }
 
@@ -187,9 +225,9 @@ function random(seed: number, order: number, channel: number) {
 }
 
 function newOrder(seed: number, id: number, counter: Counter, now: number, round: BurgerBalance): Order {
-  const { served, cards } = counter;
-  const level = burgerLevel(served);
-  const { min, max, patience, drinks, pressure } = remainingDifficulty(counter, round, now);
+  const { cards } = counter;
+  const level = burgerLevel(counter);
+  const { min, max, patience, drinks, pressure, jitter } = burgerOrderDifficulty(counter, round, now);
   const roll = (channel: number) => random(seed, id, channel);
   const layerMax = cards ? Math.max(1, max + cardModifiers(cards).layers) : max;
   const layerMin = Math.min(min, layerMax);
@@ -214,13 +252,15 @@ function newOrder(seed: number, id: number, counter: Counter, now: number, round
     size: level === 3 ? 'medium' as const : sizes[Math.floor(roll(44) * sizes.length)] } : undefined;
   return { id, guest: Math.floor(roll(34) * explorerIds.length),
     bread: burgerSupplyUnlocked('rice', counter) && roll(35) < .37 ? 'rice' : 'bun',
-    layers: layer, drink, at: now, until: now + Math.round(1.5 * (patience + Math.floor(roll(36) * 6700 / pressure))),
-    price: 100 + layer.length * 28 + layer.filter(part => part.cooked).length * 27 };
+    layers: layer, drink, at: now, until: now + burgerGuestPatience(patience, pressure, roll(36), jitter),
+    price: burgerMenuPrice(layer.length, layer.filter(part => part.cooked).length) };
 }
 
 const otherPattySide = (side: Patty['side']) => side === 0 ? 1 : 0;
-const pattySpeed = (patty: Patty, counter?: Pick<Counter, 'cards'>) =>
-  (patty.speed ?? 1000) * (counter?.cards?.includes('highHeat') ? 1.3 : 1);
+export const burgerGrillMultiplier = (cards: Counter['cards']) => cards?.includes('highHeat2') ? 1.5 : cards?.includes('highHeat') ? 1.3 : 1;
+function pattySpeed(patty: Patty, counter?: Pick<Counter, 'cards'>) {
+  return (patty.speed ?? 1000) * burgerGrillMultiplier(counter?.cards);
+}
 
 export function pattyFaces(patty: Patty, now: number, counter?: Pick<Counter, 'cards'>): [number, number] {
   const faces: [number, number] = [...patty.faces];
@@ -235,9 +275,37 @@ function flipPatty(patty: Patty, at: number, counter?: Counter): Patty {
   return { ...patty, faces: pattyFaces(patty, at, counter), heatAt: at, side: otherPattySide(patty.side) };
 }
 
-function autoFlipAt(patty: Patty | null) {
-  if (!patty?.heatAt || isBurnt(patty.faces) || patty.faces[otherPattySide(patty.side)] >= autoFlipPoint) return Infinity;
+function automaticGrillAt(patty: Patty | null, autoUnload: boolean) {
+  if (!patty?.heatAt || isBurnt(patty.faces) || (!autoUnload && patty.faces[otherPattySide(patty.side)] >= autoFlipPoint)) return Infinity;
   return patty.heatAt + Math.ceil(Math.max(0, autoFlipPoint - patty.faces[patty.side]) * heatUnitsPerPercent / pattySpeed(patty));
+}
+
+const readyToUnload = (faces: Patty['faces']) => faces.every(face => face >= autoFlipPoint && face < pattyBurnPoint);
+export const trayHasRoom = (counter: Counter, kind: PattyKind) =>
+  counter.tray.filter(item => item.kind === kind).length < burgerTrayCapacity(counter);
+
+function advanceAutomaticGrill(counter: Counter, now: number) {
+  if (!counter.cards?.includes('autoGrill')) return;
+  const autoUnload = counter.cards.includes('autoGrill2');
+  if (autoUnload) counter.tray = [...counter.tray];
+  counter.grill = counter.grill.map(patty => {
+    if (!patty) return null;
+    if (autoUnload && !patty.heatAt && readyToUnload(patty.faces)) patty = { ...patty, heatAt: now };
+    const canStore = autoUnload && trayHasRoom(counter, patty.kind);
+    const at = automaticGrillAt(patty, canStore);
+    if (at > now) return patty;
+    if (patty.faces[otherPattySide(patty.side)] < autoFlipPoint) {
+      const flipped = flipPatty(patty, at);
+      if (!autoUnload) return flipped;
+      // Keep existing heat, without overshooting the target when rounding the timer to milliseconds.
+      flipped.faces[patty.side] = Math.max(autoFlipPoint, patty.faces[patty.side]);
+      patty = flipped;
+      if (!canStore || automaticGrillAt(patty, true) > now) return patty;
+    }
+    const faces: Patty['faces'] = [Math.max(autoFlipPoint, patty.faces[0]), Math.max(autoFlipPoint, patty.faces[1])];
+    putPatty(counter, { ...patty, faces, heatAt: 0 }, patty.kind, 0);
+    return null;
+  });
 }
 
 export function pattyAt(counter: Counter, from: PattyLocation) {
@@ -291,7 +359,8 @@ function changed(round: BurgerRound, counters: BurgerRound['counters'], done = f
       ? eligible.filter(role => counters[role]!.money === best) : undefined };
 }
 
-const orderValue = (order: Order) => order.price + (order.drink ? 55 + sizes.indexOf(order.drink.size) * 15 : 0);
+const orderDrinkPrice = (order: Order) => order.drink ? burgerPrices.drinks[order.drink.size] : 0;
+const burgerOrderValue = (order: Order) => order.price + orderDrinkPrice(order);
 
 function charge(counter: Counter, amount: number) {
   if (!counter.cards) return;
@@ -307,9 +376,16 @@ export function nextBurgerAt(round: BurgerRound) {
   for (const role of kitchenRoles(round)) {
     const counter = round.counters[role]!;
     if (counter.retired || counter.closed || counter.draft) continue;
-    event = Math.min(event, burgerDeadline(round, role), counter.next, ...counter.orders.map(order => order.until), ...(counter.diners ?? []).map(diner => diner.exitAt),
+    event = Math.min(event, burgerDeadline(round, role), counter.next, counter.assemblyJob?.next || Infinity,
+      ...counter.orders.map(order => order.until), ...(counter.diners ?? []).map(diner => diner.exitAt),
       ...counter.cups.filter(cup => cup.pourAt).map(overflowAt));
-    if (counter.cards?.includes('autoGrill')) event = Math.min(event, ...counter.grill.map(autoFlipAt));
+    if (counter.cards?.includes('autoGrill')) {
+      const autoUnload = counter.cards.includes('autoGrill2');
+      event = Math.min(event, ...counter.grill.map(patty => {
+        if (autoUnload && patty && !patty.heatAt && readyToUnload(patty.faces)) return round.start;
+        return automaticGrillAt(patty, Boolean(autoUnload && patty && trayHasRoom(counter, patty.kind)));
+      }));
+    }
   }
   return Number.isFinite(event) ? event : undefined;
 }
@@ -323,14 +399,14 @@ export function advanceBurger(round: BurgerRound, now: number) {
     const counter = round.counters[role]!;
     if (counter.retired || counter.closed || counter.draft) continue;
     if (now >= burgerDeadline(round, role)) {
-      counters[role] = { ...counter, closed: true };
+      counters[role] = { ...counter, closed: true, assemblyJob: undefined };
       continue;
     }
     const nextCounter = { ...counter, orders: counter.orders.filter(order => now < order.until) };
     if (counter.diners) nextCounter.diners = counter.diners.filter(diner => now < diner.exitAt);
     if (nextCounter.orders.length !== counter.orders.length) {
       const expired = counter.orders.filter(order => order.until <= now);
-      charge(nextCounter, expired.reduce((total, order) => total + Math.ceil(orderValue(order) / 2), 0));
+      charge(nextCounter, expired.reduce((total, order) => total + Math.ceil(burgerOrderValue(order) * burgerRewardRates.expirationPenalty), 0));
       nextCounter.combo = 0;
       updateFeedback(nextCounter, now, { kind: 'left', guest: expired[0].guest });
     }
@@ -340,15 +416,11 @@ export function advanceBurger(round: BurgerRound, now: number) {
       return emptyCup();
     }) as Counter['cups'];
     if (counter.next <= now && !nextCounter.closed) {
-      if (nextCounter.orders.length < queueLimit) nextCounter.orders.push(newOrder(round.seed, ++nextCounter.sequence, counter, now, round));
-      nextCounter.next = now + remainingDifficulty(counter, round, now).interval;
+      if (nextCounter.orders.length < burgerQueueLimit) nextCounter.orders.push(newOrder(round.seed, ++nextCounter.sequence, counter, now, round));
+      nextCounter.next = now + burgerOrderDifficulty(counter, round, now).interval;
     }
-    if (!nextCounter.closed && counter.cards?.includes('autoGrill')) {
-      nextCounter.grill = counter.grill.map(patty => {
-        const at = autoFlipAt(patty);
-        return patty && at <= now ? flipPatty(patty, at) : patty;
-      });
-    }
+    if (!nextCounter.closed) advanceAutomaticGrill(nextCounter, now);
+    advanceAssembly(nextCounter, now);
     counters[role] = nextCounter;
   }
   return changed(round, counters);
@@ -358,9 +430,11 @@ export function judgeOrder(order: Order, burger: BurgerStack, side?: { kind: Dri
   const matches = order.layers.reduce((sum, requested, index) =>
     sum + Number(burger.layers[index]?.ingredient === requested.ingredient), burger.bread === order.bread ? 2 : 0);
   const similarity = matches / Math.sqrt((order.layers.length + 2) * (burger.layers.length + 2));
-  const drinkSimilarity = !order.drink || !side ? 0 : Number(order.drink.kind === side.kind) * .58 + Number(order.drink.size === side.size) * .42;
-  const ratio = (value: number) => value >= .999999 ? 1 : .56 * value ** 3;
-  const drinkValue = order.drink ? 55 + sizes.indexOf(order.drink.size) * 15 : 0;
+  const rates = burgerRewardRates;
+  const drinkSimilarity = !order.drink || !side ? 0
+    : Number(order.drink.kind === side.kind) * rates.drinkKind + Number(order.drink.size === side.size) * rates.drinkSize;
+  const ratio = (value: number) => value >= .999999 ? 1 : rates.partial * value ** rates.partialPower;
+  const drinkValue = orderDrinkPrice(order);
   const perfect = similarity >= .999999 && (order.drink ? drinkSimilarity >= .999999 : !side);
   const accuracy = Math.min(1, (order.price * similarity + drinkValue * drinkSimilarity) / (order.price + drinkValue))
     * (!order.drink && side ? .87 : 1);
@@ -368,16 +442,27 @@ export function judgeOrder(order: Order, burger: BurgerStack, side?: { kind: Dri
     const patty = burger.layers[index]?.patty;
     return !requested.cooked || Boolean(patty && pattyDoneness(patty.faces) === requested.cooked);
   });
-  const tip = perfect && matchesDoneness && order.layers.some(layer => layer.cooked) ? Math.round((order.price + drinkValue) / 2) : 0;
+  const tip = perfect && matchesDoneness && order.layers.some(layer => layer.cooked)
+    ? Math.round((order.price + drinkValue) * rates.perfectTip) : 0;
   const satisfaction: DiningSatisfaction = perfect ? 'love' : accuracy >= .82 ? 'delighted'
     : accuracy >= .67 ? 'content' : accuracy >= .48 ? 'puzzled' : 'disappointed';
   return { money: Math.round(order.price * ratio(similarity)) + Math.round(drinkValue * ratio(drinkSimilarity)),
     perfect, satisfaction, tip, similarity: accuracy };
 }
 
+export function burgerOrderXp(order: Order, burger: BurgerStack, side?: { kind: DrinkKind; size: CupSize }, multiplier = 1) {
+  const matches = order.layers.reduce((sum, requested, index) =>
+    sum + Number(burger.layers[index]?.ingredient === requested.ingredient), Number(burger.bread === order.bread));
+  const drinkMatches = Number(Boolean(order.drink && side && order.drink.kind === side.kind && order.drink.size === side.size));
+  const slots = 1 + Math.max(order.layers.length, burger.layers.length) + Number(Boolean(order.drink || side));
+  return roundBurgerXp(baseOrderXp * (matches + drinkMatches) / slots * multiplier);
+}
+
 const isGrill = (value: unknown): value is number => integer(value, grillCount - 1);
 const isSlot = (value: unknown): value is 0 | 1 => value === 0 || value === 1;
 const isPlace = (value: unknown): value is PattyLocation => value === 'tray' || includes(pattyKinds, value) || isGrill(value);
+const canAccessAssembly = (counter: Counter, slot: unknown): slot is 0 | 1 =>
+  isSlot(slot) && (!slot || burgerFacility(counter, 'assembly') && !counter.assemblyJob);
 
 function removePatty(counter: Counter, from: PattyLocation, now: number) {
   let patty: Patty | null | undefined;
@@ -392,20 +477,129 @@ function removePatty(counter: Counter, from: PattyLocation, now: number) {
 
 function putPatty(counter: Counter, patty: Patty, to: PattyLocation, now: number) {
   if (typeof to !== 'number') {
-    if ((to !== 'tray' && to !== patty.kind) || counter.tray.filter(item => item.kind === patty.kind).length >= (burgerFacility(counter, 'tray') ? trayLimit : 4)) return false;
+    if ((to !== 'tray' && to !== patty.kind) || !trayHasRoom(counter, patty.kind)) return false;
     counter.tray.push(patty);
   }
   else { if (!allowedGrill(counter, to) || counter.grill[to]) return false; counter.grill[to] = { ...patty, heatAt: now }; }
   return true;
 }
 
+function fillOpenTraySpace(counter: Counter, now: number) {
+  if (!counter.cards?.includes('autoGrill2') || counter.closed || counter.draft) return;
+  for (const [slot, patty] of counter.grill.entries()) {
+    if (!patty || !trayHasRoom(counter, patty.kind)) continue;
+    const faces = pattyFaces(patty, now, counter);
+    if (readyToUnload(faces) && putPatty(counter, { ...patty, faces, heatAt: 0 }, patty.kind, 0)) counter.grill[slot] = null;
+  }
+}
+
+function assemblyOrder(counter: Counter, job: AssemblyJob) {
+  const order = counter.orders[0];
+  return order?.id === job.order && order.reorderedAt === job.reorderedAt ? order : undefined;
+}
+
+const assemblyPattyIndex = (counter: Counter, kind: PattyKind) =>
+  counter.tray.findLastIndex(patty => patty.kind === kind && pattyDoneness(patty.faces));
+
+export const isAutoAssemblySlot = (counter: Counter, slot: number) => slot === 1 && counter.cards?.includes('autoAssembly') === true;
+
+export function canStartAutoAssembly(counter: Counter, now: number) {
+  const slot = counter.burgers[1];
+  return Boolean(isAutoAssemblySlot(counter, 1) && !counter.assemblyJob && !slot.paper
+    && (counter.assemblyReadyAt ?? 0) <= now && counter.orders[0] && counter.orders[0].until > now);
+}
+
+function syncAssembly(counter: Counter, now: number) {
+  const job = counter.assemblyJob;
+  if (!job) return;
+  const order = assemblyOrder(counter, job);
+  if (!order || counter.closed) { counter.assemblyJob = undefined; return; }
+  if (job.next) return;
+  const ingredient = order.layers[counter.burgers[1].layers.length]?.ingredient;
+  if (includes(pattyKinds, ingredient) && assemblyPattyIndex(counter, ingredient) >= 0) counter.assemblyJob = { ...job, next: now + assemblyStepMs };
+}
+
+function advanceAssembly(counter: Counter, now: number) {
+  syncAssembly(counter, now);
+  const job = counter.assemblyJob;
+  if (!job?.next || job.next > now) return;
+  const order = assemblyOrder(counter, job)!;
+  const stack = { ...counter.burgers[1] };
+  const ingredient = order.layers[stack.layers.length]?.ingredient;
+  if (!stack.paper) stack.paper = true;
+  else if (!stack.bread) stack.bread = order.bread;
+  else if (includes(pattyKinds, ingredient)) {
+    const index = assemblyPattyIndex(counter, ingredient);
+    if (index < 0) { counter.assemblyJob = { ...job, next: 0 }; return; }
+    counter.tray = [...counter.tray];
+    const [patty] = counter.tray.splice(index, 1);
+    stack.layers = [...stack.layers, { ingredient, patty, source: ingredient }];
+    fillOpenTraySpace(counter, now);
+  } else if (ingredient) stack.layers = [...stack.layers, { ingredient }];
+  else if (!stack.top) stack.top = true;
+  else stack.packed = true;
+  counter.burgers = [counter.burgers[0], stack];
+  counter.assemblyJob = stack.packed ? undefined : { ...job, next: now + assemblyStepMs };
+  if (stack.packed) counter.assemblyReadyAt = now + assemblyCooldownMs;
+}
+
 export const burgerSerial = (burger?: BurgerStack | null) => burger?.layers.find(layer => layer.patty)?.patty?.serial;
 
-function editBurger(counter: Counter, action: BurgerAction, now: number, round: BurgerBalance & { seed: number }) {
+export function stagedBurgerReturnTarget(counter: Counter, to: number | 'origin'): BurgerOrigin | undefined {
+  if (!counter.service?.burger) return;
+  const { origin } = counter.service;
+  const openAssembly = (index: unknown): index is 0 | 1 => canAccessAssembly(counter, index) && !counter.burgers[index].paper;
+  if (origin?.area === 'assembly' && !openAssembly(origin.index)) return;
+  if (to === 'origin' && origin?.area === 'storage') {
+    return counter.storage && !counter.storage[origin.index] ? origin : undefined;
+  }
+  const index = to !== 'origin' ? to
+    : origin?.index ?? counter.burgers.findIndex((_, slot) => openAssembly(slot) && !isAutoAssemblySlot(counter, slot));
+  if (!openAssembly(index) || (isAutoAssemblySlot(counter, index) && (origin?.area !== 'assembly' || origin.index !== index))) return;
+  return { area: 'assembly', index };
+}
+
+export function storedOrder(counter: Counter, index: number) {
+  return { burger: counter.storage?.[index] ?? null, drink: counter.storedDrinks?.[index] ?? null };
+}
+
+export function storageReserved(counter: Counter, index: number) {
+  const { origin, drinkOrigin } = counter.service ?? {};
+  return (origin?.area === 'storage' && origin.index === index) || drinkOrigin === index;
+}
+
+function writeStorageSlot<T>(slots: (T | null)[] | undefined, index: number, value: T | null) {
+  if (!slots && value === null) return;
+  const next = slots?.slice() ?? Array<T | null>(burgerStorageSize).fill(null);
+  next[index] = value;
+  return next;
+}
+
+function matchesStoredSelection({ burger, drink }: ReturnType<typeof storedOrder>, { serial, expectedDrink }: StorageSelection) {
+  if (!burger && !drink) return false;
+  if (serial !== undefined && burgerSerial(burger) !== serial) return false;
+  if (expectedDrink === undefined) return true;
+  return burgerSerial(burger) === serial && (expectedDrink === null ? drink === null
+    : drink?.kind === expectedDrink.kind && drink.amount === expectedDrink.amount);
+}
+
+function takeCup(counter: Counter, index: 0 | 1, now: number): ServiceDrink | undefined {
+  const amount = cupAmount(counter.cups[index], now);
+  if (!cupSize(amount)) return;
+  counter.cups[index] = emptyCup();
+  return { kind: drinkKinds[index], amount };
+}
+
+function editBurger(counter: Counter, action: BurgerAction, now: number, round: BurgerRound) {
   const { seed } = round;
-  const origin = counter.service?.origin;
-  const validAssembly = (slot: unknown): slot is 0 | 1 => isSlot(slot) && (!slot || burgerFacility(counter, 'assembly'));
+  const fullyAutomatic = counter.cards?.includes('autoGrill2');
   switch (action.type) {
+    case 'start-assembly': {
+      const order = counter.orders[0];
+      if (!order || order.id !== action.order || !canStartAutoAssembly(counter, now)) return false;
+      counter.assemblyJob = { order: order.id, next: now + assemblyStepMs, ...(order.reorderedAt !== undefined && { reorderedAt: order.reorderedAt }) };
+      return true;
+    }
     case 'grill':
       if (!isGrill(action.slot) || !allowedGrill(counter, action.slot) || counter.grill[action.slot] || !includes(pattyKinds, action.kind)
         || !burgerSupplyUnlocked(action.kind, counter)) return false;
@@ -415,6 +609,7 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       charge(counter, 10);
       return putPatty(counter, { kind: action.kind, faces: [0, 0], side: 0, heatAt: 0, speed, serial: sequence }, action.slot, now);
     case 'flip': {
+      if (fullyAutomatic) return false;
       const patty = isGrill(action.slot) && counter.grill[action.slot];
       if (!patty || (action.serial !== undefined && patty.serial !== action.serial)
         || (action.side !== undefined && patty.side !== action.side)) return false;
@@ -422,13 +617,14 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       return true;
     }
     case 'hold': {
-      if (!isGrill(action.slot)) return false;
+      if (fullyAutomatic || !isGrill(action.slot)) return false;
       const patty = counter.grill[action.slot];
       if (!patty || (action.serial !== undefined && patty.serial !== action.serial) || !pattyDoneness(pattyFaces(patty, now, counter))) return false;
       return putPatty(counter, removePatty(counter, action.slot, now)!, patty.kind, now);
     }
     case 'move': {
       if (!isPlace(action.from) || action.to === action.from || (action.to !== 'trash' && !isPlace(action.to))) return false;
+      if (fullyAutomatic && typeof action.from === 'number' && action.to !== 'trash') return false;
       if (action.serial !== undefined && pattyAt(counter, action.from)?.serial !== action.serial) return false;
       const patty = removePatty(counter, action.from, now);
       if (patty && action.to === 'trash') charge(counter, 10);
@@ -447,7 +643,7 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       return true;
     }
     case 'stage-burger': {
-      if (!validAssembly(action.slot) || counter.service?.burger) return false;
+      if (!canAccessAssembly(counter, action.slot) || counter.service?.burger) return false;
       const burger = counter.burgers[action.slot];
       if (!burger.packed) return false;
       counter.service = { ...counter.service, burger, origin: { area: 'assembly', index: action.slot } };
@@ -455,73 +651,85 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       return true;
     }
     case 'store-burger': {
-      if (!burgerFacility(counter, 'storage') || !validAssembly(action.slot) || !integer(action.index, burgerStorageSize - 1)
-        || counter.storage?.[action.index] || (origin?.area === 'storage' && origin.index === action.index)) return false;
+      if (!burgerFacility(counter, 'storage') || !canAccessAssembly(counter, action.slot) || !integer(action.index, burgerStorageSize - 1)
+        || counter.storage?.[action.index] || storageReserved(counter, action.index)) return false;
       const burger = counter.burgers[action.slot];
       if (!burger.packed) return false;
-      const storage = counter.storage?.slice() ?? Array<BurgerStack | null>(burgerStorageSize).fill(null);
-      storage[action.index] = burger;
-      counter.storage = storage;
+      counter.storage = writeStorageSlot(counter.storage, action.index, burger);
       counter.burgers[action.slot] = emptyBurger();
+      return true;
+    }
+    case 'store-drink': {
+      const { drink: source, index } = action;
+      if (!burgerFacility(counter, 'orderStorage') || !integer(index, burgerStorageSize - 1) || counter.storedDrinks?.[index]
+        || (storageReserved(counter, index) && !(source === 'service' && counter.service?.drinkOrigin === index))) return false;
+      const drink = source === 'service' ? counter.service?.drink : isSlot(source) ? takeCup(counter, source, now) : undefined;
+      if (!drink) return false;
+      counter.storedDrinks = writeStorageSlot(counter.storedDrinks, index, drink);
+      if (source === 'service') counter.service = { ...counter.service, drink: undefined, drinkOrigin: undefined };
       return true;
     }
     case 'stage-stored':
     case 'discard-stored': {
-      if (!burgerFacility(counter, 'storage') || !integer(action.index, burgerStorageSize - 1)) return false;
-      const burger = counter.storage?.[action.index];
-      if (!burger || (action.serial !== undefined && burgerSerial(burger) !== action.serial)
-        || (action.type === 'stage-stored' && counter.service?.burger)) return false;
-      const storage = counter.storage!.slice();
-      storage[action.index] = null;
-      counter.storage = storage;
-      if (action.type === 'stage-stored') counter.service = { ...counter.service, burger, origin: { area: 'storage', index: action.index } };
-      else charge(counter, 30);
+      const { index } = action;
+      if (!burgerFacility(counter, 'storage') || !integer(index, burgerStorageSize - 1) || storageReserved(counter, index)) return false;
+      const contents = storedOrder(counter, index);
+      if (!matchesStoredSelection(contents, action)) return false;
+      const { burger, drink } = contents;
+      if (action.type === 'stage-stored' && ((burger && counter.service?.burger) || (drink && counter.service?.drink))) return false;
+      counter.storage = writeStorageSlot(counter.storage, index, null);
+      counter.storedDrinks = writeStorageSlot(counter.storedDrinks, index, null);
+      if (action.type === 'stage-stored') counter.service = { ...counter.service,
+        ...(burger && { burger, origin: { area: 'storage', index } }),
+        ...(drink && { drink, drinkOrigin: index }) };
+      else if (burger) charge(counter, 30);
       return true;
     }
     case 'shift-stored': {
-      if (!burgerFacility(counter, 'storage') || !integer(action.from, burgerStorageSize - 1) || !integer(action.to, burgerStorageSize - 1) || action.from === action.to
-        || (origin?.area === 'storage' && origin.index === action.to)) return false;
-      const burger = counter.storage?.[action.from];
-      if (!burger || (action.serial !== undefined && burgerSerial(burger) !== action.serial)) return false;
-      const storage = counter.storage!.slice();
-      storage[action.from] = storage[action.to];
-      storage[action.to] = burger;
-      counter.storage = storage;
+      const { from, to } = action;
+      if (!burgerFacility(counter, 'storage') || !integer(from, burgerStorageSize - 1) || !integer(to, burgerStorageSize - 1) || from === to
+        || storageReserved(counter, from) || storageReserved(counter, to)) return false;
+      const source = storedOrder(counter, from);
+      if (!matchesStoredSelection(source, action)) return false;
+      const target = storedOrder(counter, to);
+      counter.storage = writeStorageSlot(writeStorageSlot(counter.storage, from, target.burger), to, source.burger);
+      counter.storedDrinks = writeStorageSlot(writeStorageSlot(counter.storedDrinks, from, target.drink), to, source.drink);
       return true;
     }
     case 'stage-drink': {
       if (!isSlot(action.drink) || counter.service?.drink) return false;
-      const amount = cupAmount(counter.cups[action.drink], now);
-      if (!cupSize(amount)) return false;
-      counter.service = { ...counter.service, drink: { kind: drinkKinds[action.drink], amount } };
-      counter.cups[action.drink] = emptyCup();
+      const drink = takeCup(counter, action.drink, now);
+      if (!drink) return false;
+      counter.service = { ...counter.service, drink };
       return true;
     }
     case 'return-burger': {
       const burger = counter.service?.burger;
       if (!burger || (action.serial !== undefined && burgerSerial(burger) !== action.serial)) return false;
-      if (action.to === 'origin' && origin?.area === 'storage') {
-        if (!counter.storage || counter.storage[origin.index]) return false;
-        const storage = counter.storage.slice();
-        storage[origin.index] = burger;
-        counter.storage = storage;
-      } else if (action.to !== 'trash') {
-        const index = action.to === 'origin' ? origin?.index ?? counter.burgers.findIndex(stack => !stack.paper) : action.to;
-        if (!validAssembly(index) || counter.burgers[index].paper) return false;
-        counter.burgers[index] = burger;
-      } else charge(counter, 30);
-      counter.service = { drink: counter.service?.drink };
+      if (action.to === 'trash') charge(counter, 30);
+      else {
+        const target = stagedBurgerReturnTarget(counter, action.to);
+        if (!target) return false;
+        if (target.area === 'storage') counter.storage = writeStorageSlot(counter.storage, target.index, burger);
+        else counter.burgers[target.index] = burger;
+      }
+      counter.service = { ...counter.service, burger: undefined, origin: undefined };
       return true;
     }
     case 'return-drink': {
       const drink = counter.service?.drink;
-      if (!drink || (action.to !== 'machine' && action.to !== 'trash')) return false;
-      if (action.to === 'machine') {
+      const storageIndex = counter.service?.drinkOrigin;
+      if (!drink || (action.to !== 'origin' && action.to !== 'machine' && action.to !== 'trash')) return false;
+      if (action.to === 'origin' && storageIndex !== undefined) {
+        if (!burgerFacility(counter, 'orderStorage') || !integer(storageIndex, burgerStorageSize - 1)
+          || counter.storedDrinks?.[storageIndex]) return false;
+        counter.storedDrinks = writeStorageSlot(counter.storedDrinks, storageIndex, drink);
+      } else if (action.to !== 'trash') {
         const index = drinkKinds.indexOf(drink.kind);
         if (counter.cups[index].pourAt || counter.cups[index].amount) return false;
         counter.cups[index] = { amount: drink.amount, pourAt: 0 };
       }
-      counter.service = { ...counter.service, drink: undefined };
+      counter.service = { ...counter.service, drink: undefined, drinkOrigin: undefined };
       return true;
     }
     case 'shoo': {
@@ -536,10 +744,14 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       counter.shoo = { sequence, order: order.id, left, at: now, variant: Math.floor(random(seed, sequence, 78) * (left ? 3 : 6)) };
       if (left) {
         counter.orders = counter.orders.filter(item => item.id !== order.id); counter.combo = 0;
-        if (counter.cards && random(seed ^ order.id, sequence, 79) < .3) counter.money += orderValue(order);
+        if (counter.cards && random(seed ^ order.id, sequence, 79) < burgerRewardRates.shooPayment) counter.money += burgerOrderValue(order);
       } else counter.orders = counter.orders.map(item => item.id === order.id ? { ...item, until: shortened, patienceMs } : item);
       return true;
     }
+    case 'ring-bell':
+      if (counter.orders.length) return false;
+      counter.next = Math.max(round.opensAt ?? round.start, now, counter.next - 1000);
+      return true;
     case 'serve': {
       const burger = counter.service?.burger;
       const order = counter.orders[0];
@@ -551,24 +763,30 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       const { line, thought } = chooseBurgerDialogue(order, burger, delivered, verdict.similarity,
         burger.layers.map(layer => layer.patty && pattyDoneness(layer.patty.faces)),
         random(seed, order.id + (counter.feedback?.id ?? 0), 81), random(seed, order.id, 82));
+      counter.submission = { id: (counter.submission?.id ?? 0) + 1, at: now };
       counter.service = undefined;
       if (line === 'free') {
         updateFeedback(counter, now, { kind: 'mixed', line, order: order.id, guest: order.guest });
         return true;
       }
-      const tip = verdict.tip + Number(line === 'thanks');
-      const money = Math.round(verdict.money * (counter.cards ? cardModifiers(counter.cards).revenue : 1)) * (counter.feverUntil > now ? 2 : 1) + tip;
+      const modifiers = cardModifiers(counter.cards ?? []);
+      const tip = verdict.tip + (line === 'thanks' ? burgerRewardRates.extraDrinkTip : 0);
+      const money = burgerCashPayout(verdict.money, modifiers.revenue, counter.feverUntil > now, tip);
       counter.money += money;
-      const oldLevel = burgerLevel(counter.served);
-      const timeAdded = round.minutes !== 'endless' ? 0 : round.difficulty && counter.playUntil !== undefined
+      const oldRank = burgerRank(counter);
+      const oldLevel = burgerLevel(counter);
+      const timeAdded = round.minutes !== 'endless' ? 0 : counter.xp !== undefined && counter.playUntil !== undefined
+        ? Math.max(0, Math.min(endlessBonusAtLevel(oldLevel) * 1000, endlessReserveMs - (counter.playUntil - now)))
+        : round.difficulty && counter.playUntil !== undefined
         ? endlessOrderReward(oldLevel, verdict.similarity, endlessAge(counter, now), counter.playUntil - now, round.difficulty)
         : 1000 * Math.max(1, Math.floor(endlessRewards[oldLevel - 1] * verdict.similarity));
       if (counter.playUntil !== undefined) counter.playUntil += timeAdded;
+      if (counter.xp !== undefined) counter.xp = roundBurgerXp(counter.xp + burgerOrderXp(order, burger, delivered, modifiers.xp));
       counter.served++;
-      const newLevel = burgerLevel(counter.served);
-      if (newLevel > oldLevel) counter.next = Math.min(counter.next, now + remainingDifficulty(counter, round, now).interval);
-      if (counter.cards && counter.served % ordersPerLevel === 0) {
-        const rank = burgerRank(counter.served);
+      const rank = burgerRank(counter);
+      const newLevel = burgerLevel(counter);
+      if (newLevel > oldLevel) counter.next = Math.min(counter.next, now + burgerOrderDifficulty(counter, round, now).interval);
+      if (counter.cards && rank > oldRank) {
         counter.draft = { at: now, offers: cardOffers(counter.cards, rank, index => random(seed, rank, 95 + index)) };
       }
       counter.combo = verdict.perfect ? counter.combo + 1 : 0;
@@ -595,8 +813,8 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
     }
     default: break;
   }
-  if (!('slot' in action) || !validAssembly(action.slot)) return false;
-  if (origin?.area === 'assembly' && origin.index === action.slot) return false;
+  if (!('slot' in action) || !canAccessAssembly(counter, action.slot)) return false;
+  if (isAutoAssemblySlot(counter, action.slot) && action.type !== 'pop' && action.type !== 'discard') return false;
   const burger = counter.burgers[action.slot];
   switch (action.type) {
     case 'add':
@@ -614,7 +832,7 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       if (!burger.bread || burger.packed || burger.top || burger.layers.length >= assemblyLimit(counter)
         || burger.layers.filter(layer => layer.patty).length >= pattyLimit) return false;
       const from = action.type === 'stack' ? action.from : action.kind;
-      if (!isPlace(from)) return false;
+      if (!isPlace(from) || (fullyAutomatic && typeof from === 'number')) return false;
       let selected: number | undefined;
       if (action.type === 'stack-tray') {
         selected = trayIndex(counter, action);
@@ -669,7 +887,7 @@ export function applyBurgerAction(round: BurgerRound, actor: Role, raw: unknown,
   if (!board || board.retired || board.closed || current.winners) return advanced;
   const input = raw as BurgerAction;
   if (board.draft) {
-    const level = burgerRank(board.served);
+    const level = burgerRank(board);
     const rerollsUsed = board.rerollsUsed ?? 0;
     if (input.type === 'reroll-cards') {
       if (input.level !== level || input.rerollsUsed !== rerollsUsed || rerollsUsed >= cardRerollLimit) return advanced;
@@ -680,14 +898,14 @@ export function applyBurgerAction(round: BurgerRound, actor: Role, raw: unknown,
     }
     if (input.type !== 'choose-card' || input.level !== level || !board.draft.offers.includes(input.card)
       || (input.rerollsUsed !== undefined && input.rerollsUsed !== rerollsUsed)
-      || !grillUpgradeAvailable(board.cards!, input.card)) return advanced;
+      || !upgradeAvailable(board.cards!, input.card, level)) return advanced;
     const counter = shiftCounter(board, Math.max(0, now - board.draft.at));
-    if (input.card === 'highHeat') {
+    if (input.card === 'highHeat' || input.card === 'highHeat2' || input.card === 'autoGrill2') {
       counter.grill = counter.grill.map(patty => patty?.heatAt ? { ...patty, faces: pattyFaces(patty, now, counter), heatAt: now } : patty);
     }
     counter.cards = [...board.cards!, input.card];
     counter.draft = undefined;
-    counter.next = Math.min(counter.next, now + remainingDifficulty(counter, current, now).interval);
+    counter.next = Math.min(counter.next, now + burgerOrderDifficulty(counter, current, now).interval);
     if (input.card.startsWith('sold:')) {
       const supply = input.card.slice(5);
       if (includes(drinkKinds, supply)) {
@@ -700,11 +918,19 @@ export function applyBurgerAction(round: BurgerRound, actor: Role, raw: unknown,
         return { ...replacement, guest: order.guest, at: order.at, until: order.until, patienceMs: order.patienceMs, reorderedAt: now };
       });
     }
+    if (input.card === 'autoGrill2') advanceAutomaticGrill(counter, now);
+    else if (input.card === 'tray' && counter.cards.includes('autoGrill2')) {
+      counter.tray = [...counter.tray];
+      fillOpenTraySpace(counter, now);
+    }
+    syncAssembly(counter, now);
     return changed({ ...current, end: Math.max(current.end, counter.playUntil ?? 0) }, { ...current.counters, [role]: counter });
   }
   const counter: Counter = { ...board, grill: [...board.grill], tray: [...board.tray], cups: [...board.cups],
     burgers: board.burgers.map(item => ({ ...item, layers: [...item.layers] })) as Counter['burgers'] };
   if (!editBurger(counter, input, now, current)) return advanced;
+  fillOpenTraySpace(counter, now);
+  syncAssembly(counter, now);
   return changed({ ...current, end: Math.max(current.end, counter.playUntil ?? 0) }, { ...current.counters, [role]: counter });
 }
 
@@ -732,6 +958,10 @@ function shiftCounter(counter: Counter, pause: number): Counter {
       ...(counter.playUntil !== undefined && { playUntil: shift(counter.playUntil) }),
       ...(counter.salesStartedAt !== undefined && { salesStartedAt: shift(counter.salesStartedAt) }),
       ...(counter.draft && { draft: { ...counter.draft, at: shift(counter.draft.at) } }),
+      ...(counter.assemblyJob && { assemblyJob: { ...counter.assemblyJob, next: shift(counter.assemblyJob.next),
+        ...(counter.assemblyJob.reorderedAt !== undefined && { reorderedAt: shift(counter.assemblyJob.reorderedAt) }) } }),
+      ...(counter.assemblyReadyAt !== undefined && { assemblyReadyAt: shift(counter.assemblyReadyAt) }),
+      ...(counter.submission && { submission: { ...counter.submission, at: shift(counter.submission.at) } }),
       ...(counter.shoo && { shoo: { ...counter.shoo, at: shift(counter.shoo.at) } }),
       feedback: counter.feedback && { ...counter.feedback, at: shift(counter.feedback.at) } };
 }
@@ -760,19 +990,38 @@ function validStack(burger: BurgerStack) {
       && (layer.patty ? readPatty(layer.patty) && layer.patty.kind === layer.ingredient && isPlace(layer.source) : includes(toppings, layer.ingredient)));
 }
 
+const validDrink = (drink: ServiceDrink) => drink && includes(drinkKinds, drink.kind)
+  && Number.isFinite(drink.amount) && Boolean(cupSize(drink.amount));
+
 function validService(service: ServiceTray) {
   return service && typeof service === 'object'
     && (service.burger === undefined || (validStack(service.burger) && service.burger.packed && service.burger.top
       && service.burger.paper && Boolean(service.burger.bread) && service.burger.layers.some(layer => layer.patty)))
-    && (service.drink === undefined || (service.drink && includes(drinkKinds, service.drink.kind)
-      && Number.isFinite(service.drink.amount) && Boolean(cupSize(service.drink.amount))));
+    && (service.drink === undefined || validDrink(service.drink));
+}
+
+function validAssemblyState(counter: Counter) {
+  const { assemblyJob: job, assemblyReadyAt: readyAt } = counter;
+  if (!counter.cards?.includes('autoAssembly')) return job === undefined && readyAt === undefined;
+  if (readyAt !== undefined && (!integer(readyAt) || !readyAt)) return false;
+  if (job === undefined) return true;
+  if (!job || counter.closed || !integer(job.next)) return false;
+  const order = assemblyOrder(counter, job);
+  if (!order) return false;
+  const stack = counter.burgers[1];
+  return !stack.packed && (stack.bread === undefined || stack.paper && stack.bread === order.bread)
+    && (!stack.layers.length || Boolean(stack.bread) && stack.layers.every((layer, i) => layer.ingredient === order.layers[i]?.ingredient))
+    && (!stack.top || stack.layers.length === order.layers.length)
+    && (job.next > 0 || Boolean(stack.bread) && includes(pattyKinds, order.layers[stack.layers.length]?.ingredient));
 }
 
 function validServiceOrigin(counter: Counter) {
-  const origin = counter.service?.origin;
+  const { origin, drinkOrigin, drink, burger } = counter.service ?? {};
+  if (drinkOrigin !== undefined && (!drink || !integer(drinkOrigin, burgerStorageSize - 1)
+    || counter.storedDrinks?.[drinkOrigin] !== null)) return false;
   if (origin === undefined) return true;
-  if (!origin || !counter.service?.burger) return false;
-  if (origin.area === 'assembly') return isSlot(origin.index) && !counter.burgers[origin.index].paper;
+  if (!origin || !burger) return false;
+  if (origin.area === 'assembly') return isSlot(origin.index);
   return origin.area === 'storage' && integer(origin.index, burgerStorageSize - 1) && counter.storage?.[origin.index] === null;
 }
 
@@ -794,6 +1043,7 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
   const { players, counters, seed, start, opensAt, end, minutes, difficulty, mode, resigned, revision, winners } = raw as BurgerRound;
   const salesStart = opensAt ?? start;
   const cardRound = Array.isArray(counters?.host?.cards);
+  const xpRound = counters?.host?.xp !== undefined;
   if (!readBurgerMinutes(minutes) || !Array.isArray(players) || players.length < 2 || players.length > 4 || players[0] !== 'host'
     || !players.every(isRoomRole) || new Set(players).size !== players.length || !counters || typeof counters !== 'object'
     || !integer(seed, 0xffffffff) || !integer(start) || !integer(end) || !integer(revision)
@@ -811,17 +1061,20 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
   for (const role of kitchens) {
     const counter = counters[role];
     if (!counter || ![counter.money, counter.served, counter.combo, counter.best, counter.sequence, counter.next, counter.feverUntil].every(value => integer(value))
+      || (xpRound ? !cardRound || typeof counter.xp !== 'number' || !Number.isFinite(counter.xp) || counter.xp < 0 : counter.xp !== undefined)
       || (difficulty && start ? !integer(counter.salesStartedAt, end) || counter.salesStartedAt < salesStart : counter.salesStartedAt !== undefined)
-      || (cardRound ? !Array.isArray(counter.cards) || counter.cards.length !== burgerRank(counter.served) - 1 - Number(Boolean(counter.draft))
-        || !counter.cards.every(readBurgerCard) || counter.cards.filter(isGrillUpgrade).length > 1
+      || (cardRound ? !Array.isArray(counter.cards) || counter.cards.length !== burgerRank(counter) - 1 - Number(Boolean(counter.draft))
+        || !counter.cards.every(readBurgerCard) || !validUpgradeHistory(counter.cards)
         : counter.cards !== undefined || counter.draft !== undefined || counter.bankrupt !== undefined || counter.rerollsUsed !== undefined)
       || (counter.rerollsUsed !== undefined && !integer(counter.rerollsUsed, cardRerollLimit))
       || (counter.draft !== undefined && (!counter.draft || !integer(counter.draft.at, end) || counter.draft.at < start
         || !Array.isArray(counter.draft.offers) || counter.draft.offers.length !== 3
         || new Set(counter.draft.offers).size !== 3 || !counter.draft.offers.every(card => readBurgerCard(card)
-          && grillUpgradeAvailable(counter.cards!, card))))
+          && upgradeAvailable(counter.cards!, card, card === 'autoAssembly' ? burgerRank(counter) : Infinity))))
       || (counter.bankrupt !== undefined && (counter.bankrupt !== true || counter.money !== 0 || !counter.closed || !counter.retired))
       || (counter.feverTrigger !== undefined && (!integer(counter.feverTrigger, counter.served) || counter.feverTrigger < 5))
+      || (counter.submission !== undefined && (!counter.submission || !integer(counter.submission.id) || counter.submission.id < 1
+        || !integer(counter.submission.at, end) || counter.submission.at < start))
       || counter.combo > counter.best || counter.best > counter.served || typeof counter.retired !== 'boolean'
       || !Array.isArray(counter.grill) || counter.grill.length !== grillCount || !counter.grill.every(patty => patty === null || readPatty(patty))
       || !Array.isArray(counter.tray) || counter.tray.length > previousTrayLimit * pattyKinds.length || !counter.tray.every(readPatty)
@@ -838,11 +1091,13 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
       || (counter.service !== undefined && !validService(counter.service))
       || (counter.storage !== undefined && (!Array.isArray(counter.storage) || counter.storage.length !== burgerStorageSize
         || !counter.storage.every(burger => burger === null || Boolean(burger && validService({ burger })))))
+      || (counter.storedDrinks !== undefined && (!burgerFacility(counter, 'orderStorage') || !Array.isArray(counter.storedDrinks)
+        || counter.storedDrinks.length !== burgerStorageSize || !counter.storedDrinks.every(drink => drink === null || validDrink(drink))))
       || !validServiceOrigin(counter)
       || (counter.diners !== undefined && !validDiners(counter.diners, counter.sequence))
       || !Array.isArray(counter.cups) || counter.cups.length !== 2 || !counter.cups.every(cup => cup && Number.isFinite(cup.amount)
         && cup.amount >= 0 && cup.amount < cupOverflow && integer(cup.pourAt))
-      || !Array.isArray(counter.orders) || counter.orders.length > queueLimit || !counter.orders.every(order => order && integer(order.id, counter.sequence)
+      || !Array.isArray(counter.orders) || counter.orders.length > burgerQueueLimit || !counter.orders.every(order => order && integer(order.id, counter.sequence)
         && integer(order.guest, explorerIds.length - 1) && integer(order.at) && integer(order.until) && order.until > order.at && includes(breads, order.bread)
         && (order.reorderedAt === undefined || integer(order.reorderedAt) && order.reorderedAt >= order.at)
         && (order.patienceMs === undefined || integer(order.patienceMs) && order.patienceMs >= order.until - order.at)
@@ -858,6 +1113,13 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
         || (counter.feedback.order !== undefined && !integer(counter.feedback.order, counter.sequence))
         || (counter.feedback.timeAdded !== undefined && !integer(counter.feedback.timeAdded, endlessReserveMs))
         || (counter.feedback.guest !== undefined && !integer(counter.feedback.guest, explorerIds.length - 1))))) return;
+    if (!validAssemblyState(counter)) return;
+    if (counter.xp !== undefined) {
+      // Sellout cards never revoke XP earned before the sale.
+      const maxBonus = counter.cards!.reduce((sum, card) => sum + Math.max(0, cardXpPercent(card)), 0);
+      const maxPerOrder = roundBurgerXp(baseOrderXp * (1 + maxBonus / 100));
+      if (counter.xp > counter.served * maxPerOrder) return;
+    }
     const overflow = pattyKinds.some(kind => counter.tray.filter(patty => patty.kind === kind).length > trayLimit);
     if (overflow) {
       const retained = new Set(pattyKinds.flatMap(kind => counter.tray

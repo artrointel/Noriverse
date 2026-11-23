@@ -6,6 +6,10 @@ export const kitchenShade = 'burger-surface-shade';
 export const kitchenCup = 'burger-cup';
 export const pattyOilTexture = 'burger-patty-oil';
 export const pattyOilGlint = 'burger-patty-oil-glint';
+export const assemblerArt = {
+  texture: 'burger-assembler', frameWidth: 224, frameHeight: 280,
+  waiting: 0, assembling: 1, cooldown: 2,
+} as const;
 const textureSize = 64;
 const fillLevels = { small: .36, medium: .61, large: .87 } as const;
 

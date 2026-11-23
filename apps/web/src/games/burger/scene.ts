@@ -5,13 +5,16 @@ import { kitchenActionSound, kitchenSound } from './sounds.ts';
 import type { SceneFactory } from '../scene-loader.ts';
 import { burgerLayerSpacing, burgerSceneHeight, orderBubbleSize } from './layout.ts';
 import { diningReplyMs, diningSatisfaction } from './dining.ts';
-import { createFootprintReader, createKitchenArt, cupTexture, kitchenShade, pattyOilGlint, pattyOilTexture, pattyShadowTexture } from './art.ts';
-import { breads, burgerFacility, burgerPreparationMs, burgerRank, burgerSerial, burgerShooAnimationMs, burgerStorageSize, burgerSupplyUnlocked, burgerTables, burgerUnlockLevel, cupAmount, cupOverflow, cupSize,
-  drinkKinds, grillColumns, grillCount, grillRows, ingredients, pattyAt, pattyDoneness, pattyFaces, pattyFrame, pattyKinds, storedPattyFrame } from './rules.ts';
-import type { Bread, BurgerAction, Counter, Ingredient, Order, PattyKind, PattyLocation } from './rules.ts';
-import { cardRerollLimit, ordersPerLevel } from './cards.ts';
-import { cardDeck, cardsPerPage, drawCardHud, loadCardArt } from './card-hud.ts';
+import { assemblerArt, createFootprintReader, createKitchenArt, cupTexture, kitchenShade, pattyOilGlint, pattyOilTexture, pattyShadowTexture } from './art.ts';
+import { breads, burgerFacility, burgerGrowthProgress, burgerPreparationMs, burgerRank, burgerSerial, burgerShooAnimationMs, burgerStorageSize, burgerSupplyUnlocked, burgerTables, burgerTrayCapacity, burgerUnlockLevel, canStartAutoAssembly, cupAmount, cupOverflow, cupSize,
+  drinkKinds, grillColumns, grillCount, grillRows, ingredients, isAutoAssemblySlot, pattyAt, pattyDoneness, pattyFaces, pattyFrame, pattyKinds, stagedBurgerReturnTarget, storedOrder, storedPattyFrame, trayHasRoom } from './rules.ts';
+import type { Bread, BurgerAction, Counter, Ingredient, Order, PattyKind, PattyLocation, ServiceDrink } from './rules.ts';
+import { cardRerollLimit } from './cards.ts';
+import type { BurgerCard } from './cards.ts';
+import { cardDeck, cardPanel, cardsPerPage, cardTextColor, drawCardHud, grayscaleCardSprite, loadCardArt, prepareCardArt, storeStatusIcon } from './card-hud.ts';
 import type { CardHit, CardHud } from './card-hud.ts';
+import { burgerStoreRows } from './store-status.ts';
+import type { StoreStatusRow } from './store-status.ts';
 import shop from '../../assets/burger/shop.png';
 import food from '../../assets/burger/food.webp';
 import patties from '../../assets/burger/patties.webp';
@@ -28,13 +31,15 @@ import broom from '../../assets/burger/broom.webp';
 import spatula from '../../assets/burger/spatula.webp';
 import rawBins from '../../assets/burger/raw-patty-bins.webp';
 import counterWithoutRack from '../../assets/burger/counter-without-rack.webp';
+import autoAssembler from '../../assets/burger/auto-assembler.webp';
 
 type Item = Bread | Ingredient | 'paper';
 export type BurgerView = { id: string; seed: number; counter: Counter; start: number; opensAt?: number; end: number; clockOffset: number; finishedAt: number; pausedAt: number;
   active: boolean; action: (action: BurgerAction) => boolean; cardHud?: CardHud; labels: Record<string, string>; language?: string;
+  translate: (key: string) => string;
   rivals: { name: string; money: number }[] };
 type Zone = { x: number; y: number; w: number; h: number };
-type Hit = { type: 'item' | 'grill' | 'burger' | 'tray' | 'tray-choice' | 'guest' | 'nozzle' | 'cup' | 'service' | 'staged-burger' | 'staged-drink' | 'submit' | 'storage' | 'trash' | 'cards' | 'bubble' | CardHit;
+type Hit = { type: 'item' | 'grill' | 'burger' | 'assembler' | 'tray' | 'tray-choice' | 'guest' | 'nozzle' | 'cup' | 'service' | 'staged-burger' | 'staged-drink' | 'submit' | 'storage' | 'trash' | 'cards' | 'store-status' | 'bubble' | CardHit;
   index: number; zone: Zone };
 type Sprite = { texture: string; frame?: number };
 type OilGlint = { at: number; life: number; gap: number; u: number; v: number; angle: number; travel: number; bend: number; size: number; shine: number };
@@ -88,16 +93,30 @@ const slotHeight = (grillZone.h - 10) / grillRows;
 const kitchenSlots = Array.from({ length: grillCount }, (_, i) =>
   ({ x: grillZone.x + 4 + (i % grillColumns) * slotWidth, y: grillZone.y + 3 + Math.floor(i / grillColumns) * slotHeight,
     w: slotWidth - 2, h: slotHeight - 2 }));
+const grillSlotZone = (index: number, expanded: boolean): Zone => expanded ? kitchenSlots[index]
+  : { ...kitchenSlots[index], y: grillZone.y + 3, h: grillZone.h - 6 };
 const center = (zone: Zone) => ({ x: zone.x + zone.w / 2, y: zone.y + zone.h / 2 });
 const contains = (zone: Zone, x: number, y: number) => x >= zone.x && x < zone.x + zone.w && y >= zone.y && y < zone.y + zone.h;
 const ease = (n: number) => 1 - Math.max(0, Math.min(1, 1 - n)) ** 3;
 const topBread = (bread: Bread) => atlas(bread === 'bun' ? tally.bunTop : tally.riceTop);
 const cookFrame = { rare: 1, medium: 2, well: 3 };
 const trayPanel = { x: 100, y: 51, w: 280, h: 222 };
+const storePanel = { x: 34, y: 30, w: 412, h: 260 };
+const storeList = { x: 60, y: 74, w: 360, h: 184 };
+const storeClose = { x: 389, y: 40, w: 40, h: 31 };
+const storeRowHeight = 22;
 const pickerTrash = { x: 115, y: 239, w: 35, h: 27 };
 const grillTapWindow = 260;
+const trayHoldMs = 330;
+const spatulaShakeMs = 240;
 const bubbleExpansionMs = 3000;
-const cardChoiceDelayMs = 1000;
+const cardGrayHoldMs = 1000;
+const cardColorFadeMs = 500;
+const cardChoiceDelayMs = cardGrayHoldMs + cardColorFadeMs;
+const draftEnterMs = 360;
+const draftExitMs = 300;
+const cardEnterMs = 280;
+const cardStaggerMs = 60;
 const flightMs = 180;
 const ingredientArt = (item: Item, stack: Counter['burgers'][number]) =>
   (item === 'bun' || item === 'rice') && stack.bread === item && stack.layers.some(layer => layer.patty)
@@ -115,7 +134,7 @@ export const burgerScene: SceneFactory = view => {
   const pixel = (value: number) => Math.round(value * density) / density;
   let imageIndex = 0, captionIndex = 0, layout: Hit[] = [];
   let slot = 0;
-  let lastRound = '', seenFeedback = 0;
+  let lastRound = '', seenFeedback = 0, seenSubmission = 0;
   const unlockTimes = new Map<string, number | null>();
   const assemblies = [{ signature: '', changedAt: 0 }, { signature: '', changedAt: 0 }];
   const guestMotion = new Map<number, { from: number; to: number; at: number; ms: number; order: Order }>();
@@ -128,18 +147,24 @@ export const burgerScene: SceneFactory = view => {
   let enlargedBalloon: Phaser.GameObjects.Graphics;
   let expandedBubble: { id: number; expiresAt: number } | undefined;
   let cardInk: Phaser.GameObjects.Graphics;
-  let visibleDraft: { roundId: string; at: number; rerollsUsed: number; selectableAt: number } | undefined;
+  let storeInk: Phaser.GameObjects.Graphics;
+  let visibleDraft: { roundId: string; at: number; rerollsUsed: number; openedAt: number; shownAt: number;
+    offers: readonly BurgerCard[]; closedAt?: number } | undefined;
   let historyPage: number | undefined;
+  let store: { offset: number; limit: number; drag?: { id: number; startY: number; offset: number };
+    cached?: { cards: Counter['cards']; locale: string; rows: StoreStatusRow[] } } | undefined;
   let pickerInk: Phaser.GameObjects.Graphics;
   let trayPicker: { kind: PattyKind; slot: number; at: number } | undefined;
-  let spatulaMotion: { zone: Zone; at: number; phase: 'ready' | 'flip' | 'carry'; x?: number; y?: number } | undefined;
+  let spatulaMotion: { zone: Zone; at: number; phase: 'ready' | 'flip' | 'carry' | 'blocked'; x?: number; y?: number } | undefined;
   let pickerSlots: { zone: Zone; serial?: number }[] = [];
   const grillBurns = new Map<number, { serial?: number; burnt: boolean }>();
   const grillOil = new Map<number, { serial?: number; glints: OilGlint[] }>();
+  let previousGrill: Counter['grill'] = [];
   let stopSizzle: (() => void) | undefined;
   let stopPour: (() => void) | undefined;
 
-  let gesture: { from: Hit; x: number; y: number; startX: number; startY: number; id: number; moved: boolean; serial?: number } | undefined;
+  let gesture: { from: Hit; x: number; y: number; startX: number; startY: number; id: number; downAt: number; moved: boolean;
+    serial?: number; expectedDrink?: ServiceDrink | null } | undefined;
   let pending: { key: string; at: number; timer: number; single: () => void } | undefined;
   const progress = (view: BurgerView) => Math.min(view.counter.closed ? view.end : Infinity,
     view.counter.draft?.at ?? Infinity, view.finishedAt || Infinity, (view.pausedAt || Date.now()) - view.clockOffset);
@@ -178,8 +203,9 @@ export const burgerScene: SceneFactory = view => {
       }
       texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
     }
-    value.setPosition(pixel(x), pixel(y)).setDepth(depth).setVisible(true);
+    value.setPosition(pixel(x), pixel(y)).setDepth(depth).setVisible(true).setAlpha(1);
     value.setScale(width ? Math.min(1, width / Math.max(1, value.width)) : 1, 1);
+    if (value.isCropped) value.setCrop();
     return value;
   }
 
@@ -250,6 +276,7 @@ export const burgerScene: SceneFactory = view => {
       }
       return;
     }
+    if (isAutoAssemblySlot(data.counter, target)) return;
     const stack = data.counter.burgers[target];
     if (!apply({ type: 'add', item, slot: target }) || !source || reduced.matches) return;
     const part = item === 'paper' ? -3 : item === 'bun' || item === 'rice' ? (stack.bread ? -1 : -2) : stack.layers.length;
@@ -258,28 +285,54 @@ export const burgerScene: SceneFactory = view => {
       x: center(bowlZone(target)).x, y, at: now, slot: target, part });
   }
 
-  function submit(data: BurgerView) {
+  function ringServiceBell(data: BurgerView) {
     const order = data.counter.orders[0];
-    if (data.counter.service?.burger && order) apply({ type: 'serve', order: order.id });
+    if (!order) apply({ type: 'ring-bell' });
+    else if (data.counter.service?.burger) apply({ type: 'serve', order: order.id });
   }
 
-  function chooseTray(data: BurgerView, kind: PattyKind, index: number, target: number, source: Zone, serial?: number) {
-    const tray = data.counter.tray.filter(item => item.kind === kind);
-    const patty = serial === undefined ? tray[index] : tray.find(item => item.serial === serial);
-    if (!patty) return;
+  function returnStagedBurger(counter: Counter, to: number | 'origin' | 'trash', serial?: number) {
+    if (to === 'trash' || stagedBurgerReturnTarget(counter, to)) apply({ type: 'return-burger', to, serial });
+  }
+
+  function chooseTray(data: BurgerView, kind: PattyKind, target: number, source: Zone, serial?: number, index?: number) {
+    if (isAutoAssemblySlot(data.counter, target)) return;
+    const patty = index === undefined ? pattyAt(data.counter, kind)
+      : serial === undefined ? data.counter.tray.filter(item => item.kind === kind)[index]
+        : data.counter.tray.find(item => item.kind === kind && item.serial === serial);
+    if (!patty || (serial !== undefined && patty.serial !== serial)) return;
     if (storedPattyFrame(patty.faces) === 4) {
-      if (apply({ type: 'discard-tray', kind, index, serial: patty.serial })) {
+      const discard = index === undefined ? apply({ type: 'move', from: kind, to: 'trash', serial: patty.serial })
+        : apply({ type: 'discard-tray', kind, index, serial: patty.serial });
+      if (discard) {
         trayPicker = undefined;
         tossPatty(kind, source, progress(data));
       }
       return;
     }
-    if (!apply({ type: 'stack-tray', kind, index, serial: patty.serial, slot: target })) return;
+    const stacked = index === undefined ? apply({ type: 'stack', from: kind, serial: patty.serial, slot: target })
+      : apply({ type: 'stack-tray', kind, index, serial: patty.serial, slot: target });
+    if (!stacked) return;
     trayPicker = undefined;
     if (reduced.matches || !pattyDoneness(patty.faces)) return;
     const part = data.counter.burgers[target].layers.length;
     flights.push({ sprite: pattySprite(patty.kind, storedPattyFrame(patty.faces)),
       from: source, x: center(bowlZone(target)).x, y: assemblyFoodY - (part + 1) * 3.5, at: progress(data), slot: target, part });
+  }
+
+  function trayHoldReady(press: NonNullable<typeof gesture>) {
+    return press.from.type === 'tray' && !press.moved && performance.now() - press.downAt >= trayHoldMs;
+  }
+
+  function cancelTrayHold() {
+    if (gesture?.from.type === 'tray') gesture = undefined;
+  }
+
+  function openTrayPicker(data: BurgerView, index: number) {
+    const kind = pattyKinds[index];
+    if (store || historyPage !== undefined || visibleDraft || data.counter.tray.filter(patty => patty.kind === kind).length < 2) return;
+    trayPicker = { kind, slot, at: progress(data) };
+    kitchenSound('touch', .24);
   }
 
   function tossPatty(kind: PattyKind, source: Zone, at: number, part = -1, serial?: number) {
@@ -295,6 +348,7 @@ export const burgerScene: SceneFactory = view => {
 
   function silence() {
     cancelTap();
+    gesture = undefined;
     stopSizzle?.();
     stopPour?.();
     stopSizzle = stopPour = undefined;
@@ -302,19 +356,20 @@ export const burgerScene: SceneFactory = view => {
 
   function cardChoiceReady(data: BurgerView) {
     return Boolean(data.cardHud?.showDraft && visibleDraft && visibleDraft.roundId === data.id
+      && visibleDraft.closedAt === undefined
       && visibleDraft.at === data.counter.draft?.at && visibleDraft.rerollsUsed === (data.counter.rerollsUsed ?? 0)
-      && performance.now() >= visibleDraft.selectableAt);
+      && performance.now() - visibleDraft.shownAt >= cardChoiceDelayMs);
   }
 
   function chooseCard(data: BurgerView, index: number) {
     const card = cardChoiceReady(data) ? data.counter.draft?.offers[index] : undefined;
-    if (card) apply({ type: 'choose-card', card, level: burgerRank(data.counter.served), rerollsUsed: data.counter.rerollsUsed ?? 0 });
+    if (card) apply({ type: 'choose-card', card, level: burgerRank(data.counter), rerollsUsed: data.counter.rerollsUsed ?? 0 });
   }
 
   function rerollCards(data: BurgerView) {
     const rerollsUsed = data.counter.rerollsUsed ?? 0;
     if (cardChoiceReady(data) && rerollsUsed < cardRerollLimit) {
-      apply({ type: 'reroll-cards', level: burgerRank(data.counter.served), rerollsUsed });
+      apply({ type: 'reroll-cards', level: burgerRank(data.counter), rerollsUsed });
     }
   }
 
@@ -324,7 +379,7 @@ export const burgerScene: SceneFactory = view => {
     historyPage = Phaser.Math.Clamp(historyPage + delta, 0, pages - 1);
   }
 
-  function tap(hit: Hit, data: BurgerView, serial?: number) {
+  function tap(hit: Hit, data: BurgerView, serial?: number, expectedDrink?: ServiceDrink | null) {
     const key = hit.type + ':' + hit.index;
     const at = performance.now();
     const double = pending?.key === key && at - pending.at <= grillTapWindow;
@@ -343,6 +398,7 @@ export const burgerScene: SceneFactory = view => {
     }
     switch (hit.type) {
       case 'cards': if (data.cardHud) historyPage = 0; break;
+      case 'store-status': store = { offset: 0, limit: 0 }; break;
       case 'card-close': historyPage = undefined; break;
       case 'card-page': pageCards(data, hit.index); break;
       case 'card-choice': chooseCard(data, hit.index); break;
@@ -362,6 +418,7 @@ export const burgerScene: SceneFactory = view => {
           return true;
         }
         if (discardBurnt(previousPatty, progress(data), data.counter)) break;
+        if (data.counter.cards?.includes('autoGrill2')) break;
         if (double) {
           if (apply({ type: 'flip', slot: hit.index, side: previousPatty.side, serial: previousPatty.serial })) {
             spatulaMotion = { zone: hit.zone, at: progress(data), phase: 'flip' };
@@ -377,27 +434,25 @@ export const burgerScene: SceneFactory = view => {
             const now = progress(current);
             if (discardBurnt(patty, now, current.counter)) return;
             const faces = pattyFaces(patty, now, current.counter);
+            if (!pattyDoneness(faces)) return;
+            if (!trayHasRoom(current.counter, patty.kind)) {
+              spatulaMotion = { zone: hit.zone, at: now, phase: 'blocked' };
+              return;
+            }
             const count = current.counter.tray.filter(item => item.kind === patty.kind).length;
-            if (!pattyDoneness(faces) || !apply({ type: 'hold', slot: hit.index, serial: patty.serial }) || reduced.matches) return;
-            const kindIndex = pattyKinds.indexOf(patty.kind);
-            const { x } = center(trayZone(kindIndex));
-            const y = trayPattyY(Math.min(shownTrayPatties - 1, count));
-            spatulaMotion = { zone: hit.zone, at: now, phase: 'carry', x, y };
-            flights.push({ sprite: pattySprite(patty.kind, pattyFrame(faces)),
-              from: hit.zone, x, y, at: now, slot: -2, part: hit.index, serial: patty.serial });
+            if (!apply({ type: 'hold', slot: hit.index, serial: patty.serial }) || reduced.matches) return;
+            flyToTray(patty, pattyFrame(faces), hit.zone, hit.index, count, now);
           });
         }
         break;
       }
       case 'tray': {
         const kind = pattyKinds[hit.index];
-        const quantity = data.counter.tray.filter(item => item.kind === kind).length;
-        if (quantity > 1) { trayPicker = { kind, slot, at: progress(data) }; kitchenSound('touch', .24); }
-        else if (quantity === 1) chooseTray(data, kind, 0, slot, hit.zone);
+        chooseTray(data, kind, slot, hit.zone, serial);
         break;
       }
       case 'tray-choice': {
-        if (trayPicker) chooseTray(data, trayPicker.kind, hit.index, trayPicker.slot, hit.zone, serial);
+        if (trayPicker) chooseTray(data, trayPicker.kind, trayPicker.slot, hit.zone, serial, hit.index);
         break;
       }
       case 'guest': {
@@ -405,9 +460,20 @@ export const burgerScene: SceneFactory = view => {
         else defer(() => {});
         break;
       }
+      case 'assembler': {
+        const order = data.counter.orders[0];
+        if (order && canStartAutoAssembly(data.counter, progress(data))) apply({ type: 'start-assembly', order: order.id });
+        break;
+      }
       case 'burger': {
+        const automated = isAutoAssemblySlot(data.counter, hit.index);
+        if (automated && data.counter.assemblyJob) break;
         const stack = data.counter.burgers[hit.index];
         if (stack.packed) { apply({ type: 'stage-burger', slot: hit.index }); break; }
+        if (automated) {
+          if (stack.paper) apply({ type: 'pop', slot: hit.index });
+          break;
+        }
         if (slot !== hit.index) { slot = hit.index; kitchenSound('touch', .2); defer(() => {}); break; }
         if (double) apply({ type: 'wrap', slot });
         else if (stack.top) defer(() => apply({ type: 'pop', slot: hit.index }));
@@ -416,16 +482,19 @@ export const burgerScene: SceneFactory = view => {
       }
       case 'nozzle': apply({ type: 'pour', drink: hit.index, pouring: Boolean(data.counter.cups[hit.index].pourAt) }); break;
       case 'cup': apply({ type: 'stage-drink', drink: hit.index }); break;
-      case 'staged-burger': apply({ type: 'return-burger', to: 'origin', serial }); break;
-      case 'staged-drink': apply({ type: 'return-drink', to: 'machine' }); break;
-      case 'submit': submit(data); break;
-      case 'storage': apply({ type: 'stage-stored', index: hit.index, serial }); break;
+      case 'staged-burger': returnStagedBurger(data.counter, 'origin', serial); break;
+      case 'staged-drink': apply({ type: 'return-drink', to: 'origin' }); break;
+      case 'submit': ringServiceBell(data); break;
+      case 'storage': apply({ type: 'stage-stored', index: hit.index, serial, expectedDrink }); break;
     }
   }
 
-  function drop(from: Hit, to: Hit | undefined, up: boolean, serial?: number) {
+  function drop(from: Hit, to: Hit | undefined, up: boolean, serial?: number, expectedDrink?: ServiceDrink | null) {
     const inService = to && ['service', 'staged-burger', 'staged-drink', 'submit'].includes(to.type);
     const inTrash = to?.type === 'trash';
+    const data = view().burger;
+    const counter = data?.counter;
+    const toAutomated = to?.type === 'burger' && counter && isAutoAssemblySlot(counter, to.index);
     switch (from.type) {
       case 'item': {
         const item = menu[from.index];
@@ -433,35 +502,47 @@ export const burgerScene: SceneFactory = view => {
         else if (to?.type === 'burger' && item !== 'beef' && item !== 'chicken') ingredient(item, to.index);
         break;
       }
-      case 'tray': case 'grill':
+      case 'tray': case 'grill': {
+        if (from.type === 'grill' && data && !inTrash) {
+          if (data.counter.cards?.includes('autoGrill2')) break;
+          const patty = data.counter.grill[from.index];
+          if (to?.type === 'tray' && patty?.kind === pattyKinds[to.index] && patty.serial === serial && !trayHasRoom(data.counter, patty.kind)) {
+            spatulaMotion = { zone: from.zone, at: progress(data), phase: 'blocked' };
+            break;
+          }
+        }
         if (to?.type === 'grill' || to?.type === 'tray') apply({ type: 'move', from: location(from), to: location(to), serial });
-        else if (to?.type === 'burger') apply({ type: 'stack', from: location(from), slot: to.index, serial });
+        else if (to?.type === 'burger' && !toAutomated) apply({ type: 'stack', from: location(from), slot: to.index, serial });
         else if (inTrash) apply({ type: 'move', from: location(from), to: 'trash', serial });
         break;
+      }
       case 'burger':
         if (to?.type === 'storage') apply({ type: 'store-burger', slot: from.index, index: to.index });
         else if (inService) apply({ type: 'stage-burger', slot: from.index });
         else if (inTrash) apply({ type: 'discard', slot: from.index });
         break;
       case 'storage':
-        if (to?.type === 'storage') apply({ type: 'shift-stored', from: from.index, to: to.index, serial });
-        else if (inService) apply({ type: 'stage-stored', index: from.index, serial });
-        else if (inTrash || up) apply({ type: 'discard-stored', index: from.index, serial });
+        if (to?.type === 'storage') apply({ type: 'shift-stored', from: from.index, to: to.index, serial, expectedDrink });
+        else if (inService) apply({ type: 'stage-stored', index: from.index, serial, expectedDrink });
+        else if (inTrash || up) apply({ type: 'discard-stored', index: from.index, serial, expectedDrink });
         break;
       case 'cup':
-        if (inService) apply({ type: 'stage-drink', drink: from.index });
+        if (to?.type === 'storage') apply({ type: 'store-drink', drink: from.index, index: to.index });
+        else if (inService) apply({ type: 'stage-drink', drink: from.index });
         else if (inTrash) apply({ type: 'spill', drink: from.index });
         break;
       case 'staged-burger':
-        if (inTrash) apply({ type: 'return-burger', to: 'trash', serial });
-        else if (to?.type === 'burger') apply({ type: 'return-burger', to: to.index, serial });
+        if (!counter) break;
+        if (inTrash) returnStagedBurger(counter, 'trash', serial);
+        else if (to?.type === 'burger') returnStagedBurger(counter, to.index, serial);
         else if (to?.type === 'storage') {
-          const origin = view().burger?.counter.service?.origin;
-          if (origin?.area === 'storage' && origin.index === to.index) apply({ type: 'return-burger', to: 'origin', serial });
+          const origin = counter.service?.origin;
+          if (origin?.area === 'storage' && origin.index === to.index) returnStagedBurger(counter, 'origin', serial);
         }
         break;
       case 'staged-drink':
-        if (to?.type === 'cup' || to?.type === 'nozzle') apply({ type: 'return-drink', to: 'machine' });
+        if (to?.type === 'storage') apply({ type: 'store-drink', drink: 'service', index: to.index });
+        else if (to?.type === 'cup' || to?.type === 'nozzle') apply({ type: 'return-drink', to: 'machine' });
         else if (inTrash) apply({ type: 'return-drink', to: 'trash' });
         break;
     }
@@ -491,19 +572,23 @@ export const burgerScene: SceneFactory = view => {
     const stat = (value: string, x: number, y: number, size: number, color = '#fff0da', maxWidth = 0) =>
       label(scene, value, x, y, size, color, maxWidth, 5, true);
     if (counter.cards) {
-      const ratio = counter.draft ? 1 : counter.served % ordersPerLevel / ordersPerLevel;
+      const ratio = counter.draft ? 1 : burgerGrowthProgress(counter);
       const barHeight = burgerSceneHeight * .01;
       ink.fillStyle(0x203528, .92).fillRect(0, 0, width, barHeight);
       ink.fillStyle(0x63e29a, 1).fillRect(0, 0, width * ratio, barHeight);
-      stat('Lv. ' + burgerRank(counter.served), 21, 23, 11, '#a3ffc0');
+      stat('Lv. ' + burgerRank(counter), 21, 23, 11, '#a3ffc0');
       picture(scene, cardDeck, 48, 23, 19, 19, 4);
       spot('cards', 0, { x: 38, y: 12, w: 22, h: 23 });
     }
-    const timerX = counter.cards ? 82 : 52;
+    const storeX = counter.cards ? 73 : 24;
+    picture(scene, storeStatusIcon, storeX, 23, 21, 21, 4);
+    spot('store-status', 0, { x: storeX - 11, y: 12, w: 22, h: 23 });
+    const timerX = counter.cards ? 112 : 62;
+    const comboX = counter.cards ? 165 : 117;
     stat(labels.time, timerX, 16, 8, '#c6e8db');
     stat(data.start ? duration(data.end - Math.max(now, data.opensAt ?? data.start)) : '—', timerX, 29, 13);
-    stat(fever ? labels.fever : labels.combo, 132, 16, 8, fever ? '#ffd273' : '#c6e8db');
-    stat(fever ? duration(counter.feverUntil - now) + ' ×2' : '×' + counter.combo, 132, 29, 13);
+    stat(fever ? labels.fever : labels.combo, comboX, 16, 8, fever ? '#ffd273' : '#c6e8db');
+    stat(fever ? duration(counter.feverUntil - now) + ' ×2' : '×' + counter.combo, comboX, 29, 13);
     stat(labels.money, 430, 16, 8, '#c6e8db');
     stat('✦ ' + counter.money, 430, 29, 14, '#ffe2a0');
     const feedback = counter.feedback;
@@ -512,7 +597,7 @@ export const burgerScene: SceneFactory = view => {
       if (feedback.timeAdded) stat('+' + duration(feedback.timeAdded), timerX, 46, 10, '#a5ffc3');
     }
     data.rivals.slice(0, 3).forEach((rival, i, rivals) => {
-      const x = 275 + (i - (rivals.length - 1) / 2) * 55;
+      const x = 287 + (i - (rivals.length - 1) / 2) * 55;
       stat(rival.name, x, 16, 8, '#edc5d9', 49);
       stat(String(rival.money), x, 29, 11);
     });
@@ -801,6 +886,28 @@ export const burgerScene: SceneFactory = view => {
     }
   }
 
+  function flyToTray(patty: { kind: PattyKind; serial?: number }, frame: number, zone: Zone, slot: number, count: number, at: number) {
+    const { x } = center(trayZone(pattyKinds.indexOf(patty.kind)));
+    const y = trayPattyY(Math.min(shownTrayPatties - 1, count));
+    spatulaMotion = { zone, at, phase: 'carry', x, y };
+    flights.push({ sprite: pattySprite(patty.kind, frame), from: zone, x, y, at, slot: -2, part: slot, serial: patty.serial });
+  }
+
+  function animateAutomaticTransfers({ counter, active }: BurgerView, now: number) {
+    if (active && counter.cards?.includes('autoGrill2') && !reduced.matches && previousGrill !== counter.grill) {
+      const expanded = burgerFacility(counter, 'griddle');
+      previousGrill.forEach((patty, slot) => {
+        if (patty?.serial === undefined || counter.grill[slot]?.serial === patty.serial) return;
+        const stack = counter.tray.filter(item => item.kind === patty.kind);
+        const index = stack.findIndex(item => item.serial === patty.serial);
+        if (index < 0) return;
+        flyToTray(patty, storedPattyFrame(stack[index].faces), grillSlotZone(slot, expanded), slot, index, now);
+        kitchenSound('plate', .3);
+      });
+    }
+    previousGrill = counter.grill;
+  }
+
   function renderGrill(scene: Phaser.Scene, { counter, active }: BurgerView, now: number) {
     pattyKinds.forEach((kind, index) => {
       const zone = trayZone(index);
@@ -822,8 +929,8 @@ export const burgerScene: SceneFactory = view => {
       }
     });
     const expanded = burgerFacility(counter, 'griddle');
-    kitchenSlots.slice(0, expanded ? grillCount : grillColumns).forEach((original, i) => {
-      const zone = expanded ? original : { ...original, y: grillZone.y + 3, h: grillZone.h - 6 };
+    kitchenSlots.slice(0, expanded ? grillCount : grillColumns).forEach((_, i) => {
+      const zone = grillSlotZone(i, expanded);
       const { x, y } = center(zone);
       const patty = counter.grill[i];
       spot('grill', i, zone);
@@ -842,7 +949,7 @@ export const burgerScene: SceneFactory = view => {
         { surface: 'grill', lift: (1 - flip) * 12, angle: (1 - flip) * (patty.side ? 28 : -22) });
       if (!burnt && patty.heatAt > 0) drawPattyOil(scene, body, i, patty.serial, now);
       else grillOil.delete(i);
-      if (!reduced.matches && faces[patty.side] >= 34) {
+      if (!reduced.matches && patty.heatAt && faces[patty.side] >= 34) {
         const rise = (now / 45 + i * 8) % 24;
         picture(scene, prop('steam'), x + Math.sin(rise / 3) * 4, y - 5 - rise, 10 + rise / 4, 12, 4, .6 * (1 - rise / 24));
       }
@@ -850,23 +957,38 @@ export const burgerScene: SceneFactory = view => {
   }
 
   function renderAssembly(scene: Phaser.Scene, { counter, labels }: BurgerView, now: number) {
+    const origin = counter.service?.origin;
+    const showReturn = origin?.area === 'assembly' && stagedBurgerReturnTarget(counter, 'origin');
     counter.burgers.forEach((stack, index) => {
       const zone = bowlZone(index), { x } = center(zone);
       if (index && !burgerFacility(counter, 'assembly')) { drawSupplyLid(scene, zone, 0); return; }
+      const automated = isAutoAssemblySlot(counter, index);
+      if (automated) {
+        const frame = counter.assemblyJob?.next ? assemblerArt.assembling
+          : (counter.assemblyReadyAt ?? 0) > now ? assemblerArt.cooldown : assemblerArt.waiting;
+        place(scene, { texture: assemblerArt.texture, frame }, x, 246, 43, 54, 3.6, { surface: 'worktop', base: 272 });
+        if (canStartAutoAssembly(counter, now)) spot('assembler', index, { x: zone.x, y: 219, w: zone.w, h: 23 });
+      }
       const change = assemblies[index];
       const signature = [stack.paper, stack.bread, stack.top, stack.packed, stack.layers.length].join(':');
       if (signature !== change.signature) { change.signature = signature; change.changedAt = now; }
       const age = now - change.changedAt;
       spot('burger', index, zone);
-      if (counter.service?.origin?.area === 'assembly' && counter.service.origin.index === index) {
+      if (showReturn && showReturn.index === index) {
         picture(scene, atlas(tally.wrap), x, assemblyFoodY, 32, 45, 2, .22);
       }
-      if (index === slot) label(scene, '▼', x, 235, 8, '#ffe2a9');
+      const bottom = zone.y + zone.h;
+      if (index === slot && !automated) {
+        const phase = (now % 820) / 820;
+        const rise = 3 * (1 - Math.cos(phase * Math.PI));
+        const arrow = label(scene, '▲', x, bottom + (reduced.matches ? 10 : 13 - rise), 7, '#ffe2a9', 0, 5, true);
+        if (!reduced.matches) arrow.setAlpha(Math.min(1, phase * 8, (1 - phase) * 8));
+      }
       if (stack.packed) {
         const bounce = !reduced.matches ? 5 * Math.sin(age / 36) * (1 - ease(age / 340)) : 0;
         place(scene, atlas(tally.wrap), x, assemblyFoodY + bounce, 32, 45, 2,
           { base: assemblyFoodY + 8, lift: Math.max(0, -bounce) });
-        ingredientStrip(scene, stack.layers, x, 279, 41, 4.2);
+        ingredientStrip(scene, stack.layers, x, bottom - 1, 41, 4.2, .75);
         return;
       }
       const hidden = flights.filter(flight => flight.slot === index).map(flight => flight.part);
@@ -877,8 +999,8 @@ export const burgerScene: SceneFactory = view => {
         layer.patty && storedPattyFrame(layer.patty.faces)));
       const lift = reduced.matches ? 0 : 10 * (1 - ease(age / 200));
       burgerArt(scene, x, assemblyFoodY, assemblyBurgerSize, layers, stack.bread, stack.top, 3, lift, hidden, true);
-      if (stack.layers.some(layer => layer.patty)) ingredientStrip(scene, stack.layers, x, 276, 38, 4.2);
-      if (stack.top) label(scene, labels.wrap, x, 284, 6, '#ffeacc', 36, 5, true);
+      if (stack.layers.some(layer => layer.patty)) ingredientStrip(scene, stack.layers, x, bottom - 1, 38, 4.2, .75);
+      if (stack.top && !automated) label(scene, labels.wrap, x, bottom - 9, 6, '#ffeacc', 36, 5, true);
     });
   }
 
@@ -920,8 +1042,15 @@ export const burgerScene: SceneFactory = view => {
     }
     spot('submit', 0, serveZone);
     spot('service', 0, serviceZone);
-    const enabled = data.active && Boolean(staged?.burger && counter.orders[0]);
+    const enabled = data.active && (!counter.orders.length || Boolean(staged?.burger));
     if (enabled) ink.fillStyle(0xffd396, .13).fillEllipse(center(serveZone).x - 1.5, 267, 19, 4.5);
+  }
+
+  function drawStoredItems(scene: Phaser.Scene, x: number, y: number, burger: boolean, drink: ServiceDrink | null,
+    depth: number, burgerAlpha = 1, drinkAlpha = burgerAlpha) {
+    if (burger) place(scene, atlas(tally.wrap), x - (drink ? 7 : 0), y, 26, 23, depth, { alpha: burgerAlpha });
+    if (drink) place(scene, { texture: cupTexture(drink.kind, cupSize(drink.amount)) },
+      x + (burger ? 10 : 0), y - 1, 15, 18, depth + .05, { alpha: drinkAlpha, surface: 'cup' });
   }
 
   function renderStorage(scene: Phaser.Scene, { counter }: BurgerView) {
@@ -934,17 +1063,14 @@ export const burgerScene: SceneFactory = view => {
     for (let index = 0; index < burgerStorageSize; index++) {
       const zone = storageZone(index);
       spot('storage', index, { ...zone, y: zone.y - 5, h: 31 });
-      const burger = counter.storage?.[index];
-      const { x, y } = center(zone);
-      if (!burger) {
-        if (counter.service?.origin?.area === 'storage' && counter.service.origin.index === index) {
-          picture(scene, atlas(tally.wrap), x, y - 2, 26, 23, 3, .22);
-        }
-        continue;
-      }
       if (isDragging('storage', index)) continue;
-      place(scene, atlas(tally.wrap), x, y - 2, 26, 23, 3);
-      ingredientStrip(scene, burger.layers, x, 312, 43, 3);
+      const { x, y } = center(zone);
+      const { burger, drink } = storedOrder(counter, index);
+      const origin = counter.service?.origin;
+      const reservedBurger = origin?.area === 'storage' && origin.index === index;
+      const reservedDrink = counter.service?.drinkOrigin === index ? counter.service.drink ?? null : null;
+      drawStoredItems(scene, x, y - 2, Boolean(burger || reservedBurger), drink ?? reservedDrink, 3, burger ? 1 : .22, drink ? 1 : .22);
+      if (burger) ingredientStrip(scene, burger.layers, x, 312, 43, 3);
     }
   }
 
@@ -963,24 +1089,111 @@ export const burgerScene: SceneFactory = view => {
     });
   }
 
+  function renderStoreStatus(scene: Phaser.Scene, data: BurgerView, panel: NonNullable<typeof store>) {
+    const { counter, translate } = data;
+    const locale = data.language ?? 'en';
+    if (!panel.cached || panel.cached.cards !== counter.cards || panel.cached.locale !== locale) {
+      panel.cached = { cards: counter.cards, locale, rows: burgerStoreRows(counter, locale, translate) };
+    }
+    const { rows } = panel.cached;
+    panel.limit = Math.max(0, rows.length * storeRowHeight - storeList.h);
+    panel.offset = Phaser.Math.Clamp(panel.offset, 0, panel.limit);
+    layout = [];
+    cardInk.fillStyle(0x211321, .62).fillRect(0, 0, width, burgerSceneHeight);
+    const { x, y } = center(storePanel);
+    picture(scene, cardPanel, x, y, storePanel.w, storePanel.h, 51);
+    picture(scene, storeStatusIcon, 79, 54, 23, 23, 52);
+    label(scene, translate('burgerStore_title'), x, 54, 17, '#ffecd1', 260, 55);
+    label(scene, '×', center(storeClose).x, center(storeClose).y, 18, '#ffecd1', 0, 55);
+    if (!rows.length) label(scene, translate('burgerStore_empty'), x, y, 12, '#f5e6cf', 320, 55);
+
+    const listBottom = storeList.y + storeList.h;
+    function cell(value: string, edge: number, centerY: number, size: number, color: string, maxWidth: number, alignRight = false) {
+      const text = label(scene, value, edge, centerY, size, color, maxWidth, 55);
+      text.x = pixel(edge + text.displayWidth / 2 * (alignRight ? -1 : 1));
+      const top = text.y - text.displayHeight / 2;
+      const resolution = text.frame.source.resolution;
+      const start = Math.max(0, Math.ceil((storeList.y - top) * resolution));
+      const end = Math.min(text.frame.cutHeight, Math.floor((listBottom - top) * resolution));
+      if (end <= start) text.setVisible(false);
+      else if (start > 0 || end < text.frame.cutHeight) text.setCrop(0, start, text.frame.cutWidth, end - start);
+    }
+
+    const first = Math.floor(panel.offset / storeRowHeight);
+    const last = Math.min(rows.length, Math.ceil((panel.offset + storeList.h) / storeRowHeight));
+    for (let index = first; index < last; index++) {
+      const [name, value] = rows[index];
+      const top = storeList.y + index * storeRowHeight - panel.offset;
+      const clippedTop = Math.max(storeList.y, top);
+      const clippedBottom = Math.min(listBottom, top + storeRowHeight - 1);
+      const group = value === undefined;
+      if (clippedBottom > clippedTop) storeInk.fillStyle(group ? 0x466e51 : 0xf8e6b7, group ? .58 : .07)
+        .fillRect(storeList.x, clippedTop, storeList.w, clippedBottom - clippedTop);
+      cell(name, storeList.x + 10, top + storeRowHeight / 2, group ? 10 : 11, group ? '#b4e0bb' : '#f5e6cf', 211);
+      if (value !== undefined) cell(value, storeList.x + storeList.w - 10, top + storeRowHeight / 2, 12, '#ffdc97', 130, true);
+    }
+    if (panel.limit > 0) label(scene, translate('burgerStore_drag'), x, 273, 8, '#b4d0b8', 260, 55);
+  }
+
   function renderCards(scene: Phaser.Scene, data: BurgerView) {
     const copy = data.cardHud;
     const draft = copy?.showDraft ? data.counter.draft : undefined;
     const rerollsUsed = data.counter.rerollsUsed ?? 0;
-    if (!draft) visibleDraft = undefined;
-    else if (visibleDraft?.roundId !== data.id || visibleDraft.at !== draft.at || visibleDraft.rerollsUsed !== rerollsUsed) {
-      visibleDraft = { roundId: data.id, at: draft.at, rerollsUsed, selectableAt: performance.now() + cardChoiceDelayMs };
+    const now = performance.now();
+    if (draft && (!visibleDraft || visibleDraft.closedAt !== undefined || visibleDraft.at !== draft.at || visibleDraft.rerollsUsed !== rerollsUsed)) {
+      const openedAt = visibleDraft && visibleDraft.closedAt === undefined && visibleDraft.at === draft.at ? visibleDraft.openedAt : now;
+      visibleDraft = { roundId: data.id, at: draft.at, rerollsUsed, openedAt, shownAt: now, offers: draft.offers };
       gesture = undefined;
     }
-    if (!copy || (!draft && historyPage === undefined)) return;
-    cardInk.fillStyle(0x211321, .78).fillRect(0, 0, width, burgerSceneHeight);
+    if (!draft && visibleDraft) {
+      visibleDraft.closedAt ??= now;
+      if (reduced.matches || now - visibleDraft.closedAt >= draftExitMs) visibleDraft = undefined;
+    }
+    if (!copy || (!visibleDraft && historyPage === undefined)) return;
+    const through = (elapsed: number, duration: number) => Phaser.Math.Clamp(elapsed / duration, 0, 1);
+    const closedAt = visibleDraft?.closedAt;
+    const shownUntil = closedAt ?? now;
+    const age = visibleDraft ? shownUntil - visibleDraft.shownAt : cardChoiceDelayMs;
+    const saturation = reduced.matches ? Number(age >= cardChoiceDelayMs) : through(age - cardGrayHoldMs, cardColorFadeMs);
+    const incoming = !visibleDraft || reduced.matches ? 1 : through(shownUntil - visibleDraft.openedAt, draftEnterMs);
+    const outgoing = closedAt === undefined ? 0 : through(now - closedAt, draftExitMs);
+    const opacity = incoming * (1 - outgoing);
+    const motion = (1 - incoming) ** 2;
+    const panelScale = 1 - .055 * motion - .035 * outgoing;
+    const panelLeft = width / 2 * (1 - panelScale);
+    const panelTop = burgerSceneHeight / 2 * (1 - panelScale) + 15 * motion + 12 * outgoing;
+
+    function paint(alpha: number, scale: number, left: number, top: number, colorAmount = 1) {
+      return {
+        image(sprite: Sprite, x: number, y: number, w: number, h: number, depth: number, opacity = 1) {
+          if (alpha <= 0) return;
+          const px = x * scale + left, py = y * scale + top;
+          if (colorAmount < 1) picture(scene, grayscaleCardSprite(scene, sprite), px, py, w * scale, h * scale, depth, opacity * alpha).setPosition(px, py);
+          if (colorAmount > 0) picture(scene, sprite, px, py, w * scale, h * scale, depth, opacity * alpha * colorAmount).setPosition(px, py);
+        },
+        text(value: string, x: number, y: number, size: number, color: string, maxWidth?: number) {
+          if (alpha <= 0) return;
+          const caption = label(scene, value, x, y, size, cardTextColor(color, colorAmount), maxWidth, 55);
+          caption.setPosition(x * scale + left, y * scale + top).setScale(caption.scaleX * scale, scale).setAlpha(alpha);
+        },
+      };
+    }
+
+    cardInk.fillStyle(0x211321, .72 * opacity).fillRect(0, 0, width, burgerSceneHeight);
     layout = [];
     drawCardHud(copy, {
-      image: (sprite, x, y, w, h, depth, alpha, stretch) => picture(scene, sprite, x, y, w, h, depth, alpha, 0, stretch),
-      text: (copy, x, y, size, color, maxWidth) => label(scene, copy, x, y, size, color, maxWidth, 55),
-      hit: spot,
+      ...paint(opacity, panelScale, panelLeft, panelTop),
+      card(index, x, y) {
+        const entrance = !visibleDraft || reduced.matches ? 1 : through(age - 55 - index * cardStaggerMs, cardEnterMs);
+        const lift = (1 - entrance) ** 2;
+        const scale = .95 + .05 * (1 - lift);
+        return paint(opacity * entrance, panelScale * scale, panelLeft + x * (1 - scale) * panelScale,
+          panelTop + (y * (1 - scale) + 18 * lift) * panelScale, saturation);
+      },
+      hit: (type, index, zone) => { if (closedAt === undefined) spot(type, index, zone); },
       item: name => name === 'cola' || name === 'soda' ? prop(name) : foods(name as Item),
-    }, draft && { offers: draft.offers, canChoose: cardChoiceReady(data), rerollsLeft: cardRerollLimit - rerollsUsed }, data.counter.cards ?? [], historyPage ?? 0);
+    }, visibleDraft && { offers: visibleDraft.offers, canChoose: age >= cardChoiceDelayMs, rerollsLeft: cardRerollLimit - visibleDraft.rerollsUsed },
+    data.counter.cards ?? [], historyPage ?? 0);
   }
 
   function renderTrayPicker(scene: Phaser.Scene, { counter, labels }: BurgerView, now: number) {
@@ -996,7 +1209,7 @@ export const burgerScene: SceneFactory = view => {
     pickerInk.lineStyle(2, 0xa66d55).strokeRoundedRect(x + 3, y + shift + 3, w - 6, h - 6, 12);
     label(scene, labels[trayPicker.kind] + ' · ' + labels.tray, x + w / 2, y + shift + 23, 14, '#543244', 248, 43);
     const dragging = gesture?.moved && gesture.from.type === 'tray-choice' ? gesture : undefined;
-    for (let i = 0; i < (burgerFacility(counter, 'tray') ? 8 : 4); i++) {
+    for (let i = 0; i < burgerTrayCapacity(counter); i++) {
       const zone: Zone = { x: x + 15 + (i % 4) * 63, y: y + shift + 43 + Math.floor(i / 4) * 70, w: 60, h: 63 };
       const patty = list[i];
       pickerInk.fillStyle(patty ? 0xe6bf83 : 0xead0a4).fillRoundedRect(zone.x, zone.y, zone.w, zone.h, 8);
@@ -1025,17 +1238,18 @@ export const burgerScene: SceneFactory = view => {
     if (!spatulaMotion) return;
     const { zone, at, phase, x: targetX, y: targetY } = spatulaMotion;
     const age = now - at;
-    const length = phase === 'ready' ? grillTapWindow + 70 : flightMs;
+    const length = phase === 'ready' ? grillTapWindow + 70 : phase === 'blocked' ? spatulaShakeMs : flightMs;
     if (age >= length) { spatulaMotion = undefined; return; }
     const start = center(zone);
     const step = phase === 'carry' ? ease(age / length) : Math.max(0, age / length);
     const moving = phase === 'carry' && targetX !== undefined && targetY !== undefined;
     const lift = moving ? Math.sin(step * Math.PI) * 22 : phase === 'flip' ? Math.sin(step * Math.PI) * 9 : 0;
+    const shake = phase === 'blocked' && !reduced.matches ? Math.sin(step * Math.PI * 4) * 7 * (1 - step * .4) : 0;
     const x = moving ? start.x + (targetX - start.x) * step : start.x;
     const y = moving ? start.y + (targetY - start.y) * step : start.y;
     const angle = phase === 'flip' ? -46 + 120 * ease(step) : -49 + 18 * ease(step);
     const alpha = phase === 'ready' ? Math.min(1, .45 + age / 55) : Math.min(1, (length - age) / 36);
-    picture(scene, { texture: 'burger-spatula' }, x + 3, y + 3 - (reduced.matches ? 0 : lift), 23, 34, moving ? 17.9 : 2.9,
+    picture(scene, { texture: 'burger-spatula' }, x + 3 + shake, y + 3 - (reduced.matches ? 0 : lift), 23, 34, moving ? 17.9 : 2.9,
       alpha, reduced.matches ? -40 : angle).setOrigin(.5, .18);
   }
 
@@ -1080,8 +1294,11 @@ export const burgerScene: SceneFactory = view => {
           angle = 0;
         }
       }
-      if ((from.type === 'burger' && counter.burgers[from.index].packed) || from.type === 'staged-burger'
-        || (from.type === 'storage' && counter.storage?.[from.index])) sprite = atlas(tally.wrap);
+      if ((from.type === 'burger' && counter.burgers[from.index].packed) || from.type === 'staged-burger') sprite = atlas(tally.wrap);
+      if (from.type === 'storage') {
+        const { burger, drink } = storedOrder(counter, from.index);
+        drawStoredItems(scene, x, y, Boolean(burger), drink, 20, .95);
+      }
       if (from.type === 'burger' && counter.burgers[from.index].paper && !sprite) sprite = paperSprite;
       if (from.type === 'cup') {
         const level = cupSize(cupAmount(counter.cups[from.index], now));
@@ -1111,6 +1328,7 @@ export const burgerScene: SceneFactory = view => {
       this.load.image('burger-lid', lid);
       this.load.image('burger-broom', broom);
       this.load.image('burger-spatula', spatula);
+      this.load.spritesheet(assemblerArt.texture, autoAssembler, { frameWidth: assemblerArt.frameWidth, frameHeight: assemblerArt.frameHeight });
       const sheet = (key: string, url: string, size: number) =>
         this.load.spritesheet(key, url, { frameWidth: size, frameHeight: size, margin: 4, spacing: 4 });
       sheet('burger-food', food, 96);
@@ -1134,30 +1352,45 @@ export const burgerScene: SceneFactory = view => {
       enlargedBalloon = this.add.graphics().setDepth(22);
       pickerInk = this.add.graphics().setDepth(40);
       cardInk = this.add.graphics().setDepth(50);
+      storeInk = this.add.graphics().setDepth(52);
       createKitchenArt(this);
+      prepareCardArt(this);
       kitchenSound('burn')?.();
       kitchenSound('fever')?.();
+      kitchenSound('call-bell')?.();
       for (const key of ['burger-shop', 'burger-counter-without-rack', 'burger-food', 'burger-patties', 'burger-stations', 'burger-guests', 'burger-ingredient-icons',
-        'burger-furniture', 'burger-eating', 'burger-tables', 'burger-paper', 'burger-lid', 'burger-broom', 'burger-spatula', 'burger-dining-reactions',
-        'burger-patty-bins', 'burger-card-surfaces', 'burger-card-emblems', kitchenShade,
+        'burger-furniture', 'burger-eating', 'burger-tables', 'burger-paper', 'burger-lid', 'burger-broom', 'burger-spatula', assemblerArt.texture, 'burger-dining-reactions',
+        'burger-patty-bins', kitchenShade,
         cupTexture(), ...drinkKinds.flatMap(kind => (['small', 'medium', 'large'] as const).map(size => cupTexture(kind, size)))]) {
         this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
       }
       this.events.on('pause', silence);
       this.events.once('shutdown', silence);
       this.events.once('destroy', silence);
+      const gameEvents = this.game.events;
+      gameEvents.on(Phaser.Core.Events.BLUR, cancelTrayHold);
+      this.events.once('shutdown', () => gameEvents.off(Phaser.Core.Events.BLUR, cancelTrayHold));
       this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
         const data = view().burger;
         if (!data?.cardHud || !this.game.canvas.parentElement?.contains(document.activeElement) || event.repeat) return;
-        if (data.cardHud.showDraft && /^[123]$/.test(event.key)) chooseCard(data, Number(event.key) - 1);
-        else if (data.active && data.counter.cards && event.key.toLowerCase() === 'c') historyPage = historyPage === undefined ? 0 : undefined;
-        else if (historyPage !== undefined && event.key === 'Escape') historyPage = undefined;
-        else if (historyPage !== undefined && event.key === 'ArrowLeft') pageCards(data, -1);
-        else if (historyPage !== undefined && event.key === 'ArrowRight') pageCards(data, 1);
+        const key = event.key.toLowerCase();
+        if (store) {
+          if (key !== 'escape' && key !== 's') return;
+          store = undefined;
+        } else if (data.cardHud.showDraft && /^[123]$/.test(key)) chooseCard(data, Number(key) - 1);
+        else if (data.active && !visibleDraft && !trayPicker && historyPage === undefined && key === 's') store = { offset: 0, limit: 0 };
+        else if (data.active && data.counter.cards && key === 'c') historyPage = historyPage === undefined ? 0 : undefined;
+        else if (historyPage !== undefined && key === 'escape') historyPage = undefined;
+        else if (historyPage !== undefined && key === 'arrowleft') pageCards(data, -1);
+        else if (historyPage !== undefined && key === 'arrowright') pageCards(data, 1);
         else return;
         event.preventDefault();
       });
       this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+        if (store?.drag?.id === pointer.id) {
+          store.offset = Phaser.Math.Clamp(store.drag.offset + store.drag.startY - pointer.worldY, 0, store.limit);
+          return;
+        }
         if (gesture?.id !== pointer.id) return;
         gesture.x = pointer.worldX;
         gesture.y = pointer.worldY;
@@ -1167,6 +1400,11 @@ export const burgerScene: SceneFactory = view => {
         const data = view().burger;
         if (!data || (!data.active && !data.cardHud?.showDraft) || gesture || !pointer.leftButtonDown()) return;
         const x = pointer.worldX, y = pointer.worldY;
+        if (store) {
+          if (!store.drag && (contains(storeClose, x, y) || !contains(storePanel, x, y))) store = undefined;
+          else if (!store.drag && contains(storeList, x, y)) store.drag = { id: pointer.id, startY: y, offset: store.offset };
+          return;
+        }
         const chosen = trayPicker ? pickerSlots.findIndex(({ zone }) => contains(zone, x, y)) : -1;
         if (trayPicker && chosen < 0) {
           if (!contains(trayPanel, x, y - traySlide(trayPicker.at, progress(data)))) trayPicker = undefined;
@@ -1176,16 +1414,21 @@ export const burgerScene: SceneFactory = view => {
         const hit = chosen < 0 ? find(x, y) : { type: 'tray-choice' as const, index: chosen, zone: choice.zone };
         const patty = hit && (hit.type === 'grill' || hit.type === 'tray') ? pattyAt(data.counter, location(hit)) : undefined;
         if (hit?.type === 'tray' && !patty) return;
-        if (hit) gesture = { from: hit, x, y, startX: x, startY: y, id: pointer.id, moved: false,
+        if (hit) gesture = { from: hit, x, y, startX: x, startY: y, id: pointer.id, downAt: performance.now(), moved: false,
           serial: hit.type === 'grill' || hit.type === 'tray' ? patty?.serial
             : hit.type === 'storage' ? burgerSerial(data.counter.storage?.[hit.index])
-            : hit.type === 'staged-burger' ? burgerSerial(data.counter.service?.burger) : choice?.serial };
+            : hit.type === 'staged-burger' ? burgerSerial(data.counter.service?.burger) : choice?.serial,
+          ...(hit.type === 'storage' && { expectedDrink: data.counter.storedDrinks?.[hit.index] ?? null }) };
       });
       const release = (pointer: Phaser.Input.Pointer) => {
+        if (store?.drag?.id === pointer.id) {
+          store.drag = undefined;
+          return;
+        }
         if (!gesture || gesture.id !== pointer.id) return;
         const previous = gesture, data = view().burger;
         gesture = undefined;
-        if (!data || (!data.active && !data.cardHud?.showDraft)) return;
+        if (pointer.event?.type === 'touchcancel' || !data || (!data.active && !data.cardHud?.showDraft)) return;
         const end = find(pointer.worldX, pointer.worldY);
         if (data.cardHud?.showDraft || historyPage !== undefined) {
           if (!previous.moved && end && end.type === previous.from.type && end.index === previous.from.index && end.type.startsWith('card-')) {
@@ -1202,8 +1445,9 @@ export const burgerScene: SceneFactory = view => {
             }
             return;
           }
-          drop(previous.from, end, pointer.worldY < previous.startY - 23, previous.serial);
-        } else tap(previous.from, data, previous.serial);
+          drop(previous.from, end, pointer.worldY < previous.startY - 23, previous.serial, previous.expectedDrink);
+        } else if (trayHoldReady(previous)) openTrayPicker(data, previous.from.index);
+        else tap(previous.from, data, previous.serial, previous.expectedDrink);
       };
       this.input.on('pointerup', release);
       this.input.on('pointerupoutside', release);
@@ -1214,39 +1458,58 @@ export const burgerScene: SceneFactory = view => {
       density = this.cameras.main.zoom;
       if (lastRound !== data.id) {
         lastRound = data.id; slot = 0; seenFeedback = 0; guestMotion.clear(); departing.clear(); flights.length = 0;
+        seenSubmission = data.counter.submission?.id ?? 0;
         expandedBubble = undefined;
+        visibleDraft = undefined;
         historyPage = undefined;
+        store = undefined;
         seenFever = data.counter.feverTrigger ?? 0;
-        grillBurns.clear(); grillOil.clear(); trayPicker = undefined; spatulaMotion = undefined;
+        grillBurns.clear(); grillOil.clear(); previousGrill = []; trayPicker = undefined; spatulaMotion = undefined;
         unlockTimes.clear();
-        gesture = undefined; silence();
+        silence();
       }
+      if (isAutoAssemblySlot(data.counter, slot)) slot = 0;
+      if (trayPicker && isAutoAssemblySlot(data.counter, trayPicker.slot)) trayPicker = undefined;
       if (expandedBubble && (performance.now() >= expandedBubble.expiresAt || !data.counter.orders.some(order => order.id === expandedBubble?.id))) {
         expandedBubble = undefined;
       }
       const now = progress(data);
+      const submission = data.counter.submission;
+      if (submission && submission.id > seenSubmission) {
+        seenSubmission = submission.id;
+        if (now - submission.at < 2000) kitchenSound('bell');
+      }
       feverTime = now;
       feverGlow = data.finishedAt || data.counter.closed || data.counter.retired ? 0 : Phaser.Math.Clamp((data.counter.feverUntil - now) / 440, 0, 1);
       const trigger = data.counter.feverTrigger ?? 0;
       if (trigger > seenFever && data.active && feverGlow > 0) kitchenSound('fever', .58);
       seenFever = trigger;
-      if (!data.active) { trayPicker = undefined; spatulaMotion = undefined; cancelTap(); }
-      if (!data.active) historyPage = undefined;
+      if (!data.active) {
+        trayPicker = undefined; spatulaMotion = undefined; historyPage = undefined; store = undefined; cancelTap();
+        cancelTrayHold();
+      } else if (gesture && trayHoldReady(gesture)) {
+        const { id, from } = gesture;
+        gesture = undefined;
+        if (this.input.manager.pointers[id]?.isDown) openTrayPicker(data, from.index);
+      }
       const kitchenRunning = data.active && !data.finishedAt && !data.counter.closed && !data.counter.retired && !data.pausedAt;
-      if (kitchenRunning && data.counter.grill.some(Boolean)) stopSizzle ??= kitchenSound('sizzle', .16, true);
+      if (kitchenRunning && data.counter.grill.some(patty => patty?.heatAt)) stopSizzle ??= kitchenSound('sizzle', .16, true);
       else { stopSizzle?.(); stopSizzle = undefined; }
       if (kitchenRunning && data.counter.cups.some(cup => cup.pourAt && cupAmount(cup, now) < cupOverflow)) stopPour ??= kitchenSound('pour', .34, true);
       else { stopPour?.(); stopPour = undefined; }
       for (let i = flights.length - 1; i >= 0; i--) if (now - flights[i].at >= flightMs) flights.splice(i, 1);
+      animateAutomaticTransfers(data, now);
       ink.clear();
       feverInk.clear();
       balloons.clear();
       enlargedBalloon.clear();
       pickerInk.clear();
       cardInk.clear();
+      storeInk.clear();
       layout = []; imageIndex = captionIndex = 0;
       drawKitchen(this, data, now);
-      renderCards(this, data);
+      if (store) renderStoreStatus(this, data, store);
+      else renderCards(this, data);
       for (let i = imageIndex; i < images.length; i++) images[i].setVisible(false);
       for (let i = captionIndex; i < captions.length; i++) captions[i].view.setVisible(false);
     },

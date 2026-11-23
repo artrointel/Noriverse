@@ -138,7 +138,8 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
     }}>
       {burgerDifficulties.map(difficulty => <option key={difficulty} value={difficulty}>{t('burgerDifficulty_' + difficulty)}</option>)}
     </SettingsSelect>
-    <p className="setup-help">{t('burgerDurationHelp')}</p>
+    <p className="setup-help">{t(online && settings.burgerMode === 'race' && settings.burger === 'endless'
+      ? 'burgerEndlessRaceHelp' : 'burgerDurationHelp')}</p>
   </SettingsSection>;
   if (game === 'mole') {
     const mole = settings.mole;

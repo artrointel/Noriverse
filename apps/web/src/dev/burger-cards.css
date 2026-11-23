@@ -1,0 +1,85 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, 'Malgun Gothic', sans-serif;
+  --background: light-dark(#f7f8fc, #12131a);
+  --surface: light-dark(#fff, #1b1d27);
+  --subtle: light-dark(#f0eef8, #252637);
+  --line: light-dark(#dddce8, #373949);
+  --text: light-dark(#242439, #ececf6);
+  --muted: light-dark(#55566c, #b5b7cd);
+  --accent: light-dark(#573a8f, #d2b7ff);
+  --positive: light-dark(#1b6946, #9ae4b6);
+  --negative: light-dark(#a12d4e, #ffadbf);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--text); background: var(--background); }
+a { color: var(--accent); font-weight: 650; text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.balance {
+  max-width: 1360px;
+  margin-inline: auto;
+  padding: clamp(20px, 4vw, 52px) clamp(14px, 4vw, 54px) 44px;
+}
+.balance-header { margin-block: 30px 24px; }
+.balance-header h1 { margin: 0; font-size: clamp(1.75rem, 4.5vw, 2.8rem); letter-spacing: -.045em; }
+.balance-note { margin: 0 0 12px; color: var(--muted); line-height: 1.6; }
+.balance-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 16px; border-bottom: 1px solid var(--line); }
+.balance-tabs a { padding: 8px clamp(8px, 2vw, 13px); color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; }
+.balance-tabs a[aria-current='page'] { color: var(--accent); border-bottom-color: var(--accent); }
+.filters .balance-note { margin: 0; padding-block: 8px; font-size: .85rem; }
+.growth-section + .growth-section { margin-top: 28px; }
+.growth-section h2 { margin: 0 0 8px; font-size: 1.12rem; }
+.growth-section .balance-note + .balance-note { margin-top: 8px; }
+.table-scroll + .balance-note { margin-block: 12px 0; }
+.filters { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 14px; }
+.filters label { display: grid; gap: 5px; font-size: .83rem; font-weight: 700; }
+.filters label:first-child { flex: 1 1 260px; }
+.filters output { color: var(--muted); padding: 10px 1px; font-size: .86rem; font-variant-numeric: tabular-nums; }
+input, select, button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 11px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.table-scroll {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+table { width: 100%; min-width: 820px; border-spacing: 0; text-align: left; font-size: .9rem; line-height: 1.5; }
+.growth-table { min-width: 560px; font-variant-numeric: tabular-nums; }
+.reward-table { min-width: 490px; font-variant-numeric: tabular-nums; }
+th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { position: sticky; top: 0; z-index: 1; background: var(--subtle); color: var(--muted); font-size: .8rem; }
+tbody th { min-width: 145px; }
+tbody tr:last-child > * { border-bottom: 0; }
+tbody tr:nth-child(even) { background: color-mix(in srgb, var(--subtle) 36%, var(--surface)); }
+tbody tr:hover { background: var(--subtle); }
+td:nth-child(2), .modifier { white-space: nowrap; }
+.card-table td:nth-child(3) { min-width: 145px; }
+.card-table td:nth-child(4) { width: 39%; }
+.card-table td:last-child { min-width: 120px; }
+code { display: block; color: var(--muted); font-size: .79rem; font-weight: 500; overflow-wrap: anywhere; }
+.modifier { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.modifier[data-change='1'] { color: var(--positive); }
+.modifier[data-change='-1'] { color: var(--negative); }
+.empty { padding: 14px; color: var(--muted); }
+.progression h2 { margin: 24px 0 8px; font-size: 1.12rem; }
+.progression :is(ol, ul) { margin: 0; padding-inline-start: 23px; line-height: 1.7; }
+
+.sources { margin-top: 26px; }
+.sources h2 { margin: 0 0 8px; font-size: 1.12rem; }
+.sources ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.sources li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.sources strong { font-size: .9rem; }
+.sources button { flex: none; cursor: pointer; font-size: .82rem; }
+.sources button:hover { border-color: var(--accent); color: var(--accent); }
+.sources output { display: block; margin-top: 7px; color: var(--muted); font-size: .82rem; overflow-wrap: anywhere; }

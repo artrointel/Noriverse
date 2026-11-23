@@ -28,7 +28,7 @@ import { mergeRoomHistory, readRoomResult, roomHistoryBatchSize } from '../../..
 import type { RoomResult } from '../../../../packages/protocol/room-history.ts';
 import { readRoomTitle } from '../../../../packages/protocol/room-titles.ts';
 import { awardRoomPoints } from './room-scoring.ts';
-import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchOutcome, matchTurn, matchWinner, mockSeatsFor, onlineMatchReport, readMatchSnapshot, resumeMatchClock, roundSeats } from './room-match.ts';
+import { blankMatch, inRound, lobbyMatch, matchBeginsAt, matchColor, matchInProgress, matchOutcome, matchTurn, matchWinner, mockSeatsFor, onlineMatchReport, readMatchSnapshot, resumeMatchClock, roundSeats, sharesTouchSurface } from './room-match.ts';
 import type { Match } from './room-match.ts';
 import { countdownDuration } from '../games/round-cues.ts';
 import { advanceSketch, applySketchAction, chooseSketchMap, defaultSketchSettings, makeSketchRound, nextSketchEvent, readSketchGuess, sketchDeck, startSketchTurn, visibleSketch } from '../games/sketch/rules.ts';
@@ -714,7 +714,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
         if (seat.current?.role === 'host' && current.startedAt && !inRound(current, peer)) return;
         if (raw.type === 'touch') {
           const now = performance.now();
-          if (!current.startedAt || current.finishedAt || !('id' in raw) || raw.id !== current.id || !('point' in raw)
+          if (!sharesTouchSurface(current) || !current.startedAt || current.finishedAt || !('id' in raw) || raw.id !== current.id || !('point' in raw)
             || now - lastIncomingTouch.current < 60) return;
           const point = readTouch(raw.point);
           if (point) {
@@ -1058,12 +1058,14 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
       enabled: role === 'host' || state === 'connected',
       send: (emoji: Emoji) => sendReaction(emoji, true),
     },
-    remoteTouch: remoteTouch?.matchId === matchId && performance.now() - remoteTouch.receivedAt < 500 ? remoteTouch : undefined,
+    remoteTouch: sharesTouchSurface(round) && !finishedAt && remoteTouch?.matchId === matchId
+      && performance.now() - remoteTouch.receivedAt < 500 ? remoteTouch : undefined,
     sendTouch(point: TouchPoint) {
+      const current = match.current;
       const now = performance.now();
-      if (!match.current.startedAt || match.current.finishedAt || !readyForPlay() || now - lastOutgoingTouch.current < 90) return;
+      if (!sharesTouchSurface(current) || !current.startedAt || current.finishedAt || !readyForPlay() || now - lastOutgoingTouch.current < 90) return;
       lastOutgoingTouch.current = now;
-      link.current?.send({ type: 'touch', id: match.current.id, point });
+      link.current?.send({ type: 'touch', id: current.id, point });
     },
     async invite(friend: string) {
       const current = seat.current;

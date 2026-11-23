@@ -15,13 +15,7 @@ npm run dev:rooms
 npm run dev
 ```
 
-[http://127.0.0.1:5173/](http://127.0.0.1:5173/)에서 오목, 오델로, 체스, 알까기를 선택할 수 있습니다. **혼자하기**를 선택하면 혼자 양쪽을 연습하거나 한 기기에서 두 사람이 번갈아 플레이합니다. **방 만들기**를 선택하면 다른 브라우저의 친구와 대전할 수 있습니다. 두 번째 창에서 초대 링크나 코드로 참가하면 호스트가 게임을 시작할 수 있습니다. 로컬 방 서비스는 Wrangler로 실행되며 계정 없이 SQLite Durable Object를 모의 실행합니다.
-
-오른쪽 상단 톱니 버튼에서 언어, 테마, 배경음과 효과음 크기를 조절할 수 있습니다. 배경음과 효과음은 첫 상호작용 이후 브라우저에서 합성되며 설정은 브라우저에 저장됩니다.
-
-첫 방문에 이름을 저장하면 익명 프로필을 만들 수 있습니다. 오른쪽 상단 프로필에서 누적 시간, 게임별 전적과 공유 링크를 확인합니다. 레벨은 1에서 시작해 기록된 플레이 시간을 합산해 한 시간마다 오릅니다. 승률은 승리 수를 승리·패배·무승부의 합으로 나눕니다. 프로필과 경기 기록은 로컬 Wrangler의 SQLite 저장소에, 편집 권한은 해당 브라우저의 쿠키에 있습니다.
-
-라이브러리에서 한글 또는 영문 이름으로 게임을 찾을 수 있습니다. 카드를 선택하면 목록 위 미리보기에 규칙과 플레이 버튼이 표시됩니다. 경기 중에는 보드 위 진행 정보 버튼에서 턴, 점수와 초 단위 플레이 시간을 확인하고, 경기 종료 후에는 보드를 유지한 채 결과 팝업이 열립니다. 하트를 누른 게임은 라이브러리의 즐겨찾기 탭과 프로필에 표시됩니다.
+[로컬 웹 앱](http://127.0.0.1:5173/)에서 게임을 고르고 **혼자하기** 또는 **방 만들기**를 실행합니다. 친구 방은 다른 Chrome 프로필이나 시크릿 창에서 초대 링크 또는 코드로 참가해 검증할 수 있습니다. 로컬 방 서비스는 Cloudflare 계정 없이 SQLite Durable Object를 모의 실행합니다.
 
 규칙과 프로토콜 테스트는 `npm test`, 타입 확인과 번들은 `npm run build`로 실행합니다.
 로컬 Worker를 실행한 상태에서 `npm run test:profile-storage`로 테스트 프로필을 만들어 새 캐릭터와 설정을 저장하고 본인·공개 조회에서 확인합니다. 검증을 마친 테스트 프로필은 정리합니다.
@@ -31,6 +25,9 @@ npm run dev
 - [서비스 기획과 벤치마킹](docs/product.md)
 - [기술 설계와 인프라 검토](docs/technical-design.md)
 - [로드맵과 Phase 1 검증 기준](docs/roadmap.md)
+- [햄버거 타이쿤 규칙·성장·난이도·카드](docs/burger-tycoon.md)
+- [방 랭킹보드와 점수 기준](docs/room-ranking.md)
+- [별길 탐사대 설정집](docs/characters.md)
 - [장기 검토 항목](docs/long-term.md)
 
 ## GitHub Pages 첫 배포
@@ -46,8 +43,8 @@ Pages 빌드는 저장소 하위 경로에서 에셋을 불러오고, 초대·�
 
 Worker와 Pages를 함께 자동 배포하려면 GitHub Actions에 Worker 편집 권한의 `CLOUDFLARE_API_TOKEN`을 저장소 시크릿으로, `CLOUDFLARE_ACCOUNT_ID`를 저장소 변수로 등록합니다. 두 값이 등록된 경우 워크플로가 현재 커밋의 Worker를 먼저 배포하고 공개 저장 검증을 실행합니다. 두 값을 비워 두면 기존의 Worker 수동 배포 흐름을 사용합니다. [Cloudflare GitHub Actions 안내](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)
 
-동일 출처에서는 HttpOnly 쿠키를 사용합니다. Pages와 Worker를 서로 다른 출처로 운영할 때는 Pages의 퍼스트파티 쿠키에 익명 세션을 저장하고 Worker 요청에 전달합니다. Worker는 지정된 Pages 출처만 허용합니다. 로컬 Wrangler의 기록과 배포된 Worker의 기록은 별개입니다.
+## 저작권
 
-놀이버스 자체 코드와 에셋의 권리는 artrointel이 유보합니다. 공개 서비스는 접속하여 플레이할 수 있습니다. [저작권 안내](LICENSE)
+[놀이버스 저작권 안내](LICENSE)
 
 체스 규칙에는 [chess.js의 BSD-2-Clause 라이선스](apps/web/public/licenses/chess.js.txt)가 적용됩니다.

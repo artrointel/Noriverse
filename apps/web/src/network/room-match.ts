@@ -71,6 +71,12 @@ export function inRound(match: Match, role: Role) {
     && (!match.burger || match.burger.players.includes(role));
 }
 
+export function sharesTouchSurface(match: Pick<Match, 'game' | 'burgerMode' | 'puzzleConfig'>) {
+  if (match.game === 'burger') return match.burgerMode === 'coop';
+  if (match.game === 'sichuan') return match.puzzleConfig?.mode === 'coop';
+  return isBoardGame(match.game) || match.game === 'physics' || match.game === 'sketch';
+}
+
 export function mockSeatsFor(game: RoomGame, participants: readonly Participant[], count: number) {
   const taken = new Set<Role>(['host', ...participants.map(player => player.role)]);
   return roomRoles.filter(role => !taken.has(role)).slice(0, Math.max(0, Math.min(count, roomCapacity[game] - taken.size)));

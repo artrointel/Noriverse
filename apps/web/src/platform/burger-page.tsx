@@ -104,9 +104,11 @@ export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, da
     if (outcome) return { id, game: 'burger', mode: room ? 'online' : 'practice', outcome, seconds };
   }, [id, Boolean(room), cooperative, counter.money, outcome, finishedAt, startedAt]);
   const mode = cooperative ? 'coop' : room ? 'burgerRace' : 'practice';
+  const waitingForRivals = room && !cooperative && round.minutes === 'endless' && counter.closed && !counter.bankrupt;
   const status = finishedAt ? t(counter.bankrupt ? 'burgerBankrupt' : endlessTimeout ? 'burgerEndlessTimeout'
     : room && outcome ? 'outcome_' + outcome : resigned ? 'gameFinished' : 'burgerClosed')
-    : !roundStart.started ? t('roundWaiting') : resigned || counter.closed ? t('burgerWaiting') : t(mode);
+    : !roundStart.started ? t('roundWaiting') : waitingForRivals ? t('burgerEndlessRaceClosed')
+      : resigned || counter.closed ? t('burgerWaiting') : t(mode);
   const players = round.players.map((player, index) => {
     const participant = room?.participants.find(person => person.role === player);
     const profile = (player === role ? ownProfile : undefined) ?? participant?.profile;
@@ -143,7 +145,7 @@ export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, da
     const category = item ? kind === 'unlock' ? 'unlock' : 'special'
       : ['rush', 'patient', 'advertise', 'picky', 'simple'].includes(card) ? 'guest' : 'special';
     const name = item ? t('burgerCard_' + kind, { item: t('burgerLabel_' + item) }) : t('burgerCard_' + card);
-    const detail = t('burgerCardDetail_' + (item ? kind : card));
+    const detail = t('burgerCardDetail_' + (card === 'unlock:cola' || card === 'unlock:soda' ? 'unlockDrink' : item ? kind : card));
     return { category, tag: t('burgerCardType_' + category), name, detail } as const;
   };
   return <div className="site-width subpage play-page burger-page">
@@ -155,7 +157,7 @@ export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, da
         stageContext={{ mode: t(mode),
           map: (round.minutes === 'endless' ? t('burgerEndless') : formatPlayTime(round.minutes * 60)) + ' · '
             + t('burgerDifficulty_' + (round.difficulty ?? defaultBurgerDifficulty)) }}
-        endAction={!finishedAt && !resigned && <EndRoundAction key={id} online={Boolean(room)} disabled={!active} end={end} />}
+        endAction={!finishedAt && !resigned && !counter.closed && <EndRoundAction key={id} online={Boolean(room)} disabled={!active} end={end} />}
         info={<><strong>{status}</strong>{stats}</>} infoStatus={status} yourTurn={false}
         result={result} resultVisible={resultVisible} resultPending={resultPending} onShowResult={() => setClosedResult('')}
         showTouches={showTouches} onTouchDisplay={onTouchDisplay} remoteTouch={room?.remoteTouch} onTouch={room?.sendTouch}
@@ -165,8 +167,9 @@ export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, da
           burger: { id, seed: round.seed, counter, start: round.start, opensAt: round.opensAt,
             end: burgerDeadline(round, role), clockOffset, finishedAt, pausedAt,
             active, action, labels, language: i18n.resolvedLanguage,
+            translate: key => t(key),
             cardHud: { showDraft: canInteract && !room?.recoveryAt && Boolean(counter.draft), describe: cardDetails,
-              title: t('burgerLevelUp', { level: burgerRank(counter.served) }),
+              title: t('burgerLevelUp', { level: burgerRank(counter) }),
               instruction: t(cooperative ? 'burgerDraftCoop' : 'burgerDraftChoose'),
               lockedInstruction: t('burgerDraftLocked'),
               reroll: (remaining, limit) => t('burgerDraftReroll', { remaining, limit }),

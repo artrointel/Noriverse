@@ -1,10 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createLocalBoard, decideLocalBoard, endLocalBoard, moveLocalBoard, rematchLocalBoard } from '../apps/web/src/games/local-round.ts';
-import { blankMatch, matchInProgress, readMatchSnapshot, resumeMatchClock } from '../apps/web/src/network/room-match.ts';
+import { blankMatch, lobbyMatch, matchInProgress, readMatchSnapshot, resumeMatchClock, sharesTouchSurface } from '../apps/web/src/network/room-match.ts';
+import { defaultMatchSettings } from '../apps/web/src/games/match-settings.ts';
+import { gameIds } from '../packages/protocol/games.ts';
 import { countdownCue, countdownDuration, outcomeDuration, resultDelay } from '../apps/web/src/games/round-cues.ts';
 import { resolveTurnTimeout } from '../apps/web/src/games/turn-clock.ts';
 import { createFlickRound, defaultFlickSettings } from '../apps/web/src/games/alkkagi/rules.ts';
+
+test('remote touches are shared only when players use the same board', () => {
+  const sharedByDefault = gameIds.filter(game => sharesTouchSurface(lobbyMatch(game, defaultMatchSettings)));
+  assert.deepEqual(sharedByDefault, ['omok', 'physics', 'othello', 'chess', 'sketch']);
+  assert(sharesTouchSurface(lobbyMatch('burger', { ...defaultMatchSettings, burgerMode: 'coop', burger: 'endless' })));
+  assert(!sharesTouchSurface(lobbyMatch('burger', { ...defaultMatchSettings, burgerMode: 'race', burger: 'endless' })));
+  assert(sharesTouchSurface(lobbyMatch('sichuan', { ...defaultMatchSettings, puzzle: { ...defaultMatchSettings.puzzle, mode: 'coop' } })));
+});
 
 test('legacy snapshots retain defaults and a rejoin cannot roll the same round back', () => {
   const legacy = { type: 'snapshot', id: 'round-one', history: [112], startedAt: 10_000, finishedAt: 0, allowDoubleThree: false, sentAt: 10_150 };

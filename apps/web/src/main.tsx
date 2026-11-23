@@ -401,6 +401,7 @@ function App() {
             <RouteLink href={explorerPath()} navigate={navigate} aria-current={route.page === 'explorers' ? 'page' : undefined}>{t('explorers')}</RouteLink>
             <a href="https://github.com/artrointel/Noriverse">{t('sourceCode')}</a>
             <a href={licenseUrl} target="_blank" rel="noopener">{t('license')}</a>
+            {import.meta.env.DEV && <a href="/dev/burger-cards/" target="_blank" rel="noopener">{language === 'ko' ? '버거 밸런스' : 'Burger balance'}</a>}
           </nav>
         </div>
         <div className="site-width footer-meta"><small>© {new Date().getFullYear()} Noriverse</small></div>

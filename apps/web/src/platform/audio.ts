@@ -7,7 +7,7 @@ import { playReactionCue } from './reaction-sounds.ts';
 type Effect = 'click' | 'navigate' | 'place' | 'doubleThree' | 'flick' | 'impact' | 'drop' | 'win' | 'loss' | 'turn' | 'tick' | 'finish' | 'combo' | 'distantCombo' | 'paper' | 'countdown' | 'go' | 'badge';
 type MoleEffect = 'bop' | 'armor' | 'trap' | 'bonus' | 'fever' | 'fog' | 'giant';
 type Channel = 'music' | 'effects';
-type VoiceBus = Channel | 'distantEffects';
+type VoiceBus = 'effects' | 'distantEffects' | GainNode;
 export type AudioLevels = Record<Channel, number>;
 
 const defaultLevels: AudioLevels = { music: 24, effects: 68 };
@@ -23,6 +23,16 @@ const scores = {
 const lobbyTracks = ['orbit', 'skylight', 'lantern', 'paperComet', ...Object.keys(arrangements) as ArrangementTrack[]] as const;
 type LobbyTrack = typeof lobbyTracks[number];
 export type MusicTrack = keyof typeof scores | ArrangementTrack;
+type MusicPlayback = {
+  track: MusicTrack;
+  output: GainNode;
+  fadeStartedAt: number;
+  playingSince?: number;
+  nextBeat: number;
+  beat: number;
+};
+const trackTimeLimit = 10 * 60;
+const musicFadeSeconds = .85;
 const gameTracks: Record<ProfileGame, readonly MusicTrack[]> = {
   omok: ['paperConstellation', 'rainAtMidnight', 'citrusTerrace', 'belowTheTide', 'rooftopStatic', 'pebbleDub'],
   othello: ['citrusTerrace', 'neonAvenue', 'islandPostcard', 'highlandParade', 'mirrorSteps', 'meadowTrail'],
@@ -50,8 +60,8 @@ const frequency = (note: number) => 440 * 2 ** ((note - 69) / 12);
 let levels = defaultLevels;
 let graph: ReturnType<typeof createGraph> | undefined;
 let clock: number | undefined;
-let nextBeat = 0;
-let beat = 0;
+let playingMusic: MusicPlayback | undefined;
+const fadingMusic = new Map<MusicPlayback, number>();
 let inMatch = false;
 let lastMatch: { id: string; game: ProfileGame; track: MusicTrack } | undefined;
 let lobbyTrack = initialLobbyTrack();
@@ -92,13 +102,6 @@ export function playRecordedEffect(url: string, volume: number, loop = false) {
     source.start();
   }).catch(() => { recordedBuffers.delete(url); });
   return () => { stopped = true; source?.stop(); };
-}
-const playingNotes = new Set<AudioScheduledSourceNode>();
-
-function trackNote(source: AudioScheduledSourceNode, channel: VoiceBus) {
-  if (channel !== 'music') return;
-  playingNotes.add(source);
-  source.onended = () => { playingNotes.delete(source); };
 }
 let lastEffect = -1;
 let resumeRequest: Promise<void> | undefined;
@@ -141,11 +144,6 @@ function rememberLobbyTrack() {
 function changeMusicTrack(track: MusicTrack) {
   if (musicTrack === track) return;
   musicTrack = track;
-  beat = 0;
-  nextBeat = (graph?.context.currentTime ?? 0) + .055;
-  if (graph) for (const note of playingNotes) note.stop(graph.context.currentTime + .025);
-  if (clock === undefined) syncMusic();
-  else scheduleMusic();
   for (const listener of trackListeners) listener();
 }
 
@@ -185,6 +183,7 @@ export function setMatchMusic(game: ProfileGame, id: string) {
 
 function createGraph() {
   const context = new AudioContext();
+  context.addEventListener('statechange', syncMusic);
   const music = context.createGain();
   const effects = context.createGain();
   const distantEffects = context.createBiquadFilter();
@@ -240,8 +239,7 @@ function tone(when: number, hz: number, duration: number, volume: number, channe
   envelope.gain.exponentialRampToValueAtTime(volume, when + peak);
   if (sustain) envelope.gain.exponentialRampToValueAtTime(volume * .69, when + peak + (duration - peak) * sustain);
   envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration);
-  oscillator.connect(envelope).connect(graph[channel]);
-  trackNote(oscillator, channel);
+  oscillator.connect(envelope).connect(typeof channel === 'string' ? graph[channel] : channel);
   oscillator.start(when);
   oscillator.stop(when + duration + 0.01);
 }
@@ -258,8 +256,7 @@ function texture(when: number, duration: number, volume: number, center: number,
   filter.Q.value = 0.75;
   envelope.gain.setValueAtTime(volume, when);
   envelope.gain.exponentialRampToValueAtTime(0.0001, when + duration);
-  source.connect(filter).connect(envelope).connect(graph[channel]);
-  trackNote(source, channel);
+  source.connect(filter).connect(envelope).connect(typeof channel === 'string' ? graph[channel] : channel);
   source.start(when);
   source.stop(when + duration);
 }
@@ -397,37 +394,77 @@ export function playSound(effect: Effect, strength = 1) {
   return true;
 }
 
-function scheduleMusic() {
-  if (!graph || graph.context.state !== 'running') return;
-  const time = graph.context.currentTime;
-  nextBeat = Math.max(nextBeat, time + 0.015);
-  const track = musicTrack;
+function startMusicTrack(audio: NonNullable<typeof graph>, time: number): MusicPlayback {
+  const end = time + musicFadeSeconds;
+  if (playingMusic) {
+    if (playingMusic.playingSince === undefined) playingMusic.output.disconnect();
+    else {
+      const gain = playingMusic.output.gain;
+      const fadeProgress = Math.min(1, (time - playingMusic.fadeStartedAt) / musicFadeSeconds);
+      gain.cancelScheduledValues(time);
+      gain.setValueAtTime(fadeProgress, time);
+      gain.linearRampToValueAtTime(0, end);
+      fadingMusic.set(playingMusic, end);
+    }
+  }
+  const output = audio.context.createGain();
+  output.gain.setValueAtTime(0, time);
+  output.gain.linearRampToValueAtTime(1, end);
+  output.connect(audio.music);
+  return { track: musicTrack, output, fadeStartedAt: time, playingSince: time + .055, nextBeat: time + .055, beat: 0 };
+}
+
+function scheduleTrack(playback: MusicPlayback, time: number, horizon: number) {
+  const { track, output } = playback;
+  let { nextBeat, beat } = playback;
+  nextBeat = Math.max(nextBeat, time + .015);
   if (Object.hasOwn(arrangements, track)) {
-    while (nextBeat < time + .16) {
+    while (nextBeat < horizon) {
       const when = nextBeat;
       nextBeat += playArrangement(track as ArrangementTrack, beat++,
-        (note, length, gain, wave, attack) => tone(when, frequency(note), length, gain, 'music', wave, undefined, attack),
-        (length, gain, hz) => texture(when, length, gain, hz, 'music'));
+        (note, length, gain, wave, attack) => tone(when, frequency(note), length, gain, output, wave, undefined, attack),
+        (length, gain, hz) => texture(when, length, gain, hz, output));
     }
-    return;
+  } else {
+    const { chords, pattern, interval } = scores[track as keyof typeof scores];
+    while (nextBeat < horizon) {
+      const step = beat % pattern.length;
+      const notes = chords[Math.floor(beat / pattern.length) % chords.length];
+      if (step === 0) {
+        tone(nextBeat, frequency(notes[0] - 12), 1.4, .2, output);
+        tone(nextBeat, frequency(notes[1]), 1.1, .05, output);
+      }
+      const noteIndex = pattern[step];
+      if (noteIndex !== -1) {
+        const note = notes[noteIndex] + 12;
+        tone(nextBeat, frequency(note), .42, .11, output, 'triangle');
+        tone(nextBeat + .105, frequency(note), .26, .023, output);
+      }
+      if (track === 'physics' && step === 4) tone(nextBeat, frequency(notes[0] - 12), .52, .12, output);
+      nextBeat += interval;
+      beat++;
+    }
   }
-  const { chords, pattern, interval } = scores[track as keyof typeof scores];
-  while (nextBeat < time + .16) {
-    const step = beat % pattern.length;
-    const notes = chords[Math.floor(beat / pattern.length) % chords.length];
-    if (step === 0) {
-      tone(nextBeat, frequency(notes[0] - 12), 1.4, .2, 'music');
-      tone(nextBeat, frequency(notes[1]), 1.1, .05, 'music');
+  playback.nextBeat = nextBeat;
+  playback.beat = beat;
+}
+
+function scheduleMusic() {
+  if (!graph || graph.context.state !== 'running' || !levels.music || document.hidden) return;
+  const time = graph.context.currentTime;
+  const since = playingMusic?.playingSince;
+  if (playingMusic?.track === musicTrack && since !== undefined && time - since >= trackTimeLimit) shuffleMusicTrack();
+  if (playingMusic?.track !== musicTrack) playingMusic = startMusicTrack(graph, time);
+  playingMusic.playingSince ??= time + .015;
+  const horizon = time + .16;
+  scheduleTrack(playingMusic, time, horizon);
+  for (const [playback, end] of fadingMusic) {
+    if (time >= end) {
+      playback.output.disconnect();
+      fadingMusic.delete(playback);
+    } else {
+      scheduleTrack(playback, time, Math.min(horizon, end));
     }
-    const noteIndex = pattern[step];
-    if (noteIndex !== -1) {
-      const note = notes[noteIndex] + 12;
-      tone(nextBeat, frequency(note), .42, .11, 'music', 'triangle');
-      tone(nextBeat + .105, frequency(note), .26, .023, 'music');
-    }
-    if (musicTrack === 'physics' && step === 4) tone(nextBeat, frequency(notes[0] - 12), .52, .12, 'music');
-    nextBeat += interval;
-    beat++;
   }
 }
 
@@ -436,9 +473,12 @@ function syncMusic() {
   if (enabled && clock === undefined) {
     scheduleMusic();
     clock = window.setInterval(scheduleMusic, 75);
-  } else if (!enabled && clock !== undefined) {
-    window.clearInterval(clock);
-    clock = undefined;
+  } else if (!enabled) {
+    if (clock !== undefined) {
+      window.clearInterval(clock);
+      clock = undefined;
+    }
+    if (playingMusic) playingMusic.playingSince = undefined;
   }
 }
 
