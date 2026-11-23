@@ -6,29 +6,37 @@ export const unlockLevels = {
 type Unlock = keyof typeof unlockLevels;
 const facilities = ['broom', 'griddle', 'assembly', 'storage', 'table', 'tray'] as const;
 const guestCards = ['rush', 'patient', 'advertise', 'picky', 'simple'] as const;
-export type BurgerCard = typeof facilities[number] | typeof guestCards[number] | `unlock:${Unlock}` | `sold:${Unlock}`;
+const grillUpgrades = ['highHeat', 'autoGrill'] as const;
+export type BurgerCard = typeof facilities[number] | typeof guestCards[number] | typeof grillUpgrades[number] | `unlock:${Unlock}` | `sold:${Unlock}`;
 export const ordersPerLevel = 4;
+export const cardRerollLimit = 3;
 
 export const cardCount = (cards: readonly BurgerCard[], card: BurgerCard) => cards.filter(item => item === card).length;
+export const isGrillUpgrade = (card: string) => grillUpgrades.some(upgrade => upgrade === card);
+export const grillUpgradeAvailable = (cards: readonly BurgerCard[], card: BurgerCard) =>
+  !isGrillUpgrade(card) || !cards.some(isGrillUpgrade);
 
 export function supplyAvailable(cards: readonly BurgerCard[], item: string) {
   return cards.findLast(card => card === `unlock:${item}` || card === `sold:${item}`) === `unlock:${item}`;
 }
 
-export function cardOffers(cards: readonly BurgerCard[], level: number, roll: (index: number) => number) {
+export function cardOffers(cards: readonly BurgerCard[], level: number, roll: (index: number) => number, previous: readonly BurgerCard[] = []) {
   const pool: BurgerCard[] = [...guestCards.filter(card => (card !== 'picky' && card !== 'simple') || cardCount(cards, card) < 2),
-    ...facilities.filter(card => cardCount(cards, card) < (card === 'table' ? 6 : 1))];
+    ...facilities.filter(card => cardCount(cards, card) < (card === 'table' ? 6 : 1)),
+    ...grillUpgrades.filter(card => grillUpgradeAvailable(cards, card))];
   for (const item of Object.keys(unlockLevels) as Unlock[]) {
     if (level >= unlockLevels[item] && !supplyAvailable(cards, item)) pool.push(`unlock:${item}`);
     if (cards.includes(`unlock:${item}`)) pool.push(`sold:${item}`);
   }
-  return Array.from({ length: 3 }, (_, i) => pool.splice(Math.floor(roll(i) * pool.length), 1)[0]);
+  const candidates = pool.filter(card => !previous.includes(card));
+  return Array.from({ length: 3 }, (_, i) => candidates.splice(Math.floor(roll(i) * candidates.length), 1)[0]);
 }
 
 export function readBurgerCard(card: unknown): card is BurgerCard {
   if (typeof card !== 'string') return false;
   const [kind, item] = card.split(':');
   return (facilities as readonly string[]).includes(card) || (guestCards as readonly string[]).includes(card)
+    || isGrillUpgrade(card)
     || (kind === 'unlock' || kind === 'sold') && Boolean(item) && card === `${kind}:${item}` && Object.hasOwn(unlockLevels, item);
 }
 

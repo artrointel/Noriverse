@@ -4,6 +4,7 @@ import { fitBurgerPixels, orderBubbleSize } from '../apps/web/src/games/burger/l
 import { seatDiner, shiftDiner } from '../apps/web/src/games/burger/dining.ts';
 import { chooseBurgerDialogue } from '../apps/web/src/games/burger/dialogue.ts';
 import { cardModifiers, cardOffers } from '../apps/web/src/games/burger/cards.ts';
+import { burgerPressure, endlessOrderReward, endlessReserveMs } from '../apps/web/src/games/burger/balance.ts';
 import {
   advanceBurger, applyBurgerAction, burgerCounter, burgerDeadline, burgerEndlessOpeningMs, burgerLevel, burgerOutcome, burgerPreparationMs, burgerResigned, burgerSupplyUnlocked,
   createBurgerRound as createCardRound, cupAmount, cupSize, grillCount,
@@ -18,6 +19,7 @@ const opening = 100_000;
 const firstGuest = opening + burgerPreparationMs;
 function createBurgerRound(...args: Parameters<typeof createCardRound>) {
   const round = createCardRound(...args);
+  delete round.difficulty;
   for (const counter of Object.values(round.counters)) { delete counter!.cards; counter!.money = 0; }
   return round;
 }
@@ -180,7 +182,7 @@ test('a specific tray patty keeps its cooking grade and two patties fit into a f
 });
 
 test('endless awards time by difficulty and similarity; expired kitchens keep their sales', () => {
-  for (const minutes of [3, 5, 7, 10] as const) {
+  for (const minutes of [3, 5, 7, 10, 15] as const) {
     const timed = startBurgerRound(createBurgerRound(minutes, ['host', 'guest'], 3), opening);
     assert.equal(readBurgerRound(timed)?.opensAt, firstGuest);
     assert.equal(readBurgerRound(timed)?.end, firstGuest + minutes * 60_000);
@@ -651,6 +653,7 @@ test('card choice freezes a shared kitchen, survives reconnection and only one c
   assert.equal(nextBurgerAt(round), undefined);
   assert.equal(applyBurgerAction(round, 'guest', { type: 'flip', slot: 0 }, now + 2000), undefined);
   const oldEnd = round.end;
+  const oldSalesStart = board().salesStartedAt!;
   const oldHeat = board().grill[0]!.heatAt;
   round = readBurgerRound(JSON.parse(JSON.stringify(round)))!;
   assert.ok(round);
@@ -659,6 +662,7 @@ test('card choice freezes a shared kitchen, survives reconnection and only one c
   assert.deepEqual(board().cards, [draft.offers[0]]);
   assert.equal(board().draft, undefined);
   assert.equal(round.end, oldEnd + 5000);
+  assert.equal(board().salesStartedAt, oldSalesStart + 5000);
   assert.equal(board().grill[0]!.heatAt, oldHeat + 5000);
   assert.ok(readBurgerRound(JSON.parse(JSON.stringify(round))));
   assert.equal(applyBurgerAction(round, 'host', { type: 'choose-card', card: draft.offers[1], level: 2 }, now + 5001), undefined);
@@ -673,7 +677,7 @@ test('drafting sold-out stock rerolls waiting orders and another kitchen keeps i
   host.draft = { at: firstGuest, offers: ['sold:cheese', 'broom', 'patient'] };
   host.orders[0].layers.push({ ingredient: 'cheese' });
   const until = host.orders[0].until;
-  const next = firstGuest + 24_000;
+  const next = firstGuest + 16_000;
   assert.equal(nextBurgerAt(round), next);
   round = advanceBurger(round, next)!;
   assert.equal(round.counters.guest!.orders.length, 2);
@@ -685,6 +689,94 @@ test('drafting sold-out stock rerolls waiting orders and another kitchen keeps i
   assert.equal(replacement.until, until + next + 1 - firstGuest);
   assert.equal(replacement.reorderedAt, next + 1);
   assert.equal(round.counters.guest!.playUntil, firstGuest + 300_000);
+});
+
+function grillUpgradeDraft() {
+  let round = startBurgerRound(createCardRound(5, ['host', 'guest'], 11, 'coop'), opening);
+  round = action(round, { type: 'grill', kind: 'beef', slot: 0 }, firstGuest - 4900);
+  round = advanceBurger(round, firstGuest)!;
+  const board = round.counters.host!;
+  board.grill[0]!.speed = 1000;
+  board.served = 4;
+  board.draft = { at: firstGuest, offers: ['highHeat', 'autoGrill', 'griddle'] };
+  return round;
+}
+
+test('a shared kitchen spends at most three rerolls across drafts and reconnects', () => {
+  let round = grillUpgradeDraft();
+  const firstDraft = round.counters.host!.draft!;
+  const reroll = { type: 'reroll-cards', level: 2, rerollsUsed: 0 } as const;
+  round = applyBurgerAction(round, 'guest', reroll, firstGuest + 1200)!;
+  let board = round.counters.host!;
+  assert.equal(board.rerollsUsed, 1);
+  assert.equal(board.draft!.at, firstDraft.at);
+  assert.equal(new Set(board.draft!.offers).size, 3);
+  assert(board.draft!.offers.every(card => !firstDraft.offers.includes(card)));
+  assert.equal(applyBurgerAction(round, 'host', reroll, firstGuest + 1300), undefined);
+  const card = board.draft!.offers[0];
+  assert.equal(applyBurgerAction(round, 'host', { type: 'choose-card', level: 2, card, rerollsUsed: 0 }, firstGuest + 1300), undefined);
+  assert.equal(round.end, firstGuest + 300_000);
+
+  const restored = readBurgerRound(JSON.parse(JSON.stringify(shiftBurgerClock(round, 2000))))!;
+  assert.equal(restored.counters.host!.rerollsUsed, 1);
+  assert.deepEqual(restored.counters.host!.draft!.offers, board.draft!.offers);
+  round = action(restored, { type: 'choose-card', level: 2, card, rerollsUsed: 1 }, firstGuest + 5000);
+  assert.equal(round.end, firstGuest + 305_000);
+  assert.equal(round.counters.host!.rerollsUsed, 1);
+  board = round.counters.host!;
+  board.served = 8;
+  board.draft = { at: firstGuest + 5100, offers: cardOffers(board.cards!, 3, index => index / 3) };
+  assert.equal(applyBurgerAction(round, 'guest', { ...reroll, rerollsUsed: 1 }, firstGuest + 6200), undefined);
+  round = action(round, { ...reroll, level: 3, rerollsUsed: 1 }, firstGuest + 6200);
+  round = action(round, { ...reroll, level: 3, rerollsUsed: 2 }, firstGuest + 7300);
+  assert.equal(round.counters.host!.rerollsUsed, 3);
+  assert.equal(applyBurgerAction(round, 'guest', { ...reroll, level: 3, rerollsUsed: 3 }, firstGuest + 8400), undefined);
+  assert(readBurgerRound(JSON.parse(JSON.stringify(round))));
+  const invalid = structuredClone(round);
+  invalid.counters.host!.rerollsUsed = 4;
+  assert.equal(readBurgerRound(invalid), undefined);
+  assert.equal(createCardRound(5, ['host', 'guest']).counters.host!.rerollsUsed ?? 0, 0);
+});
+
+test('high heat applies the 30% increase from selection and preserves earlier cooking', () => {
+  let round = grillUpgradeDraft();
+  const selectedAt = firstGuest + 5000;
+  round = applyBurgerAction(round, 'guest', { type: 'choose-card', card: 'highHeat', level: 2 }, selectedAt)!;
+  const board = round.counters.host!;
+  assert.deepEqual(board.cards, ['highHeat']);
+  assert.deepEqual(pattyFaces(board.grill[0]!, selectedAt, board), [70, 0]);
+  const cookAt = selectedAt + 3500;
+  assert.deepEqual(pattyFaces(board.grill[0]!, cookAt, board), [135, 0]);
+  round = action(round, { type: 'flip', slot: 0, side: 0 }, cookAt);
+  round = action(round, { type: 'hold', slot: 0 }, cookAt + 3500);
+  assert.deepEqual(round.counters.host!.tray[0].faces, [135, 65]);
+  assert(readBurgerRound(JSON.parse(JSON.stringify(round))));
+
+  const invalid = structuredClone(round);
+  invalid.counters.host!.served = 8;
+  invalid.counters.host!.cards!.push('autoGrill');
+  assert.equal(readBurgerRound(invalid), undefined);
+});
+
+test('automatic grilling flips a hot side on the shared kitchen clock and does not bounce between hot sides', () => {
+  let round = grillUpgradeDraft();
+  round = applyBurgerAction(round, 'guest', { type: 'choose-card', card: 'autoGrill', level: 2 }, firstGuest)!;
+  const nextGuestAt = round.counters.host!.next;
+  const flipAt = firstGuest + 7700;
+  assert.equal(nextBurgerAt(round), flipAt);
+  assert.equal(advanceBurger(round, flipAt - 1), undefined);
+  const shifted = shiftBurgerClock(round, 5000);
+  assert.equal(nextBurgerAt(shifted), flipAt + 5000);
+  round = advanceBurger(round, flipAt + 1400)!;
+  const patty = round.counters.host!.grill[0]!;
+  assert.equal(patty.heatAt, flipAt);
+  assert.equal(patty.side, 1);
+  assert.deepEqual(pattyFaces(patty, flipAt + 1400), [180, 20]);
+  assert.equal(nextBurgerAt(round), nextGuestAt);
+  round = advanceBurger(round, flipAt + 15_000)!;
+  assert.equal(round.counters.host!.grill[0]!.side, 1);
+  assert.deepEqual(pattyFaces(round.counters.host!.grill[0]!, flipAt + 15_000), [180, 200]);
+  assert(readBurgerRound(JSON.parse(JSON.stringify(round))));
 });
 
 test('new kitchens charge for taking and discarding patties and eliminate a bankrupt kitchen', () => {
@@ -708,6 +800,37 @@ test('card effects stack with caps and eligible supplies return after a sellout'
   const offered = new Set(Array.from({ length: 100 }, (_, index) => cardOffers(cards, 3, () => index / 100)).flat());
   assert(offered.has('unlock:cheese'));
   assert(offered.has('sold:cheese'));
+  assert(offered.has('highHeat') && offered.has('autoGrill'));
   assert(!offered.has('picky'));
   assert(!offered.has('unlock:chicken'));
+  for (const upgrade of ['highHeat', 'autoGrill'] as const) {
+    const remaining = new Set(Array.from({ length: 100 }, (_, index) => cardOffers([upgrade], 3, () => index / 100)).flat());
+    assert(!remaining.has('highHeat') && !remaining.has('autoGrill'));
+    assert(remaining.has('griddle'));
+  }
+});
+
+test('new games scale guest pressure and retain the selected difficulty through room snapshots', () => {
+  const sceneSettings = { ...defaultMatchSettings, burger: 15 as const };
+  for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+    const round = startBurgerRound(createCardRound(15, ['host', 'guest'], 4, 'race', difficulty), opening);
+    const first = advanceBurger(round, firstGuest)!;
+    const pressure = { easy: .7, normal: 1, hard: 1.3 }[difficulty];
+    assert.equal(nextBurgerAt(first), firstGuest + Math.round(16_000 / pressure));
+    const firstOrder = first.counters.host!.orders[0];
+    const baselinePatience = (firstOrder.until - firstOrder.at) * pressure;
+    assert(baselinePatience >= 128_998 && baselinePatience <= 139_051);
+    const lobby = lobbyMatch('burger', { ...sceneSettings, burgerDifficulty: difficulty });
+    const snapshot = { ...lobby, type: 'snapshot', startedAt: opening, burger: first };
+    assert.equal(readMatchSnapshot(snapshot, blankMatch, firstGuest)?.burger?.difficulty, difficulty);
+    assert.equal(readMatchSnapshot({ ...snapshot, burgerDifficulty: 'turbo' }, blankMatch, firstGuest), undefined);
+  }
+});
+
+test('endless builds pressure over active time and limits the reserve without forcing a cutoff', () => {
+  assert.equal(burgerPressure('normal', 9 * 60_000), 1);
+  assert(burgerPressure('normal', 30 * 60_000) > 1.7);
+  assert.equal(endlessOrderReward(1, 1, 0, endlessReserveMs - 1500, 'normal'), 1500);
+  assert(endlessOrderReward(8, .95, 31 * 60_000, 0, 'normal') < endlessOrderReward(8, .95, 20 * 60_000, 0, 'normal'));
+  assert(endlessOrderReward(8, .95, 31 * 60_000, 0, 'normal') > 0);
 });

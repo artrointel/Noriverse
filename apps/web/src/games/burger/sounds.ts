@@ -19,6 +19,7 @@ export function kitchenActionSound(action: BurgerAction) {
       case 'hold': return 'plate';
       case 'pour': return 'knob';
       case 'choose-card': return 'plate';
+      case 'reroll-cards': return 'paper';
       case 'serve': return 'bell';
       case 'move': case 'return-burger': case 'return-drink': return action.to === 'trash' ? 'toss' : 'plate';
       case 'discard': case 'discard-stored': case 'discard-tray': case 'shoo': return 'toss';

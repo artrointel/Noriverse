@@ -8,6 +8,8 @@ import {
   nextBurgerAt, resignBurger, startBurgerRound,
 } from '../games/burger/rules.ts';
 import type { BurgerAction, BurgerMinutes, BurgerRound } from '../games/burger/rules.ts';
+import { defaultBurgerDifficulty } from '../games/burger/balance.ts';
+import type { BurgerDifficulty } from '../games/burger/balance.ts';
 import type { RenderResolution } from '../games/render-resolution.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
 import { RoomPlayerAvatar } from './avatar.tsx';
@@ -21,20 +23,22 @@ import { formatPlayTime } from './game-time.tsx';
 import { useRoundEnd, useRoundStart } from './use-round-cues.ts';
 
 type BurgerRoom = ReturnType<typeof useRoomBoard> & { role: Role; burger: BurgerRound };
-const newPractice = (minutes: BurgerMinutes) => ({ id: crypto.randomUUID(), round: createBurgerRound(minutes, ['host']), finishedAt: 0 });
+const newPractice = (minutes: BurgerMinutes, difficulty: BurgerDifficulty) => ({
+  id: crypto.randomUUID(), round: createBurgerRound(minutes, ['host'], undefined, 'race', difficulty), finishedAt: 0,
+});
 const labelKeys = ['time', 'money', 'combo', 'fever', 'wrap', 'wait', 'prepare', 'order', 'chat', 'chatAlt', 'impatient',
   'perfect', 'perfectAlt', 'mixed', 'mixedAlt', 'poor', 'burnt', 'raw', 'left', 'spill', 'rare', 'medium', 'well', 'charred', 'undercooked',
   'beef', 'chicken', 'tray', 'delighted', 'tip', 'shooLeft0', 'shooLeft1', 'shooLeft2', 'shooStay0', 'shooStay1', 'shooStay2', 'soldOut'];
 
-export function BurgerPage({ room, minutes, ownProfile, navigate, dark, antialias, resolution, onResolution, onAntialias,
+export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, dark, antialias, resolution, onResolution, onAntialias,
   showTouches, onTouchDisplay, touchStyle, record }: {
-  room?: BurgerRoom; minutes: BurgerMinutes; ownProfile?: ProfileSummary; navigate: Navigate; dark: boolean; antialias: boolean;
+  room?: BurgerRoom; minutes: BurgerMinutes; difficulty: BurgerDifficulty; ownProfile?: ProfileSummary; navigate: Navigate; dark: boolean; antialias: boolean;
   resolution: RenderResolution; onResolution: (value: RenderResolution) => void; onAntialias: (value: boolean) => void;
   showTouches: boolean; onTouchDisplay: (value: boolean) => void; touchStyle: TouchEffect;
   record?: (report: MatchReport) => Promise<boolean>;
 }) {
   const { t, i18n } = useTranslation();
-  const [practice, setPractice] = useState(() => newPractice(minutes));
+  const [practice, setPractice] = useState(() => newPractice(minutes, difficulty));
   const [closedResult, setClosedResult] = useState('');
   const round = room?.burger ?? practice.round;
   const id = room?.matchId ?? practice.id;
@@ -63,7 +67,8 @@ export function BurgerPage({ room, minutes, ownProfile, navigate, dark, antialia
   }, [Boolean(room), deadline, id, practice.finishedAt]);
 
   function action(input: BurgerAction) {
-    if (!canInteract || Boolean(counter.draft) !== (input.type === 'choose-card')) return false;
+    const draftAction = input.type === 'choose-card' || input.type === 'reroll-cards';
+    if (!canInteract || Boolean(counter.draft) !== draftAction) return false;
     if (room) return room.burgerAction(input);
     const now = Date.now();
     const next = applyBurgerAction(practice.round, 'host', input, now);
@@ -88,8 +93,9 @@ export function BurgerPage({ room, minutes, ownProfile, navigate, dark, antialia
   const labels = useMemo(() => Object.fromEntries(labelKeys.map(key => [key,
     t(key === 'money' && cooperative ? 'burgerTeamSales' : 'burgerLabel_' + key)])), [t, cooperative]);
   const outcome = room ? burgerOutcome(round, role) : 'practice';
+  const endlessTimeout = round.minutes === 'endless' && counter.closed && (!room || cooperative);
   const { pending: resultPending, ending } = useRoundEnd(id, !finishedAt ? undefined
-    : outcome === 'win' ? 'victory' : outcome === 'loss' || counter.bankrupt ? 'defeat' : 'finished');
+    : outcome === 'win' ? 'victory' : outcome === 'loss' || counter.bankrupt || endlessTimeout ? 'defeat' : 'finished');
   const startedAt = room?.playStartedAt ?? round.start;
   const report = useMemo<MatchReport | undefined>(() => {
     if (!finishedAt) return;
@@ -98,7 +104,8 @@ export function BurgerPage({ room, minutes, ownProfile, navigate, dark, antialia
     if (outcome) return { id, game: 'burger', mode: room ? 'online' : 'practice', outcome, seconds };
   }, [id, Boolean(room), cooperative, counter.money, outcome, finishedAt, startedAt]);
   const mode = cooperative ? 'coop' : room ? 'burgerRace' : 'practice';
-  const status = finishedAt ? t(counter.bankrupt ? 'burgerBankrupt' : room && outcome ? 'outcome_' + outcome : resigned ? 'gameFinished' : 'burgerClosed')
+  const status = finishedAt ? t(counter.bankrupt ? 'burgerBankrupt' : endlessTimeout ? 'burgerEndlessTimeout'
+    : room && outcome ? 'outcome_' + outcome : resigned ? 'gameFinished' : 'burgerClosed')
     : !roundStart.started ? t('roundWaiting') : resigned || counter.closed ? t('burgerWaiting') : t(mode);
   const players = round.players.map((player, index) => {
     const participant = room?.participants.find(person => person.role === player);
@@ -127,7 +134,7 @@ export function BurgerPage({ room, minutes, ownProfile, navigate, dark, antialia
     room={room && { canRematch: room.role === 'host' && room.canStart, returnToLobby: room.returnToLobby,
       reconnect: room.needsReconnect ? room.reconnect : undefined,
       request: room.role !== 'host' && room.state === 'connected' ? room.requestRematch : undefined, notice: room.rematchNotice }}
-    rematch={() => { if (room) room.rematch(); else setPractice(newPractice(minutes)); }}
+    rematch={() => { if (room) room.rematch(); else setPractice(newPractice(minutes, difficulty)); }}
     back={room ? '/room' : '/games'} navigate={navigate} />;
   const pausedAt = room?.recoveryAt || 0;
   const clockOffset = room?.displayStart ? room.displayStart - round.start : 0;
@@ -146,7 +153,8 @@ export function BurgerPage({ room, minutes, ownProfile, navigate, dark, antialia
       <MatchStage id="burger" matchId={id} antialias={antialias} resolution={resolution} onResolution={onResolution} onAntialias={onAntialias} landscapeFullscreen
         onReady={roundStart.ready} beginsAt={roundStart.beginsAt} ending={ending}
         stageContext={{ mode: t(mode),
-          map: round.minutes === 'endless' ? t('burgerEndless') : formatPlayTime(round.minutes * 60) }}
+          map: (round.minutes === 'endless' ? t('burgerEndless') : formatPlayTime(round.minutes * 60)) + ' · '
+            + t('burgerDifficulty_' + (round.difficulty ?? defaultBurgerDifficulty)) }}
         endAction={!finishedAt && !resigned && <EndRoundAction key={id} online={Boolean(room)} disabled={!active} end={end} />}
         info={<><strong>{status}</strong>{stats}</>} infoStatus={status} yourTurn={false}
         result={result} resultVisible={resultVisible} resultPending={resultPending} onShowResult={() => setClosedResult('')}
@@ -160,6 +168,8 @@ export function BurgerPage({ room, minutes, ownProfile, navigate, dark, antialia
             cardHud: { showDraft: canInteract && !room?.recoveryAt && Boolean(counter.draft), describe: cardDetails,
               title: t('burgerLevelUp', { level: burgerRank(counter.served) }),
               instruction: t(cooperative ? 'burgerDraftCoop' : 'burgerDraftChoose'),
+              lockedInstruction: t('burgerDraftLocked'),
+              reroll: (remaining, limit) => t('burgerDraftReroll', { remaining, limit }),
               history: t('burgerCardHistory'), empty: t('burgerNoCards') },
             rivals: cooperative ? [] : players.filter(player => player.player !== role)
               .map(({ name, data }) => ({ name, money: data.money })) } }} />

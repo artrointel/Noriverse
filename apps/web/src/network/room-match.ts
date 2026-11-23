@@ -27,6 +27,8 @@ import { moleOutcome, readMoleRound, readMoleSettings, shiftMoleClock } from '..
 import type { MoleRound, MoleSettings } from '../games/mole/rules.ts';
 import { burgerCounter, burgerOutcome, burgerResigned, readBurgerMinutes, readBurgerMode, readBurgerRound, shiftBurgerClock } from '../games/burger/rules.ts';
 import type { BurgerMinutes, BurgerMode, BurgerRound } from '../games/burger/rules.ts';
+import { defaultBurgerDifficulty, readBurgerDifficulty } from '../games/burger/balance.ts';
+import type { BurgerDifficulty } from '../games/burger/balance.ts';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport } from '../../../../packages/protocol/profile.ts';
 
@@ -38,7 +40,7 @@ export type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: n
   liarConfig?: LiarSettings; liar?: LiarView | LiarRound;
   slime?: OrbitRound;
   moleConfig?: MoleSettings; mole?: MoleRound;
-  burgerMinutes?: BurgerMinutes; burgerMode?: BurgerMode; burger?: BurgerRound;
+  burgerMinutes?: BurgerMinutes; burgerMode?: BurgerMode; burgerDifficulty?: BurgerDifficulty; burger?: BurgerRound;
   mockSeats?: Role[];
   turnLimit: TurnLimit; deadline: number; beginsAt?: number; clockOffset?: number; pausedAt?: number; pausedMs?: number;
   disconnectedSeats?: Role[] };
@@ -52,6 +54,7 @@ export function lobbyMatch(game: RoomGame, settings: MatchSettings): Match {
     moleConfig: game === 'mole' ? mole : undefined,
     burgerMinutes: game === 'burger' ? settings.burger : undefined,
     burgerMode: game === 'burger' ? settings.burgerMode : undefined,
+    burgerDifficulty: game === 'burger' ? settings.burgerDifficulty : undefined,
     puzzleConfig: game === 'memory' ? memory : game === 'sichuan' ? puzzle : undefined, flickSettings: game === 'physics' ? flick : undefined,
     physics: game === 'physics' ? createFlickRound(flick) : undefined };
 }
@@ -203,10 +206,13 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
   const moleConfig = game === 'mole' && 'moleConfig' in raw ? readMoleSettings(raw.moleConfig) : undefined;
   const burgerMinutes = game === 'burger' && 'burgerMinutes' in raw ? readBurgerMinutes(raw.burgerMinutes) : undefined;
   const burgerMode = game === 'burger' ? ('burgerMode' in raw && raw.burgerMode !== undefined ? readBurgerMode(raw.burgerMode) : 'race') : undefined;
+  const burgerDifficulty = game === 'burger' ? ('burgerDifficulty' in raw && raw.burgerDifficulty !== undefined
+    ? readBurgerDifficulty(raw.burgerDifficulty) : defaultBurgerDifficulty) : undefined;
   const burger = burgerMinutes && 'burger' in raw ? readBurgerRound(raw.burger) : undefined;
-  if (game === 'burger' && (!burgerMinutes || !burgerMode || Boolean(raw.startedAt) !== Boolean(burger)
+  if (game === 'burger' && (!burgerMinutes || !burgerMode || !burgerDifficulty || Boolean(raw.startedAt) !== Boolean(burger)
     || Boolean(raw.finishedAt) !== Boolean(burger?.winners) || (burger && (burger.minutes !== burgerMinutes
       || (burger.mode ?? 'race') !== burgerMode
+      || (burger.difficulty ?? defaultBurgerDifficulty) !== burgerDifficulty
       || mockSeats?.some(role => !burger.players.includes(role)))))) return;
   const mole = moleConfig && 'mole' in raw ? readMoleRound(raw.mole) : undefined;
   if (game === 'mole' && (!moleConfig || Boolean(raw.startedAt) !== Boolean(mole) || Boolean(raw.finishedAt) !== Boolean(mole?.winners)
@@ -263,7 +269,7 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
   const next: Match = { id: raw.id, game, hostColor: nextHostColor, startedAt: raw.startedAt, finishedAt: raw.finishedAt, allowDoubleThree: raw.allowDoubleThree,
     overline: nextOverline, history, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, timeoutPending: pending,
     turnLimit: nextLimit, deadline: nextDeadlineAt, beginsAt, clockOffset, pausedAt, pausedMs, disconnectedSeats,
-    puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, slime, moleConfig, mole, burgerMinutes, burgerMode, burger, flickSettings, physicsSeats, mockSeats };
+    puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, slime, moleConfig, mole, burgerMinutes, burgerMode, burgerDifficulty, burger, flickSettings, physicsSeats, mockSeats };
   if (pending && (!nextLimit || pending.color !== matchTurn(next))) return;
   if (disconnectedSeats?.some(role => !inRound(next, role))) return;
   if (followsSnapshot(current, next)) return next;

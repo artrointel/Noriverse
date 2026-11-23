@@ -9,9 +9,9 @@ import { createFootprintReader, createKitchenArt, cupTexture, kitchenShade, patt
 import { breads, burgerFacility, burgerPreparationMs, burgerRank, burgerSerial, burgerShooAnimationMs, burgerStorageSize, burgerSupplyUnlocked, burgerTables, burgerUnlockLevel, cupAmount, cupOverflow, cupSize,
   drinkKinds, grillColumns, grillCount, grillRows, ingredients, pattyAt, pattyDoneness, pattyFaces, pattyFrame, pattyKinds, storedPattyFrame } from './rules.ts';
 import type { Bread, BurgerAction, Counter, Ingredient, Order, PattyKind, PattyLocation } from './rules.ts';
-import { ordersPerLevel } from './cards.ts';
+import { cardRerollLimit, ordersPerLevel } from './cards.ts';
 import { cardDeck, cardsPerPage, drawCardHud, loadCardArt } from './card-hud.ts';
-import type { CardHud } from './card-hud.ts';
+import type { CardHit, CardHud } from './card-hud.ts';
 import shop from '../../assets/burger/shop.png';
 import food from '../../assets/burger/food.webp';
 import patties from '../../assets/burger/patties.webp';
@@ -27,13 +27,14 @@ import reactions from '../../assets/burger/reactions.webp';
 import broom from '../../assets/burger/broom.webp';
 import spatula from '../../assets/burger/spatula.webp';
 import rawBins from '../../assets/burger/raw-patty-bins.webp';
+import counterWithoutRack from '../../assets/burger/counter-without-rack.webp';
 
 type Item = Bread | Ingredient | 'paper';
 export type BurgerView = { id: string; seed: number; counter: Counter; start: number; opensAt?: number; end: number; clockOffset: number; finishedAt: number; pausedAt: number;
   active: boolean; action: (action: BurgerAction) => boolean; cardHud?: CardHud; labels: Record<string, string>; language?: string;
   rivals: { name: string; money: number }[] };
 type Zone = { x: number; y: number; w: number; h: number };
-type Hit = { type: 'item' | 'grill' | 'burger' | 'tray' | 'tray-choice' | 'guest' | 'nozzle' | 'cup' | 'service' | 'staged-burger' | 'staged-drink' | 'submit' | 'storage' | 'trash' | 'cards' | 'bubble' | 'card-choice' | 'card-page' | 'card-close';
+type Hit = { type: 'item' | 'grill' | 'burger' | 'tray' | 'tray-choice' | 'guest' | 'nozzle' | 'cup' | 'service' | 'staged-burger' | 'staged-drink' | 'submit' | 'storage' | 'trash' | 'cards' | 'bubble' | CardHit;
   index: number; zone: Zone };
 type Sprite = { texture: string; frame?: number };
 type OilGlint = { at: number; life: number; gap: number; u: number; v: number; angle: number; travel: number; bend: number; size: number; shine: number };
@@ -69,6 +70,7 @@ const drinkZone = (i: number): Zone => ({ x: 347 + i * 22, y: 249, w: 22, h: 22 
 const nozzleZone = (i: number): Zone => ({ ...drinkZone(i), y: 219, h: 30 });
 const trashZone = { x: 8, y: 282, w: 62, h: 35 };
 const rackZone = { x: 85, y: 289, w: 385, h: 18 };
+const counterWithoutRackZone = { x: 76, y: 286, w: 404, h: 26 };
 const storageZone = (i: number): Zone => ({
   x: rackZone.x + i * rackZone.w / burgerStorageSize, y: rackZone.y,
   w: rackZone.w / burgerStorageSize, h: rackZone.h,
@@ -94,6 +96,8 @@ const cookFrame = { rare: 1, medium: 2, well: 3 };
 const trayPanel = { x: 100, y: 51, w: 280, h: 222 };
 const pickerTrash = { x: 115, y: 239, w: 35, h: 27 };
 const grillTapWindow = 260;
+const bubbleExpansionMs = 3000;
+const cardChoiceDelayMs = 1000;
 const flightMs = 180;
 const ingredientArt = (item: Item, stack: Counter['burgers'][number]) =>
   (item === 'bun' || item === 'rice') && stack.bread === item && stack.layers.some(layer => layer.patty)
@@ -122,8 +126,9 @@ export const burgerScene: SceneFactory = view => {
   let feverTime = 0, feverGlow = 0, seenFever = 0;
   let balloons: Phaser.GameObjects.Graphics;
   let enlargedBalloon: Phaser.GameObjects.Graphics;
-  let expandedBubble: number | undefined;
+  let expandedBubble: { id: number; expiresAt: number } | undefined;
   let cardInk: Phaser.GameObjects.Graphics;
+  let visibleDraft: { roundId: string; at: number; rerollsUsed: number; selectableAt: number } | undefined;
   let historyPage: number | undefined;
   let pickerInk: Phaser.GameObjects.Graphics;
   let trayPicker: { kind: PattyKind; slot: number; at: number } | undefined;
@@ -288,9 +293,29 @@ export const burgerScene: SceneFactory = view => {
     pending = undefined;
   }
 
+  function silence() {
+    cancelTap();
+    stopSizzle?.();
+    stopPour?.();
+    stopSizzle = stopPour = undefined;
+  }
+
+  function cardChoiceReady(data: BurgerView) {
+    return Boolean(data.cardHud?.showDraft && visibleDraft && visibleDraft.roundId === data.id
+      && visibleDraft.at === data.counter.draft?.at && visibleDraft.rerollsUsed === (data.counter.rerollsUsed ?? 0)
+      && performance.now() >= visibleDraft.selectableAt);
+  }
+
   function chooseCard(data: BurgerView, index: number) {
-    const card = data.cardHud?.showDraft ? data.counter.draft?.offers[index] : undefined;
-    if (card) apply({ type: 'choose-card', card, level: burgerRank(data.counter.served) });
+    const card = cardChoiceReady(data) ? data.counter.draft?.offers[index] : undefined;
+    if (card) apply({ type: 'choose-card', card, level: burgerRank(data.counter.served), rerollsUsed: data.counter.rerollsUsed ?? 0 });
+  }
+
+  function rerollCards(data: BurgerView) {
+    const rerollsUsed = data.counter.rerollsUsed ?? 0;
+    if (cardChoiceReady(data) && rerollsUsed < cardRerollLimit) {
+      apply({ type: 'reroll-cards', level: burgerRank(data.counter.served), rerollsUsed });
+    }
   }
 
   function pageCards(data: BurgerView, delta: number) {
@@ -321,18 +346,22 @@ export const burgerScene: SceneFactory = view => {
       case 'card-close': historyPage = undefined; break;
       case 'card-page': pageCards(data, hit.index); break;
       case 'card-choice': chooseCard(data, hit.index); break;
-      case 'bubble': expandedBubble = expandedBubble === hit.index ? undefined : hit.index; kitchenSound('touch', .24); break;
+      case 'card-reroll': rerollCards(data); break;
+      case 'bubble':
+        expandedBubble = expandedBubble?.id === hit.index ? undefined : { id: hit.index, expiresAt: performance.now() + bubbleExpansionMs };
+        kitchenSound('touch', .24);
+        break;
       case 'item': ingredient(menu[hit.index], slot, undefined, hit.zone); break;
       case 'grill': {
         const previousPatty = data.counter.grill[hit.index];
         if (!previousPatty || (serial !== undefined && previousPatty.serial !== serial)) break;
-        function discardBurnt(patty: NonNullable<typeof previousPatty>, now: number) {
-          if (pattyFrame(pattyFaces(patty, now), patty.side) !== 4) return false;
+        function discardBurnt(patty: NonNullable<typeof previousPatty>, now: number, counter: Counter) {
+          if (pattyFrame(pattyFaces(patty, now, counter), patty.side) !== 4) return false;
           spatulaMotion = undefined;
           if (apply({ type: 'move', from: hit.index, to: 'trash', serial: patty.serial })) tossPatty(patty.kind, hit.zone, now, hit.index, patty.serial);
           return true;
         }
-        if (discardBurnt(previousPatty, progress(data))) break;
+        if (discardBurnt(previousPatty, progress(data), data.counter)) break;
         if (double) {
           if (apply({ type: 'flip', slot: hit.index, side: previousPatty.side, serial: previousPatty.serial })) {
             spatulaMotion = { zone: hit.zone, at: progress(data), phase: 'flip' };
@@ -346,8 +375,8 @@ export const burgerScene: SceneFactory = view => {
             const patty = current.counter.grill[hit.index];
             if (!patty || patty.serial !== previousPatty.serial) return;
             const now = progress(current);
-            if (discardBurnt(patty, now)) return;
-            const faces = pattyFaces(patty, now);
+            if (discardBurnt(patty, now, current.counter)) return;
+            const faces = pattyFaces(patty, now, current.counter);
             const count = current.counter.tray.filter(item => item.kind === patty.kind).length;
             if (!pattyDoneness(faces) || !apply({ type: 'hold', slot: hit.index, serial: patty.serial }) || reduced.matches) return;
             const kindIndex = pattyKinds.indexOf(patty.kind);
@@ -406,13 +435,7 @@ export const burgerScene: SceneFactory = view => {
       }
       case 'tray': case 'grill':
         if (to?.type === 'grill' || to?.type === 'tray') apply({ type: 'move', from: location(from), to: location(to), serial });
-        else if (to?.type === 'burger') {
-          const viewData = view().burger;
-          const kind = pattyKinds[from.index];
-          if (viewData && from.type === 'tray' && viewData.counter.tray.filter(item => item.kind === kind).length > 1) {
-            trayPicker = { kind, slot: to.index, at: progress(viewData) };
-          } else apply({ type: 'stack', from: location(from), slot: to.index, serial });
-        }
+        else if (to?.type === 'burger') apply({ type: 'stack', from: location(from), slot: to.index, serial });
         else if (inTrash) apply({ type: 'move', from: location(from), to: 'trash', serial });
         break;
       case 'burger':
@@ -496,7 +519,7 @@ export const burgerScene: SceneFactory = view => {
   }
 
   function paintBubble(anchor: number, w: number, h: number, bottom = 123, id?: number) {
-    const expanded = id !== undefined && id === expandedBubble;
+    const expanded = id !== undefined && id === expandedBubble?.id;
     const scale = expanded ? 2 : 1;
     w *= scale; h *= scale;
     const x = expanded ? Phaser.Math.Clamp(anchor, w / 2 + 3, width - w / 2 - 3) : anchor;
@@ -788,7 +811,8 @@ export const burgerScene: SceneFactory = view => {
       spot('tray', index, zone);
       const stack = counter.tray.filter(patty => patty.kind === kind && !flights.some(flight =>
         flight.slot === -2 && !flight.trash && flight.serial !== undefined && flight.serial === patty.serial));
-      const settled = Math.max(0, stack.length - Number(Boolean(isDragging('tray', index))));
+      const draggingTop = isDragging('tray', index) && stack.at(-1)?.serial === gesture?.serial;
+      const settled = Math.max(0, stack.length - Number(Boolean(draggingTop)));
       const last = stack.slice(Math.max(0, settled - shownTrayPatties), settled);
       for (const [i, patty] of last.entries()) {
         const cooked = storedPattyFrame(patty.faces);
@@ -804,7 +828,7 @@ export const burgerScene: SceneFactory = view => {
       const patty = counter.grill[i];
       spot('grill', i, zone);
       if (!patty) { grillBurns.delete(i); grillOil.delete(i); return; }
-      const faces = pattyFaces(patty, now);
+      const faces = pattyFaces(patty, now, counter);
       const frame = pattyFrame(faces, patty.side);
       const burnt = frame === 4;
       const previous = grillBurns.get(i);
@@ -903,7 +927,8 @@ export const burgerScene: SceneFactory = view => {
   function renderStorage(scene: Phaser.Scene, { counter }: BurgerView) {
     spot('trash', 0, trashZone);
     if (!burgerFacility(counter, 'storage')) {
-      ink.fillStyle(0x231829, .6).fillRoundedRect(rackZone.x, rackZone.y - 5, rackZone.w, 30, 4);
+      const { x, y } = center(counterWithoutRackZone);
+      picture(scene, { texture: 'burger-counter-without-rack' }, x, y, counterWithoutRackZone.w, counterWithoutRackZone.h, -3, 1, 0, true);
       return;
     }
     for (let index = 0; index < burgerStorageSize; index++) {
@@ -940,9 +965,14 @@ export const burgerScene: SceneFactory = view => {
 
   function renderCards(scene: Phaser.Scene, data: BurgerView) {
     const copy = data.cardHud;
-    if (!copy) return;
-    const offers = copy.showDraft ? data.counter.draft?.offers : undefined;
-    if (!offers && historyPage === undefined) return;
+    const draft = copy?.showDraft ? data.counter.draft : undefined;
+    const rerollsUsed = data.counter.rerollsUsed ?? 0;
+    if (!draft) visibleDraft = undefined;
+    else if (visibleDraft?.roundId !== data.id || visibleDraft.at !== draft.at || visibleDraft.rerollsUsed !== rerollsUsed) {
+      visibleDraft = { roundId: data.id, at: draft.at, rerollsUsed, selectableAt: performance.now() + cardChoiceDelayMs };
+      gesture = undefined;
+    }
+    if (!copy || (!draft && historyPage === undefined)) return;
     cardInk.fillStyle(0x211321, .78).fillRect(0, 0, width, burgerSceneHeight);
     layout = [];
     drawCardHud(copy, {
@@ -950,7 +980,7 @@ export const burgerScene: SceneFactory = view => {
       text: (copy, x, y, size, color, maxWidth) => label(scene, copy, x, y, size, color, maxWidth, 55),
       hit: spot,
       item: name => name === 'cola' || name === 'soda' ? prop(name) : foods(name as Item),
-    }, offers, data.counter.cards ?? [], historyPage ?? 0);
+    }, draft && { offers: draft.offers, canChoose: cardChoiceReady(data), rerollsLeft: cardRerollLimit - rerollsUsed }, data.counter.cards ?? [], historyPage ?? 0);
   }
 
   function renderTrayPicker(scene: Phaser.Scene, { counter, labels }: BurgerView, now: number) {
@@ -1035,7 +1065,7 @@ export const burgerScene: SceneFactory = view => {
     renderStorage(scene, data);
     drawSpatula(scene, now);
     if (gesture?.moved) {
-      const { from, x, y } = gesture;
+      const { from, x, y, serial } = gesture;
       const target = find(x, y);
       let sprite: Sprite | undefined;
       let size = { w: 39, h: 43 };
@@ -1043,8 +1073,8 @@ export const burgerScene: SceneFactory = view => {
       if (from.type === 'item') sprite = ingredientArt(menu[from.index], counter.burgers[target?.type === 'burger' ? target.index : slot]);
       if (from.type === 'grill' || from.type === 'tray') {
         const patty = pattyAt(counter, location(from));
-        if (patty) {
-          const frame = from.type === 'grill' ? pattyFrame(pattyFaces(patty, now), patty.side) : storedPattyFrame(patty.faces);
+        if (patty && patty.serial === serial) {
+          const frame = from.type === 'grill' ? pattyFrame(pattyFaces(patty, now, counter), patty.side) : storedPattyFrame(patty.faces);
           sprite = pattySprite(patty.kind, frame);
           size = from.type === 'grill' ? grillPattySize : trayPattySize;
           angle = 0;
@@ -1077,6 +1107,7 @@ export const burgerScene: SceneFactory = view => {
     },
     preload() {
       this.load.image('burger-shop', shop);
+      this.load.image('burger-counter-without-rack', counterWithoutRack);
       this.load.image('burger-lid', lid);
       this.load.image('burger-broom', broom);
       this.load.image('burger-spatula', spatula);
@@ -1106,15 +1137,15 @@ export const burgerScene: SceneFactory = view => {
       createKitchenArt(this);
       kitchenSound('burn')?.();
       kitchenSound('fever')?.();
-      for (const key of ['burger-shop', 'burger-food', 'burger-patties', 'burger-stations', 'burger-guests', 'burger-ingredient-icons',
+      for (const key of ['burger-shop', 'burger-counter-without-rack', 'burger-food', 'burger-patties', 'burger-stations', 'burger-guests', 'burger-ingredient-icons',
         'burger-furniture', 'burger-eating', 'burger-tables', 'burger-paper', 'burger-lid', 'burger-broom', 'burger-spatula', 'burger-dining-reactions',
         'burger-patty-bins', 'burger-card-surfaces', 'burger-card-emblems', kitchenShade,
         cupTexture(), ...drinkKinds.flatMap(kind => (['small', 'medium', 'large'] as const).map(size => cupTexture(kind, size)))]) {
         this.textures.get(key).setFilter(Phaser.Textures.FilterMode.LINEAR);
       }
-      const silence = () => { cancelTap(); stopSizzle?.(); stopPour?.(); stopSizzle = stopPour = undefined; };
       this.events.on('pause', silence);
       this.events.once('shutdown', silence);
+      this.events.once('destroy', silence);
       this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
         const data = view().burger;
         if (!data?.cardHud || !this.game.canvas.parentElement?.contains(document.activeElement) || event.repeat) return;
@@ -1143,8 +1174,10 @@ export const burgerScene: SceneFactory = view => {
         }
         const choice = pickerSlots[chosen];
         const hit = chosen < 0 ? find(x, y) : { type: 'tray-choice' as const, index: chosen, zone: choice.zone };
+        const patty = hit && (hit.type === 'grill' || hit.type === 'tray') ? pattyAt(data.counter, location(hit)) : undefined;
+        if (hit?.type === 'tray' && !patty) return;
         if (hit) gesture = { from: hit, x, y, startX: x, startY: y, id: pointer.id, moved: false,
-          serial: hit.type === 'grill' || hit.type === 'tray' ? pattyAt(data.counter, location(hit))?.serial
+          serial: hit.type === 'grill' || hit.type === 'tray' ? patty?.serial
             : hit.type === 'storage' ? burgerSerial(data.counter.storage?.[hit.index])
             : hit.type === 'staged-burger' ? burgerSerial(data.counter.service?.burger) : choice?.serial };
       });
@@ -1177,7 +1210,7 @@ export const burgerScene: SceneFactory = view => {
     },
     update() {
       const data = view().burger;
-      if (!data) return;
+      if (!data) { silence(); return; }
       density = this.cameras.main.zoom;
       if (lastRound !== data.id) {
         lastRound = data.id; slot = 0; seenFeedback = 0; guestMotion.clear(); departing.clear(); flights.length = 0;
@@ -1186,7 +1219,10 @@ export const burgerScene: SceneFactory = view => {
         seenFever = data.counter.feverTrigger ?? 0;
         grillBurns.clear(); grillOil.clear(); trayPicker = undefined; spatulaMotion = undefined;
         unlockTimes.clear();
-        gesture = undefined; cancelTap();
+        gesture = undefined; silence();
+      }
+      if (expandedBubble && (performance.now() >= expandedBubble.expiresAt || !data.counter.orders.some(order => order.id === expandedBubble?.id))) {
+        expandedBubble = undefined;
       }
       const now = progress(data);
       feverTime = now;
@@ -1196,9 +1232,10 @@ export const burgerScene: SceneFactory = view => {
       seenFever = trigger;
       if (!data.active) { trayPicker = undefined; spatulaMotion = undefined; cancelTap(); }
       if (!data.active) historyPage = undefined;
-      if (data.active && data.counter.grill.some(Boolean)) stopSizzle ??= kitchenSound('sizzle', .16, true);
+      const kitchenRunning = data.active && !data.finishedAt && !data.counter.closed && !data.counter.retired && !data.pausedAt;
+      if (kitchenRunning && data.counter.grill.some(Boolean)) stopSizzle ??= kitchenSound('sizzle', .16, true);
       else { stopSizzle?.(); stopSizzle = undefined; }
-      if (data.active && data.counter.cups.some(cup => cup.pourAt && cupAmount(cup, now) < cupOverflow)) stopPour ??= kitchenSound('pour', .34, true);
+      if (kitchenRunning && data.counter.cups.some(cup => cup.pourAt && cupAmount(cup, now) < cupOverflow)) stopPour ??= kitchenSound('pour', .34, true);
       else { stopPour?.(); stopPour = undefined; }
       for (let i = flights.length - 1; i >= 0; i--) if (now - flights[i].at >= flightMs) flights.splice(i, 1);
       ink.clear();

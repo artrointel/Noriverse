@@ -3,11 +3,13 @@ import type { Role } from '../../../../../packages/protocol/rooms.ts';
 import { explorerIds } from '../../../../../packages/protocol/explorers.ts';
 import { diningExitMs, diningReplyMs, diningSatisfaction, seatDiner, seatWalkMs, shiftDiner, tableCount } from './dining.ts';
 import type { Diner, DiningReaction, DiningSatisfaction } from './dining.ts';
-import { cardCount, cardModifiers, cardOffers, ordersPerLevel, readBurgerCard, supplyAvailable, unlockLevels } from './cards.ts';
+import { cardCount, cardModifiers, cardOffers, cardRerollLimit, grillUpgradeAvailable, isGrillUpgrade, ordersPerLevel, readBurgerCard, supplyAvailable, unlockLevels } from './cards.ts';
 import type { BurgerCard } from './cards.ts';
+import { burgerPressure, defaultBurgerDifficulty, endlessOrderReward, endlessReserveMs, readBurgerDifficulty } from './balance.ts';
+import type { BurgerDifficulty } from './balance.ts';
 
-export const burgerMinutes = [5, 7, 10, 'endless'] as const;
-export type BurgerMinutes = (typeof burgerMinutes)[number] | 3;
+export const burgerMinutes = [5, 10, 15, 'endless'] as const;
+export type BurgerMinutes = (typeof burgerMinutes)[number] | 3 | 7;
 export type BurgerMode = 'race' | 'coop';
 export const readBurgerMode = (mode: unknown): BurgerMode | undefined => mode === 'race' || mode === 'coop' ? mode : undefined;
 export const defaultBurgerMinutes: BurgerMinutes = 5;
@@ -18,6 +20,8 @@ export const burgerStorageSize = 8;
 export const burgerPreparationMs = 20_000;
 export const burgerEndlessOpeningMs = 90_000;
 const pattyBurnPoint = 200;
+const autoFlipPoint = 180;
+const heatUnitsPerPercent = 70_000;
 export const cupOverflow = 200;
 const millisecondsPerDrinkPercent = 20;
 const trayLimit = 8;
@@ -61,15 +65,17 @@ export type Counter = {
   storage?: (BurgerStack | null)[];
   pattySequence?: number;
   playUntil?: number;
+  salesStartedAt?: number;
   cards?: BurgerCard[];
   draft?: { at: number; offers: BurgerCard[] };
+  rerollsUsed?: number;
   bankrupt?: boolean;
   closed?: boolean;
   shoo?: Shoo;
   money: number; served: number; combo: number; best: number; sequence: number; next: number;
   feverUntil: number; feverTrigger?: number; retired: boolean; feedback?: BurgerFeedback;
 };
-export type BurgerRound = { players: Role[]; counters: Partial<Record<Role, Counter>>; seed: number; minutes: BurgerMinutes;
+export type BurgerRound = { players: Role[]; counters: Partial<Record<Role, Counter>>; seed: number; minutes: BurgerMinutes; difficulty?: BurgerDifficulty;
   mode?: BurgerMode; resigned?: Role[]; start: number; opensAt?: number; end: number; revision: number; winners?: Role[] };
 export type BurgerAction =
   | { type: 'grill'; kind: PattyKind; slot: number }
@@ -89,7 +95,8 @@ export type BurgerAction =
   | { type: 'stage-drink'; drink: number }
   | { type: 'return-burger'; to: number | 'origin' | 'trash'; serial?: number }
   | { type: 'return-drink'; to: 'machine' | 'trash' }
-  | { type: 'choose-card'; card: BurgerCard; level: number }
+  | { type: 'choose-card'; card: BurgerCard; level: number; rerollsUsed?: number }
+  | { type: 'reroll-cards'; level: number; rerollsUsed: number }
   | { type: 'serve' | 'shoo'; order: number };
 
 type TraySelection = { kind: PattyKind; index: number; serial?: number };
@@ -134,15 +141,21 @@ export const burgerFacility = (counter: Counter, card: 'broom' | 'griddle' | 'as
 export const burgerTables = (counter: Counter) => counter.cards ? cardCount(counter.cards, 'table') : tableCount;
 const allowedGrill = (counter: Counter, slot: number) => slot < (burgerFacility(counter, 'griddle') ? grillCount : grillColumns);
 const assemblyLimit = (counter: Counter) => stackLimit + (counter.cards ? cardCount(counter.cards, 'picky') : 0);
-const remainingDifficulty = (counter: Counter) => {
+type BurgerBalance = Pick<BurgerRound, 'difficulty' | 'minutes'>;
+const endlessAge = (counter: Counter, now: number) => Math.max(0, now - (counter.salesStartedAt ?? now));
+const remainingDifficulty = (counter: Counter, round: BurgerBalance, now: number) => {
   const target = difficulty[burgerLevel(counter.served) - 1];
-  if (!counter.cards) return target;
-  const { traffic, patience } = cardModifiers(counter.cards);
-  return { ...target, min: Math.max(1, target.min - 1), interval: Math.round((target.interval + 24_000) / 2 / traffic),
-    patience: Math.round((target.patience + 86_000) / 2 * patience) };
+  if (!counter.cards) return { ...target, pressure: 1 };
+  const modifiers = cardModifiers(counter.cards);
+  const pressure = round.difficulty ? burgerPressure(round.difficulty, round.minutes === 'endless' ? endlessAge(counter, now) : 0) : 1;
+  const baseInterval = (target.interval + 24_000) / (round.difficulty ? 3 : 2);
+  return { ...target, pressure, min: Math.max(1, target.min - 1),
+    interval: Math.max(3000, Math.round(baseInterval / (modifiers.traffic * pressure))),
+    patience: Math.round((target.patience + 86_000) / 2 * modifiers.patience / pressure),
+    drinks: Math.min(.9, target.drinks * pressure) };
 };
 export const readBurgerMinutes = (value: unknown): BurgerMinutes | undefined =>
-  value === 3 ? 3 : burgerMinutes.find(minutes => minutes === value);
+  value === 3 || value === 7 ? value : burgerMinutes.find(minutes => minutes === value);
 
 const kitchenRoles = (round: Pick<BurgerRound, 'mode' | 'players'>): Role[] => round.mode === 'coop' ? ['host'] : round.players;
 const kitchenRole = (round: BurgerRound, role: Role): Role => round.mode === 'coop' ? 'host' : role;
@@ -151,9 +164,9 @@ export const burgerResigned = (round: BurgerRound, role: Role) =>
   round.mode === 'coop' ? Boolean(round.resigned?.includes(role)) : burgerCounter(round, role).retired;
 
 export function createBurgerRound(minutes: BurgerMinutes, players: Role[], seed = Math.floor(Math.random() * 0x1_0000_0000),
-  mode: BurgerMode = 'race'): BurgerRound {
+  mode: BurgerMode = 'race', difficulty = defaultBurgerDifficulty): BurgerRound {
   return { players, counters: Object.fromEntries(kitchenRoles({ mode, players }).map(role => [role, { ...emptyCounter(), money: 100, cards: [] }])),
-    seed, minutes, ...(mode === 'coop' && { mode }), start: 0, end: 0, revision: 0 };
+    seed, minutes, difficulty, ...(mode === 'coop' && { mode }), start: 0, end: 0, revision: 0 };
 }
 
 export function startBurgerRound(round: BurgerRound, start: number): BurgerRound {
@@ -161,6 +174,7 @@ export function startBurgerRound(round: BurgerRound, start: number): BurgerRound
   const end = opensAt + (round.minutes === 'endless' ? burgerEndlessOpeningMs : round.minutes * 60_000);
   return { ...round, start, opensAt, end,
     counters: Object.fromEntries(kitchenRoles(round).map(role => [role, { ...round.counters[role], next: opensAt,
+      ...(round.difficulty && { salesStartedAt: opensAt }),
       ...((round.minutes === 'endless' || round.counters[role]?.cards) && { playUntil: end }) }])),
     revision: round.revision + 1 };
 }
@@ -172,14 +186,14 @@ function random(seed: number, order: number, channel: number) {
   return ((value ^ value >>> 16) >>> 0) / 0x1_0000_0000;
 }
 
-function newOrder(seed: number, id: number, counter: Counter, now: number): Order {
+function newOrder(seed: number, id: number, counter: Counter, now: number, round: BurgerBalance): Order {
   const { served, cards } = counter;
   const level = burgerLevel(served);
-  const { min, max, patience, drinks } = remainingDifficulty(counter);
+  const { min, max, patience, drinks, pressure } = remainingDifficulty(counter, round, now);
   const roll = (channel: number) => random(seed, id, channel);
   const layerMax = cards ? Math.max(1, max + cardModifiers(cards).layers) : max;
   const layerMin = Math.min(min, layerMax);
-  const count = layerMin + Math.floor(roll(0) * (layerMax - layerMin + 1));
+  const count = layerMin + Math.floor(roll(0) ** (1 / pressure) * (layerMax - layerMin + 1));
   const availablePatties = pattyKinds.filter(item => burgerSupplyUnlocked(item, counter));
   const availableToppings = toppings.filter(item => burgerSupplyUnlocked(item, counter));
   const available = level >= 5 ? [...availableToppings, ...availablePatties] : availableToppings;
@@ -200,17 +214,30 @@ function newOrder(seed: number, id: number, counter: Counter, now: number): Orde
     size: level === 3 ? 'medium' as const : sizes[Math.floor(roll(44) * sizes.length)] } : undefined;
   return { id, guest: Math.floor(roll(34) * explorerIds.length),
     bread: burgerSupplyUnlocked('rice', counter) && roll(35) < .37 ? 'rice' : 'bun',
-    layers: layer, drink, at: now, until: now + Math.round(1.5 * (patience + Math.floor(roll(36) * 6700))),
+    layers: layer, drink, at: now, until: now + Math.round(1.5 * (patience + Math.floor(roll(36) * 6700 / pressure))),
     price: 100 + layer.length * 28 + layer.filter(part => part.cooked).length * 27 };
 }
 
-export function pattyFaces(patty: Patty, now: number): [number, number] {
+const otherPattySide = (side: Patty['side']) => side === 0 ? 1 : 0;
+const pattySpeed = (patty: Patty, counter?: Pick<Counter, 'cards'>) =>
+  (patty.speed ?? 1000) * (counter?.cards?.includes('highHeat') ? 1.3 : 1);
+
+export function pattyFaces(patty: Patty, now: number, counter?: Pick<Counter, 'cards'>): [number, number] {
   const faces: [number, number] = [...patty.faces];
   if (patty.heatAt) {
-    const heat = Math.max(0, now - patty.heatAt) * (patty.speed ?? 1000) / 70_000;
+    const heat = Math.max(0, now - patty.heatAt) * pattySpeed(patty, counter) / heatUnitsPerPercent;
     faces[patty.side] = Math.min(pattyBurnPoint, faces[patty.side] + heat);
   }
   return faces;
+}
+
+function flipPatty(patty: Patty, at: number, counter?: Counter): Patty {
+  return { ...patty, faces: pattyFaces(patty, at, counter), heatAt: at, side: otherPattySide(patty.side) };
+}
+
+function autoFlipAt(patty: Patty | null) {
+  if (!patty?.heatAt || isBurnt(patty.faces) || patty.faces[otherPattySide(patty.side)] >= autoFlipPoint) return Infinity;
+  return patty.heatAt + Math.ceil(Math.max(0, autoFlipPoint - patty.faces[patty.side]) * heatUnitsPerPercent / pattySpeed(patty));
 }
 
 export function pattyAt(counter: Counter, from: PattyLocation) {
@@ -282,6 +309,7 @@ export function nextBurgerAt(round: BurgerRound) {
     if (counter.retired || counter.closed || counter.draft) continue;
     event = Math.min(event, burgerDeadline(round, role), counter.next, ...counter.orders.map(order => order.until), ...(counter.diners ?? []).map(diner => diner.exitAt),
       ...counter.cups.filter(cup => cup.pourAt).map(overflowAt));
+    if (counter.cards?.includes('autoGrill')) event = Math.min(event, ...counter.grill.map(autoFlipAt));
   }
   return Number.isFinite(event) ? event : undefined;
 }
@@ -312,8 +340,14 @@ export function advanceBurger(round: BurgerRound, now: number) {
       return emptyCup();
     }) as Counter['cups'];
     if (counter.next <= now && !nextCounter.closed) {
-      if (nextCounter.orders.length < queueLimit) nextCounter.orders.push(newOrder(round.seed, ++nextCounter.sequence, counter, now));
-      nextCounter.next = now + remainingDifficulty(counter).interval;
+      if (nextCounter.orders.length < queueLimit) nextCounter.orders.push(newOrder(round.seed, ++nextCounter.sequence, counter, now, round));
+      nextCounter.next = now + remainingDifficulty(counter, round, now).interval;
+    }
+    if (!nextCounter.closed && counter.cards?.includes('autoGrill')) {
+      nextCounter.grill = counter.grill.map(patty => {
+        const at = autoFlipAt(patty);
+        return patty && at <= now ? flipPatty(patty, at) : patty;
+      });
     }
     counters[role] = nextCounter;
   }
@@ -353,7 +387,7 @@ function removePatty(counter: Counter, from: PattyLocation, now: number) {
     const index = counter.tray.findLastIndex(candidate => from === 'tray' || candidate.kind === from);
     if (index >= 0) [patty] = counter.tray.splice(index, 1);
   }
-  if (patty) return { ...patty, faces: pattyFaces(patty, now), heatAt: 0 };
+  if (patty) return { ...patty, faces: pattyFaces(patty, now, counter), heatAt: 0 };
 }
 
 function putPatty(counter: Counter, patty: Patty, to: PattyLocation, now: number) {
@@ -367,7 +401,8 @@ function putPatty(counter: Counter, patty: Patty, to: PattyLocation, now: number
 
 export const burgerSerial = (burger?: BurgerStack | null) => burger?.layers.find(layer => layer.patty)?.patty?.serial;
 
-function editBurger(counter: Counter, action: BurgerAction, now: number, seed: number, endless: boolean) {
+function editBurger(counter: Counter, action: BurgerAction, now: number, round: BurgerBalance & { seed: number }) {
+  const { seed } = round;
   const origin = counter.service?.origin;
   const validAssembly = (slot: unknown): slot is 0 | 1 => isSlot(slot) && (!slot || burgerFacility(counter, 'assembly'));
   switch (action.type) {
@@ -383,13 +418,13 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, seed: n
       const patty = isGrill(action.slot) && counter.grill[action.slot];
       if (!patty || (action.serial !== undefined && patty.serial !== action.serial)
         || (action.side !== undefined && patty.side !== action.side)) return false;
-      counter.grill[action.slot] = { ...patty, faces: pattyFaces(patty, now), heatAt: now, side: patty.side === 0 ? 1 : 0 };
+      counter.grill[action.slot] = flipPatty(patty, now, counter);
       return true;
     }
     case 'hold': {
       if (!isGrill(action.slot)) return false;
       const patty = counter.grill[action.slot];
-      if (!patty || (action.serial !== undefined && patty.serial !== action.serial) || !pattyDoneness(pattyFaces(patty, now))) return false;
+      if (!patty || (action.serial !== undefined && patty.serial !== action.serial) || !pattyDoneness(pattyFaces(patty, now, counter))) return false;
       return putPatty(counter, removePatty(counter, action.slot, now)!, patty.kind, now);
     }
     case 'move': {
@@ -525,11 +560,13 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, seed: n
       const money = Math.round(verdict.money * (counter.cards ? cardModifiers(counter.cards).revenue : 1)) * (counter.feverUntil > now ? 2 : 1) + tip;
       counter.money += money;
       const oldLevel = burgerLevel(counter.served);
-      const timeAdded = !endless ? 0 : 1000 * Math.max(1, Math.floor(endlessRewards[oldLevel - 1] * verdict.similarity));
+      const timeAdded = round.minutes !== 'endless' ? 0 : round.difficulty && counter.playUntil !== undefined
+        ? endlessOrderReward(oldLevel, verdict.similarity, endlessAge(counter, now), counter.playUntil - now, round.difficulty)
+        : 1000 * Math.max(1, Math.floor(endlessRewards[oldLevel - 1] * verdict.similarity));
       if (counter.playUntil !== undefined) counter.playUntil += timeAdded;
       counter.served++;
       const newLevel = burgerLevel(counter.served);
-      if (newLevel > oldLevel) counter.next = Math.min(counter.next, now + remainingDifficulty(counter).interval);
+      if (newLevel > oldLevel) counter.next = Math.min(counter.next, now + remainingDifficulty(counter, round, now).interval);
       if (counter.cards && counter.served % ordersPerLevel === 0) {
         const rank = burgerRank(counter.served);
         counter.draft = { at: now, offers: cardOffers(counter.cards, rank, index => random(seed, rank, 95 + index)) };
@@ -585,7 +622,7 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, seed: n
       }
       const patty = selected === undefined ? pattyAt(counter, from) : counter.tray[selected];
       if (!patty || (action.serial !== undefined && patty.serial !== action.serial)) return false;
-      const faces = pattyFaces(patty, now);
+      const faces = pattyFaces(patty, now, counter);
       if (!pattyDoneness(faces)) {
         updateFeedback(counter, now, { kind: isBurnt(faces) ? 'burnt' : 'raw' });
         return true;
@@ -632,11 +669,25 @@ export function applyBurgerAction(round: BurgerRound, actor: Role, raw: unknown,
   if (!board || board.retired || board.closed || current.winners) return advanced;
   const input = raw as BurgerAction;
   if (board.draft) {
-    if (input.type !== 'choose-card' || input.level !== burgerRank(board.served) || !board.draft.offers.includes(input.card)) return advanced;
+    const level = burgerRank(board.served);
+    const rerollsUsed = board.rerollsUsed ?? 0;
+    if (input.type === 'reroll-cards') {
+      if (input.level !== level || input.rerollsUsed !== rerollsUsed || rerollsUsed >= cardRerollLimit) return advanced;
+      const spent = rerollsUsed + 1;
+      const offers = cardOffers(board.cards!, level, index => random(current.seed, level, 95 + spent * 3 + index), board.draft.offers);
+      const counter = { ...board, rerollsUsed: spent, draft: { ...board.draft, offers } };
+      return changed(current, { ...current.counters, [role]: counter });
+    }
+    if (input.type !== 'choose-card' || input.level !== level || !board.draft.offers.includes(input.card)
+      || (input.rerollsUsed !== undefined && input.rerollsUsed !== rerollsUsed)
+      || !grillUpgradeAvailable(board.cards!, input.card)) return advanced;
     const counter = shiftCounter(board, Math.max(0, now - board.draft.at));
+    if (input.card === 'highHeat') {
+      counter.grill = counter.grill.map(patty => patty?.heatAt ? { ...patty, faces: pattyFaces(patty, now, counter), heatAt: now } : patty);
+    }
     counter.cards = [...board.cards!, input.card];
     counter.draft = undefined;
-    counter.next = Math.min(counter.next, now + remainingDifficulty(counter).interval);
+    counter.next = Math.min(counter.next, now + remainingDifficulty(counter, current, now).interval);
     if (input.card.startsWith('sold:')) {
       const supply = input.card.slice(5);
       if (includes(drinkKinds, supply)) {
@@ -645,7 +696,7 @@ export function applyBurgerAction(round: BurgerRound, actor: Role, raw: unknown,
       }
       counter.orders = counter.orders.map(order => {
         if (order.bread !== supply && order.drink?.kind !== supply && !order.layers.some(layer => layer.ingredient === supply)) return order;
-        const replacement = newOrder(current.seed ^ 0x50d ^ counter.cards!.length, order.id, counter, order.at);
+        const replacement = newOrder(current.seed ^ 0x50d ^ counter.cards!.length, order.id, counter, now, current);
         return { ...replacement, guest: order.guest, at: order.at, until: order.until, patienceMs: order.patienceMs, reorderedAt: now };
       });
     }
@@ -653,7 +704,7 @@ export function applyBurgerAction(round: BurgerRound, actor: Role, raw: unknown,
   }
   const counter: Counter = { ...board, grill: [...board.grill], tray: [...board.tray], cups: [...board.cups],
     burgers: board.burgers.map(item => ({ ...item, layers: [...item.layers] })) as Counter['burgers'] };
-  if (!editBurger(counter, input, now, current.seed, current.minutes === 'endless')) return advanced;
+  if (!editBurger(counter, input, now, current)) return advanced;
   return changed({ ...current, end: Math.max(current.end, counter.playUntil ?? 0) }, { ...current.counters, [role]: counter });
 }
 
@@ -679,6 +730,7 @@ function shiftCounter(counter: Counter, pause: number): Counter {
         ...(order.reorderedAt !== undefined && { reorderedAt: shift(order.reorderedAt) }) })),
       ...(counter.diners && { diners: counter.diners.map(diner => shiftDiner(diner, pause)) }),
       ...(counter.playUntil !== undefined && { playUntil: shift(counter.playUntil) }),
+      ...(counter.salesStartedAt !== undefined && { salesStartedAt: shift(counter.salesStartedAt) }),
       ...(counter.draft && { draft: { ...counter.draft, at: shift(counter.draft.at) } }),
       ...(counter.shoo && { shoo: { ...counter.shoo, at: shift(counter.shoo.at) } }),
       feedback: counter.feedback && { ...counter.feedback, at: shift(counter.feedback.at) } };
@@ -739,12 +791,13 @@ function validDiners(diners: Diner[], sequence: number) {
 
 export function readBurgerRound(raw: unknown): BurgerRound | undefined {
   if (!raw || typeof raw !== 'object') return;
-  const { players, counters, seed, start, opensAt, end, minutes, mode, resigned, revision, winners } = raw as BurgerRound;
+  const { players, counters, seed, start, opensAt, end, minutes, difficulty, mode, resigned, revision, winners } = raw as BurgerRound;
   const salesStart = opensAt ?? start;
   const cardRound = Array.isArray(counters?.host?.cards);
   if (!readBurgerMinutes(minutes) || !Array.isArray(players) || players.length < 2 || players.length > 4 || players[0] !== 'host'
     || !players.every(isRoomRole) || new Set(players).size !== players.length || !counters || typeof counters !== 'object'
     || !integer(seed, 0xffffffff) || !integer(start) || !integer(end) || !integer(revision)
+    || (difficulty !== undefined && !readBurgerDifficulty(difficulty))
     || (opensAt !== undefined && (!start || !integer(opensAt) || opensAt !== start + burgerPreparationMs))
     || (minutes === 'endless' ? (start ? end < salesStart + burgerEndlessOpeningMs : end !== 0)
       : cardRound && start ? end < salesStart + minutes * 60_000 : end !== (start ? salesStart + minutes * 60_000 : 0))) return;
@@ -758,11 +811,15 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
   for (const role of kitchens) {
     const counter = counters[role];
     if (!counter || ![counter.money, counter.served, counter.combo, counter.best, counter.sequence, counter.next, counter.feverUntil].every(value => integer(value))
+      || (difficulty && start ? !integer(counter.salesStartedAt, end) || counter.salesStartedAt < salesStart : counter.salesStartedAt !== undefined)
       || (cardRound ? !Array.isArray(counter.cards) || counter.cards.length !== burgerRank(counter.served) - 1 - Number(Boolean(counter.draft))
-        || !counter.cards.every(readBurgerCard) : counter.cards !== undefined || counter.draft !== undefined || counter.bankrupt !== undefined)
+        || !counter.cards.every(readBurgerCard) || counter.cards.filter(isGrillUpgrade).length > 1
+        : counter.cards !== undefined || counter.draft !== undefined || counter.bankrupt !== undefined || counter.rerollsUsed !== undefined)
+      || (counter.rerollsUsed !== undefined && !integer(counter.rerollsUsed, cardRerollLimit))
       || (counter.draft !== undefined && (!counter.draft || !integer(counter.draft.at, end) || counter.draft.at < start
         || !Array.isArray(counter.draft.offers) || counter.draft.offers.length !== 3
-        || new Set(counter.draft.offers).size !== 3 || !counter.draft.offers.every(readBurgerCard)))
+        || new Set(counter.draft.offers).size !== 3 || !counter.draft.offers.every(card => readBurgerCard(card)
+          && grillUpgradeAvailable(counter.cards!, card))))
       || (counter.bankrupt !== undefined && (counter.bankrupt !== true || counter.money !== 0 || !counter.closed || !counter.retired))
       || (counter.feverTrigger !== undefined && (!integer(counter.feverTrigger, counter.served) || counter.feverTrigger < 5))
       || counter.combo > counter.best || counter.best > counter.served || typeof counter.retired !== 'boolean'
@@ -799,7 +856,7 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
         || (counter.feedback.tip !== undefined && !integer(counter.feedback.tip, 550))
         || (counter.feedback.line !== undefined && !isBurgerLine(counter.feedback.line))
         || (counter.feedback.order !== undefined && !integer(counter.feedback.order, counter.sequence))
-        || (counter.feedback.timeAdded !== undefined && !integer(counter.feedback.timeAdded, 25_000))
+        || (counter.feedback.timeAdded !== undefined && !integer(counter.feedback.timeAdded, endlessReserveMs))
         || (counter.feedback.guest !== undefined && !integer(counter.feedback.guest, explorerIds.length - 1))))) return;
     const overflow = pattyKinds.some(kind => counter.tray.filter(patty => patty.kind === kind).length > trayLimit);
     if (overflow) {
@@ -810,7 +867,7 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
   }
   if ((minutes === 'endless' || cardRound) && start && Math.max(...kitchens.map(role => boards[role]!.playUntil!)) !== end) return;
   return { players, counters: boards, seed, minutes, ...(mode && { mode }), ...(resigned && { resigned }), start,
-    ...(opensAt !== undefined && { opensAt }), end, revision, winners };
+    ...(opensAt !== undefined && { opensAt }), ...(difficulty && { difficulty }), end, revision, winners };
 }
 import { chooseBurgerDialogue, isBurgerLine } from './dialogue.ts';
 import type { BurgerLine } from './dialogue.ts';

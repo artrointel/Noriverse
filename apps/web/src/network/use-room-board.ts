@@ -41,6 +41,7 @@ import { advanceOrbit, applyOrbitInput, createOrbitRound, nextOrbitAt, orbitGrav
 import type { OrbitInput, OrbitRound } from '../games/slime/rules.ts';
 import { advanceMole, createMoleRound, defaultMoleSettings, nextMoleAt, resignMole, startMoleRound, strikeMole } from '../games/mole/rules.ts';
 import { advanceBurger, applyBurgerAction, createBurgerRound, defaultBurgerMinutes, nextBurgerAt, resignBurger, startBurgerRound } from '../games/burger/rules.ts';
+import { defaultBurgerDifficulty } from '../games/burger/balance.ts';
 import type { BurgerAction } from '../games/burger/rules.ts';
 
 const lobbySlots = assignReactionSlots(roomRoles);
@@ -939,7 +940,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
       mockSeats: mocks.length ? mocks : undefined, puzzle,
       slime: current.game === 'slime' ? createOrbitRound(seats) : undefined,
       mole: current.moleConfig ? createMoleRound(current.moleConfig, seats) : undefined,
-      burger: current.burgerMinutes ? createBurgerRound(current.burgerMinutes, seats, undefined, current.burgerMode) : undefined,
+      burger: current.burgerMinutes ? createBurgerRound(current.burgerMinutes, seats, undefined, current.burgerMode, current.burgerDifficulty) : undefined,
       sketch: current.sketchConfig ? makeSketchRound(seats, drawingDeck.current[0], chooseSketchMap(current.sketchConfig.map)) : undefined,
       liar: current.liarConfig ? makeLiarRound(seats, current.liarConfig.language, Math.random, previous?.liar?.result?.word) : undefined,
       physicsSeats, physics: physicsSeats ? createFlickRound(current.flickSettings ?? defaultFlickSettings, physicsSeats.length) : undefined });
@@ -954,6 +955,7 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
     liar: round.liarConfig ?? defaultLiarSettings, mole: round.moleConfig ?? defaultMoleSettings,
     burger: round.burgerMinutes ?? defaultBurgerMinutes,
     burgerMode: round.burgerMode ?? 'race',
+    burgerDifficulty: round.burgerDifficulty ?? defaultBurgerDifficulty,
   };
 
   function configureMatch(settings: MatchSettings) {

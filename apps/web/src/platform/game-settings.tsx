@@ -18,6 +18,7 @@ import type { SketchSettings } from '../games/sketch/rules.ts';
 import { liarGuessSeconds, liarHintTimes, liarVoteSeconds } from '../games/liar/rules.ts';
 import { moleModes, moleSizes, moleTimes } from '../games/mole/rules.ts';
 import { burgerMinutes } from '../games/burger/rules.ts';
+import { burgerDifficulties, readBurgerDifficulty } from '../games/burger/balance.ts';
 
 export function GameFeature({ game, heading, children }: { game: GameId; heading: string; children?: ReactNode }) {
   const { t } = useTranslation();
@@ -124,11 +125,18 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
       <option value="race">{t('sichuanMode_race')}</option>
       <option value="coop">{t('coop')}</option>
     </SettingsSelect>}
-    <SettingsSelect label={t('matchTimeLimit')} value={settings.burger === 3 ? 5 : settings.burger} change={value => {
+    <SettingsSelect label={t('matchTimeLimit')} value={settings.burger} change={value => {
       const minutes = burgerMinutes.find(option => String(option) === value);
       if (minutes) change({ ...settings, burger: minutes });
     }}>
+      {(settings.burger === 3 || settings.burger === 7) && <option value={settings.burger} disabled>{formatPlayTime(settings.burger * 60)}</option>}
       {burgerMinutes.map(minutes => <option key={minutes} value={minutes}>{minutes === 'endless' ? t('burgerEndless') : formatPlayTime(minutes * 60)}</option>)}
+    </SettingsSelect>
+    <SettingsSelect label={t('burgerDifficulty')} value={settings.burgerDifficulty} change={value => {
+      const difficulty = readBurgerDifficulty(value);
+      if (difficulty) change({ ...settings, burgerDifficulty: difficulty });
+    }}>
+      {burgerDifficulties.map(difficulty => <option key={difficulty} value={difficulty}>{t('burgerDifficulty_' + difficulty)}</option>)}
     </SettingsSelect>
     <p className="setup-help">{t('burgerDurationHelp')}</p>
   </SettingsSection>;
@@ -220,6 +228,7 @@ export function GameRulesSummary({ game, settings }: { game: GameId; settings: M
   if (game === 'burger') {
     entries.push([t('sichuanOnlineMode'), t(settings.burgerMode === 'coop' ? 'coop' : 'sichuanMode_race')]);
     entries.push([t('matchTimeLimit'), settings.burger === 'endless' ? t('burgerEndless') : formatPlayTime(settings.burger * 60)]);
+    entries.push([t('burgerDifficulty'), t('burgerDifficulty_' + settings.burgerDifficulty)]);
   } else if (game === 'mole') {
     const { size, mode, seconds } = settings.mole;
     entries.push([t('sichuanGrid'), `${size} × ${size}`], [t('moleFormat'), t('mole_' + mode)],

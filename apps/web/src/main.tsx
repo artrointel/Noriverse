@@ -275,7 +275,7 @@ function App() {
           const burgerRoom = online && room.burger && room.role ? { ...room, burger: room.burger, role: room.role } : undefined;
           if (online && !burgerRoom) return <p role="status">{t('loading')}</p>;
           return <Suspense fallback={<div className="surface stage-loading" role="status">{t('loading')}</div>}>
-            <BurgerPage room={burgerRoom} minutes={settings.burger} ownProfile={profile.profile} navigate={navigate}
+            <BurgerPage room={burgerRoom} minutes={settings.burger} difficulty={settings.burgerDifficulty} ownProfile={profile.profile} navigate={navigate}
               dark={preferences.dark} antialias={preferences.antialias} resolution={preferences.resolution}
               onResolution={preferences.changeResolution} onAntialias={preferences.changeAntialias}
               showTouches={preferences.showTouches} onTouchDisplay={preferences.changeShowTouches} touchStyle={profile.profile?.touchEffect ?? 'soft'}

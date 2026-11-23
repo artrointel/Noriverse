@@ -14,6 +14,8 @@ import { defaultMoleSettings } from './mole/rules.ts';
 import type { MoleSettings } from './mole/rules.ts';
 import { defaultBurgerMinutes } from './burger/rules.ts';
 import type { BurgerMinutes, BurgerMode } from './burger/rules.ts';
+import { defaultBurgerDifficulty } from './burger/balance.ts';
+import type { BurgerDifficulty } from './burger/balance.ts';
 
 export type MatchSettings = {
   turnLimit: TurnLimit;
@@ -28,6 +30,7 @@ export type MatchSettings = {
   mole: MoleSettings;
   burger: BurgerMinutes;
   burgerMode: BurgerMode;
+  burgerDifficulty: BurgerDifficulty;
 };
 
 export const defaultMatchSettings: MatchSettings = {
@@ -36,6 +39,7 @@ export const defaultMatchSettings: MatchSettings = {
   mole: defaultMoleSettings,
   burger: defaultBurgerMinutes,
   burgerMode: 'race',
+  burgerDifficulty: defaultBurgerDifficulty,
 };
 
 export function matchSettingsForLanguage(language: SketchSettings['language']): MatchSettings {
