@@ -1246,8 +1246,6 @@ test('fully automatic grilling cooks both sides to well-done and transfers the p
   const selectedAt = firstGuest + 5000;
   const round = applyBurgerAction(fullyAutomaticDraft(), 'guest', { type: 'choose-card', card: 'autoGrill2', level: 14 }, selectedAt)!;
   round.counters.host!.next = selectedAt + 40_000;
-  assert.equal(applyBurgerAction(round, 'guest', { type: 'flip', slot: 0 }, selectedAt + 1000), undefined);
-  assert.equal(applyBurgerAction(round, 'guest', { type: 'move', from: 0, to: 'beef' }, selectedAt + 1000), undefined);
   assert.equal(applyBurgerAction(round, 'guest', { type: 'hold', slot: 0 }, selectedAt + 1000), undefined);
   const restored = readBurgerRound(JSON.parse(JSON.stringify(shiftBurgerClock(round, 3000))))!;
   const flipAt = selectedAt + 7700 + 3000;
@@ -1265,6 +1263,35 @@ test('fully automatic grilling cooks both sides to well-done and transfers the p
   assert.deepEqual(board.tray[0].faces, [180, 180]);
   assert.equal(board.tray[0].serial, 1);
   assert.equal(pattyDoneness(board.tray[0].faces), 'well');
+});
+
+test('co-op players can override automatic grill two to save a medium patty', () => {
+  const selectedAt = firstGuest + 5000;
+  let round = applyBurgerAction(fullyAutomaticDraft(), 'guest', { type: 'choose-card', card: 'autoGrill2', level: 14 }, selectedAt)!;
+  round.counters.host!.next = selectedAt + 40_000;
+  round = action(round, { type: 'add', item: 'paper', slot: 0 }, selectedAt + 50);
+  round = action(round, { type: 'add', item: 'bun', slot: 0 }, selectedAt + 100);
+
+  const flip = { type: 'flip', slot: 0, serial: 1, side: 0 } as const;
+  const flipAt = selectedAt + 2100;
+  round = applyBurgerAction(round, 'guest', flip, flipAt)!;
+  assert.deepEqual(pattyFaces(round.counters.host!.grill[0]!, flipAt), [100, 0]);
+  assert.equal(applyBurgerAction(round, 'host', flip, flipAt + 1), undefined);
+  round = applyBurgerAction(round, 'guest', { type: 'move', from: 0, to: 1, serial: 1 }, flipAt + 1400)!;
+  const readyAt = flipAt + 7000;
+  assert.deepEqual(pattyFaces(round.counters.host!.grill[1]!, readyAt), [100, 100]);
+
+  const held = applyBurgerAction(round, 'guest', { type: 'hold', slot: 1, serial: 1 }, readyAt)!;
+  const dragged = applyBurgerAction(round, 'guest', { type: 'move', from: 1, to: 'beef', serial: 1 }, readyAt)!;
+  assert.equal(held.counters.host!.grill[1], null);
+  assert.deepEqual(held.counters.host!.tray, dragged.counters.host!.tray);
+  assert.deepEqual(held.counters.host!.tray[0].faces, [100, 100]);
+
+  const stacked = applyBurgerAction(round, 'guest', { type: 'stack', slot: 0, from: 1, serial: 1 }, readyAt)!;
+  const kitchen = readBurgerRound(JSON.parse(JSON.stringify(stacked)))!.counters.host!;
+  assert.equal(kitchen.grill[1], null);
+  assert.deepEqual(kitchen.burgers[0].layers[0].patty?.faces, [100, 100]);
+  assert.equal(kitchen.tray.length, 0);
 });
 
 test('a full tray keeps heating, and opening a spot only transfers patties that are not burnt', () => {

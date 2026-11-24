@@ -429,7 +429,6 @@ export const burgerScene: SceneFactory = view => {
           return true;
         }
         if (discardBurnt(previousPatty, progress(data), data.counter)) break;
-        if (data.counter.cards?.includes('autoGrill2')) break;
         if (double) {
           if (apply({ type: 'flip', slot: hit.index, side: previousPatty.side, serial: previousPatty.serial })) {
             spatulaMotion = { zone: hit.zone, at: progress(data), phase: 'flip' };
@@ -515,7 +514,6 @@ export const burgerScene: SceneFactory = view => {
       }
       case 'tray': case 'grill': {
         if (from.type === 'grill' && data && !inTrash) {
-          if (data.counter.cards?.includes('autoGrill2')) break;
           const patty = data.counter.grill[from.index];
           if (to?.type === 'tray' && patty?.kind === pattyKinds[to.index] && patty.serial === serial && !trayHasRoom(data.counter, patty.kind)) {
             spatulaMotion = { zone: from.zone, at: progress(data), phase: 'blocked' };
@@ -910,6 +908,7 @@ export const burgerScene: SceneFactory = view => {
       const expanded = burgerFacility(counter, 'griddle');
       previousGrill.forEach((patty, slot) => {
         if (patty?.serial === undefined || counter.grill[slot]?.serial === patty.serial) return;
+        if (flights.some(flight => flight.slot === -2 && !flight.trash && flight.serial === patty.serial)) return;
         const stack = counter.tray.filter(item => item.kind === patty.kind);
         const index = stack.findIndex(item => item.serial === patty.serial);
         if (index < 0) return;

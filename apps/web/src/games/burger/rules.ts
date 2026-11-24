@@ -639,7 +639,6 @@ function takeCup(counter: Counter, index: 0 | 1, now: number): ServiceDrink | un
 
 function editBurger(counter: Counter, action: BurgerAction, now: number, round: BurgerRound) {
   const { seed } = round;
-  const fullyAutomatic = counter.cards?.includes('autoGrill2');
   switch (action.type) {
     case 'start-assembly': {
       const order = counter.orders[0];
@@ -664,7 +663,6 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       return true;
     }
     case 'flip': {
-      if (fullyAutomatic) return false;
       const patty = isGrill(action.slot) && counter.grill[action.slot];
       if (!patty || (action.serial !== undefined && patty.serial !== action.serial)
         || (action.side !== undefined && patty.side !== action.side)) return false;
@@ -672,14 +670,13 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       return true;
     }
     case 'hold': {
-      if (fullyAutomatic || !isGrill(action.slot)) return false;
+      if (!isGrill(action.slot)) return false;
       const patty = counter.grill[action.slot];
       if (!patty || (action.serial !== undefined && patty.serial !== action.serial) || !pattyDoneness(pattyFaces(patty, now, counter))) return false;
       return putPatty(counter, removePatty(counter, action.slot, now)!, patty.kind, now);
     }
     case 'move': {
       if (!isPlace(action.from) || action.to === action.from || (action.to !== 'trash' && !isPlace(action.to))) return false;
-      if (fullyAutomatic && typeof action.from === 'number' && action.to !== 'trash') return false;
       if (action.serial !== undefined && pattyAt(counter, action.from)?.serial !== action.serial) return false;
       const patty = removePatty(counter, action.from, now);
       if (!patty) return false;
@@ -908,7 +905,7 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       if (!burger.bread || burger.packed || burger.top || burger.layers.length >= assemblyLimit(counter)
         || burger.layers.filter(layer => layer.patty).length >= pattyLimit) return false;
       const from = action.type === 'stack' ? action.from : action.kind;
-      if (!isPlace(from) || (fullyAutomatic && typeof from === 'number')) return false;
+      if (!isPlace(from)) return false;
       let selected: number | undefined;
       if (action.type === 'stack-tray') {
         selected = trayIndex(counter, action);
