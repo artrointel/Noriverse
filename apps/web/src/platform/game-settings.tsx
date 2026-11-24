@@ -120,10 +120,11 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
   const { t } = useTranslation();
   if (game === 'burger') return <SettingsSection title={t('setupBoardRules')}>
     {online && <SettingsSelect label={t('sichuanOnlineMode')} value={settings.burgerMode} change={value => {
-      if (value === 'race' || value === 'coop') change({ ...settings, burgerMode: value });
+      if (value === 'race' || value === 'coop' || value === 'teams') change({ ...settings, burgerMode: value });
     }}>
       <option value="race">{t('sichuanMode_race')}</option>
       <option value="coop">{t('coop')}</option>
+      <option value="teams">{t('burgerTeams')}</option>
     </SettingsSelect>}
     <SettingsSelect label={t('matchTimeLimit')} value={settings.burger} change={value => {
       const minutes = burgerMinutes.find(option => String(option) === value);
@@ -138,7 +139,8 @@ export function GameRulesEditor({ game, settings, change, online, onValidity }: 
     }}>
       {burgerDifficulties.map(difficulty => <option key={difficulty} value={difficulty}>{t('burgerDifficulty_' + difficulty)}</option>)}
     </SettingsSelect>
-    <p className="setup-help">{t(online && settings.burgerMode === 'race' && settings.burger === 'endless'
+    {online && settings.burgerMode === 'teams' && <p className="setup-help">{t('burgerTeamsSetup')}</p>}
+    <p className="setup-help">{t(online && settings.burgerMode !== 'coop' && settings.burger === 'endless'
       ? 'burgerEndlessRaceHelp' : 'burgerDurationHelp')}</p>
   </SettingsSection>;
   if (game === 'mole') {
@@ -227,7 +229,7 @@ export function GameRulesSummary({ game, settings }: { game: GameId; settings: M
   const { t } = useTranslation();
   const entries: [string, string][] = [];
   if (game === 'burger') {
-    entries.push([t('sichuanOnlineMode'), t(settings.burgerMode === 'coop' ? 'coop' : 'sichuanMode_race')]);
+    entries.push([t('sichuanOnlineMode'), t(settings.burgerMode === 'teams' ? 'burgerTeams' : settings.burgerMode === 'coop' ? 'coop' : 'sichuanMode_race')]);
     entries.push([t('matchTimeLimit'), settings.burger === 'endless' ? t('burgerEndless') : formatPlayTime(settings.burger * 60)]);
     entries.push([t('burgerDifficulty'), t('burgerDifficulty_' + settings.burgerDifficulty)]);
   } else if (game === 'mole') {

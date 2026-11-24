@@ -5,6 +5,7 @@ import { boardFrom, boardSize } from '../games/omok/rules.ts';
 import { othelloState } from '../games/othello/rules.ts';
 import { puzzleProgress } from '../games/sichuan/multiplayer.ts';
 import { isLiarRound, liarParticipationPoints } from '../games/liar/rules.ts';
+import { burgerCounter } from '../games/burger/rules.ts';
 import { matchColor } from './room-match.ts';
 import type { Match } from './room-match.ts';
 import type { RoomResultPlayer } from '../../../../packages/protocol/room-history.ts';
@@ -53,7 +54,7 @@ function losingProgress(match: Match, role: Role, liarPoints: number): number {
     case 'sichuan': return match.puzzle ? puzzleProgress(match.puzzle, role) / 100 : 0;
     case 'sketch': return match.sketch ? (match.sketch.scores[match.sketch.players.indexOf(role)] ?? 0) / Math.max(1, ...match.sketch.scores) : 0;
     case 'liar': return liarPoints / 40;
-    case 'burger': return (match.burger?.counters[role]?.money ?? 0)
+    case 'burger': return (match.burger?.players.includes(role) ? burgerCounter(match.burger, role).money : 0)
       / Math.max(1, ...Object.values(match.burger?.counters ?? {}).map(counter => counter.money));
     case 'mole': {
       const best = Math.max(1, ...Object.values(match.mole?.boards ?? {}).map(board => board.score));

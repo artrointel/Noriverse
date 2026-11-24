@@ -1,5 +1,9 @@
 import { isRoomRole } from '../../../../../packages/protocol/rooms.ts';
 import type { Role } from '../../../../../packages/protocol/rooms.ts';
+import { readBurgerMode, roomPlayerCapacity } from '../../../../../packages/protocol/games.ts';
+import type { BurgerMode } from '../../../../../packages/protocol/games.ts';
+import { activeTeams, fillRoomTeams, readRoomTeams, teamFor, validTeamLineup } from '../../../../../packages/protocol/room-teams.ts';
+import type { RoomTeam } from '../../../../../packages/protocol/room-teams.ts';
 import { explorerIds } from '../../../../../packages/protocol/explorers.ts';
 import { diningExitMs, diningReplyMs, diningSatisfaction, seatDiner, seatWalkMs, shiftDiner, tableCount } from './dining.ts';
 import type { Diner, DiningReaction, DiningSatisfaction } from './dining.ts';
@@ -10,8 +14,8 @@ import type { BurgerDifficulty } from './balance.ts';
 
 export const burgerMinutes = [5, 10, 15, 'endless'] as const;
 export type BurgerMinutes = (typeof burgerMinutes)[number] | 3 | 7;
-export type BurgerMode = 'race' | 'coop';
-export const readBurgerMode = (mode: unknown): BurgerMode | undefined => mode === 'race' || mode === 'coop' ? mode : undefined;
+export { readBurgerMode } from '../../../../../packages/protocol/games.ts';
+export type { BurgerMode } from '../../../../../packages/protocol/games.ts';
 export const defaultBurgerMinutes: BurgerMinutes = 5;
 export const grillColumns = 4;
 export const grillRows = 2;
@@ -88,7 +92,7 @@ export type Counter = {
   money: number; served: number; combo: number; best: number; sequence: number; next: number;
   feverUntil: number; feverTrigger?: number; retired: boolean; feedback?: BurgerFeedback;
 };
-export type BurgerRound = { players: Role[]; counters: Partial<Record<Role, Counter>>; seed: number; minutes: BurgerMinutes; difficulty?: BurgerDifficulty;
+export type BurgerRound = { players: Role[]; counters: Partial<Record<Role, Counter>>; teams?: RoomTeam[]; seed: number; minutes: BurgerMinutes; difficulty?: BurgerDifficulty;
   mode?: BurgerMode; resigned?: Role[]; start: number; opensAt?: number; end: number; revision: number; winners?: Role[] };
 export type BurgerAction =
   | { type: 'grill'; kind: PattyKind; slot: number }
@@ -204,17 +208,20 @@ export const burgerGuestPatience = (baseMs: number, pressure: number, roll: numb
 export const readBurgerMinutes = (value: unknown): BurgerMinutes | undefined =>
   value === 3 || value === 7 ? value : burgerMinutes.find(minutes => minutes === value);
 
-const kitchenRoles = (round: Pick<BurgerRound, 'mode' | 'players'>): Role[] => round.mode === 'coop' ? ['host'] : round.players;
-const kitchenRole = (round: BurgerRound, role: Role): Role => round.mode === 'coop' ? 'host' : role;
+const kitchenRoles = (round: Pick<BurgerRound, 'mode' | 'players' | 'teams'>): Role[] =>
+  round.mode === 'coop' ? ['host'] : round.teams ? activeTeams(round.teams).map(team => team.members[0]) : round.players;
+const kitchenRole = (round: Pick<BurgerRound, 'mode' | 'teams'>, role: Role): Role =>
+  round.mode === 'coop' ? 'host' : teamFor(round.teams, role)?.members[0] ?? role;
 export const burgerCounter = (round: BurgerRound, role: Role): Counter => round.counters[kitchenRole(round, role)]!;
 export const burgerResigned = (round: BurgerRound, role: Role) =>
-  round.mode === 'coop' ? Boolean(round.resigned?.includes(role)) : burgerCounter(round, role).retired;
+  round.mode === 'coop' || round.teams ? Boolean(round.resigned?.includes(role)) : burgerCounter(round, role).retired;
 
 export function createBurgerRound(minutes: BurgerMinutes, players: Role[], seed = Math.floor(Math.random() * 0x1_0000_0000),
-  mode: BurgerMode = 'race', difficulty = defaultBurgerDifficulty): BurgerRound {
-  return { players, counters: Object.fromEntries(kitchenRoles({ mode, players }).map(role =>
-    [role, { ...emptyCounter(), money: 100, cards: mode === 'coop' ? ['assembly'] : [], xp: 0 }])),
-    seed, minutes, difficulty, ...(mode === 'coop' && { mode }), start: 0, end: 0, revision: 0 };
+  mode: BurgerMode = 'race', difficulty = defaultBurgerDifficulty, lineup?: RoomTeam[]): BurgerRound {
+  const teams = mode === 'teams' ? lineup ?? fillRoomTeams([], players) : undefined;
+  return { players, counters: Object.fromEntries(kitchenRoles({ mode, players, teams }).map(role =>
+    [role, { ...emptyCounter(), money: 100, cards: mode === 'race' ? [] : ['assembly'], xp: 0 }])),
+    seed, minutes, difficulty, ...(mode !== 'race' && { mode }), ...(teams && { teams }), start: 0, end: 0, revision: 0 };
 }
 
 export function startBurgerRound(round: BurgerRound, start: number): BurgerRound {
@@ -365,12 +372,16 @@ function changed(round: BurgerRound, counters: BurgerRound['counters'], done = f
     return { ...round, counters, revision: round.revision + 1,
       winners: done || counters.host?.closed || round.resigned?.length === round.players.length ? [] : undefined };
   }
-  const eligible = round.players.filter(role => !counters[role]!.retired);
+  const kitchens = kitchenRoles(round);
+  const eligible = kitchens.filter(role => !counters[role]!.retired);
   const best = Math.max(...eligible.map(role => counters[role]!.money));
-  const ended = done || eligible.length === 0 || (round.players.length > 1 && eligible.length === 1);
+  const ended = done || eligible.length === 0 || (kitchens.length > 1 && eligible.length === 1);
   return { ...round, counters, revision: round.revision + 1,
     winners: ended || eligible.every(role => counters[role]!.closed)
-      ? eligible.filter(role => counters[role]!.money === best) : undefined };
+      ? round.players.filter(role => {
+        const kitchen = kitchenRole(round, role);
+        return eligible.includes(kitchen) && counters[kitchen]!.money === best && !round.resigned?.includes(role);
+      }) : undefined };
 }
 
 const orderDrinkPrice = (order: Order) => order.drink ? burgerPrices.drinks[order.drink.size] : 0;
@@ -1002,6 +1013,14 @@ export function applyBurgerAction(round: BurgerRound, actor: Role, raw: unknown,
 export function resignBurger(round: BurgerRound, actor: Role) {
   if (!round.players.includes(actor) || round.winners || burgerResigned(round, actor)) return;
   if (round.mode === 'coop') return changed({ ...round, resigned: [...(round.resigned ?? []), actor] }, round.counters);
+  if (round.teams) {
+    const team = teamFor(round.teams, actor)!;
+    const resigned = [...(round.resigned ?? []), actor];
+    const next = { ...round, resigned };
+    if (team.members.some(role => !resigned.includes(role))) return changed(next, round.counters);
+    const kitchen = team.members[0];
+    return changed(next, { ...round.counters, [kitchen]: { ...round.counters[kitchen]!, retired: true, closed: true, assemblyJob: undefined } });
+  }
   const counter = round.counters[actor];
   if (!counter || counter.retired || round.winners) return;
   return changed(round, { ...round.counters, [actor]: { ...counter, retired: true } });
@@ -1009,7 +1028,8 @@ export function resignBurger(round: BurgerRound, actor: Role) {
 
 export function burgerOutcome(round: BurgerRound, role: Role) {
   if (round.mode === 'coop' || !round.winners || !round.players.includes(role)) return;
-  return !round.winners.includes(role) ? 'loss' : round.winners.length > 1 ? 'draw' : 'win';
+  return !round.winners.includes(role) ? 'loss'
+    : round.winners.some(winner => kitchenRole(round, winner) !== kitchenRole(round, role)) ? 'draw' : 'win';
 }
 
 function shiftCounter(counter: Counter, pause: number): Counter {
@@ -1108,7 +1128,7 @@ function validCardHistory(counter: Counter, mode?: BurgerMode) {
   const { cards } = counter;
   if (!Array.isArray(cards) || !cards.every(readBurgerCard)) return false;
   const earned = burgerRank(counter) - 1 - Number(Boolean(counter.draft));
-  const startsWithAssembly = mode === 'coop' && counter.xp !== undefined && cards[0] === 'assembly' && cards.length === earned + 1;
+  const startsWithAssembly = (mode === 'coop' || mode === 'teams') && counter.xp !== undefined && cards[0] === 'assembly' && cards.length === earned + 1;
   if (startsWithAssembly && cards.includes('assembly', 1)) return false;
   return earned >= 0 && cards.length === earned + Number(startsWithAssembly) && validUpgradeHistory(cards, Number(startsWithAssembly));
 }
@@ -1116,10 +1136,13 @@ function validCardHistory(counter: Counter, mode?: BurgerMode) {
 export function readBurgerRound(raw: unknown): BurgerRound | undefined {
   if (!raw || typeof raw !== 'object') return;
   const { players, counters, seed, start, opensAt, end, minutes, difficulty, mode, resigned, revision, winners } = raw as BurgerRound;
+  const rawTeams = (raw as BurgerRound).teams;
+  const teams = readRoomTeams(rawTeams);
   const salesStart = opensAt ?? start;
-  const cardRound = Array.isArray(counters?.host?.cards);
-  const xpRound = counters?.host?.xp !== undefined;
-  if (!readBurgerMinutes(minutes) || !Array.isArray(players) || players.length < 2 || players.length > 4 || players[0] !== 'host'
+  const firstKitchen = counters?.[kitchenRole({ mode, teams }, 'host')];
+  const cardRound = Array.isArray(firstKitchen?.cards);
+  const xpRound = firstKitchen?.xp !== undefined;
+  if (!readBurgerMinutes(minutes) || !Array.isArray(players) || players.length < 2 || players.length > roomPlayerCapacity('burger', mode) || players[0] !== 'host'
     || !players.every(isRoomRole) || new Set(players).size !== players.length || !counters || typeof counters !== 'object'
     || !integer(seed, 0xffffffff) || !integer(start) || !integer(end) || !integer(revision)
     || (difficulty !== undefined && !readBurgerDifficulty(difficulty))
@@ -1127,12 +1150,14 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
     || (minutes === 'endless' ? (start ? end < salesStart + burgerEndlessOpeningMs : end !== 0)
       : cardRound && start ? end < salesStart + minutes * 60_000 : end !== (start ? salesStart + minutes * 60_000 : 0))) return;
   if (mode !== undefined && !readBurgerMode(mode)) return;
-  if (resigned !== undefined && (mode !== 'coop' || !Array.isArray(resigned) || new Set(resigned).size !== resigned.length
+  if (mode === 'teams' ? !teams || !validTeamLineup(teams, players) : rawTeams !== undefined) return;
+  if (resigned !== undefined && ((mode !== 'coop' && mode !== 'teams') || !Array.isArray(resigned) || new Set(resigned).size !== resigned.length
     || !resigned.every(role => players.includes(role)))) return;
   if (winners !== undefined && (!Array.isArray(winners) || new Set(winners).size !== winners.length || !winners.every(role => players.includes(role)))) return;
   if (mode === 'coop' && (Object.keys(counters).some(role => role !== 'host') || winners?.length)) return;
   const boards: BurgerRound['counters'] = {};
-  const kitchens = kitchenRoles({ players, mode });
+  const kitchens = kitchenRoles({ players, mode, teams });
+  if (teams && Object.keys(counters).some(role => !kitchens.includes(role as Role))) return;
   for (const role of kitchens) {
     const counter = counters[role];
     if (!counter || ![counter.money, counter.served, counter.combo, counter.best, counter.sequence, counter.next, counter.feverUntil].every(value => integer(value))
@@ -1205,7 +1230,7 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
     } else boards[role] = counter;
   }
   if ((minutes === 'endless' || cardRound) && start && Math.max(...kitchens.map(role => boards[role]!.playUntil!)) !== end) return;
-  return { players, counters: boards, seed, minutes, ...(mode && { mode }), ...(resigned && { resigned }), start,
+  return { players, counters: boards, seed, minutes, ...(mode && { mode }), ...(teams && { teams }), ...(resigned && { resigned }), start,
     ...(opensAt !== undefined && { opensAt }), ...(difficulty && { difficulty }), end, revision, winners };
 }
 import { chooseBurgerDialogue, isBurgerLine } from './dialogue.ts';

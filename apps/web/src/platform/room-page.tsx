@@ -2,8 +2,9 @@ import { Popup } from './popup.tsx';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
-import { isRoomGame, roomCapacity, roomCodePattern, roomRoles } from '../../../../packages/protocol/rooms.ts';
-import { isTilePuzzle } from '../../../../packages/protocol/games.ts';
+import { isRoomGame, roomCodePattern, roomRoles } from '../../../../packages/protocol/rooms.ts';
+import { isTilePuzzle, roomPlayerCapacity } from '../../../../packages/protocol/games.ts';
+import { activeTeams, maxTeams, teamFor, teamSize } from '../../../../packages/protocol/room-teams.ts';
 import type { Participant, RoomGame } from '../../../../packages/protocol/rooms.ts';
 import { oppositeStone, sideLabel } from '../games/table.ts';
 import type { useRoomBoard } from '../network/use-room-board.ts';
@@ -75,19 +76,28 @@ function RoomSettingsDialog({ room, close }: { room: Room; close: () => void }) 
   const { t } = useTranslation();
   const [draft, setDraft] = useState(room.settings);
   const [valid, setValid] = useState(true);
+  const [failed, setFailed] = useState(false);
   const changed = JSON.stringify(draft) !== JSON.stringify(room.settings);
+  const tooMany = room.realParticipantCount > roomPlayerCapacity(room.game, draft.burgerMode);
   return <Popup className="room-rules-dialog" aria-labelledby="room-rules-title"
-    onDismiss={close}>
+    onDismiss={close} locked={room.changingGame}>
     <header className="room-panel-heading">
       <h2 id="room-rules-title">{t('setupTitle', { game: t(room.game) })}</h2>
     </header>
-    <form onSubmit={event => { event.preventDefault(); if (changed && valid && room.configureMatch(draft)) close(); }}>
+    <form onSubmit={async event => {
+      event.preventDefault();
+      if (!changed || !valid || tooMany || room.changingGame) return;
+      if (await room.configureMatch(draft)) close();
+      else setFailed(true);
+    }}>
       <div className="setup-dialog-body">
-        <GameRulesEditor game={room.game} settings={draft} change={setDraft} online onValidity={setValid} />
+        <GameRulesEditor game={room.game} settings={draft} change={settings => { setDraft(settings); setFailed(false); }} online onValidity={setValid} />
+        {tooMany && <p className="setup-error" role="status">{t('roomModeCapacity', { count: roomPlayerCapacity(room.game, draft.burgerMode) })}</p>}
+        {failed && <p className="setup-error" role="alert">{t('changeGameError')}</p>}
       </div>
       <footer className="setup-actions">
-        <button type="button" className="button button-secondary" onClick={close}>{t('cancel')}</button>
-        <button type="submit" className="button button-primary" disabled={!valid || !changed}>{t('saveSettings')}</button>
+        <button type="button" className="button button-secondary" disabled={room.changingGame} onClick={close}>{t('cancel')}</button>
+        <button type="submit" className="button button-primary" disabled={!valid || !changed || tooMany || room.changingGame}>{t('saveSettings')}</button>
       </footer>
     </form>
   </Popup>;
@@ -166,14 +176,18 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
   const shareUrl = new URL(routeHref(room.code ? '/room?room=' + room.code : '/room'), location.origin);
   const connected = room.state === 'connected';
   const hasRoom = room.active;
-  const participants: Participant[] = room.role && !room.participants.some(person => person.role === room.role)
+  const waitingOwn = room.waitingParticipants.some(person => person.role === room.role);
+  const participants: Participant[] = room.role && !waitingOwn && !room.participants.some(person => person.role === room.role)
     ? [...room.participants, { role: room.role, profile: undefined }] : room.participants;
   const rosterPlayers = [...participants, ...room.awayParticipants.filter(person => !participants.some(player => player.role === person.role))];
-  const capacity = roomCapacity[activeGame];
-  const gameChoices = roomGames.filter(id => id !== activeGame && participants.length <= roomCapacity[id]);
+  const capacity = roomPlayerCapacity(activeGame, room.settings.burgerMode);
+  const gameChoices = roomGames.filter(id => id !== activeGame && room.realParticipantCount <= roomPlayerCapacity(id));
+  const teamEditing = Boolean(room.teams) && !room.started;
+  const needsRivals = teamEditing && participants.length >= 2 && activeTeams(room.teams!).length < 2;
+  const unassigned = room.teams ? rosterPlayers.filter(person => !teamFor(room.teams, person.role)) : [];
   const canEdit = room.role === 'host' && (!room.started || room.finishedAt > 0);
   const canChange = room.role === 'host' && gameChoices.length > 0;
-  const canRetry = room.needsReconnect || (connected && room.role === 'host' && !room.canStart && (activeGame !== 'liar' || participants.length >= 3));
+  const canRetry = !needsRivals && (room.needsReconnect || (connected && room.role === 'host' && !room.canStart && (activeGame !== 'liar' || participants.length >= 3)));
 
   useEffect(() => {
     if (hasRoom || !apiAvailable) return;
@@ -204,6 +218,45 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
     } catch {
       setCopyState('manual');
     }
+  }
+
+  function renderParticipant({ role, profile, mock, activity }: Participant) {
+    const color = room.colorFor(role) ?? (role === 'host' ? room.hostColor : oppositeStone(room.hostColor));
+    const own = !mock && room.role === role;
+    const participant = own ? ownProfile ?? profile : profile;
+    const activityLabel = activity?.startsWith('play:') ? t('roomActivity_play', { game: t(activity.slice(5)) })
+      : activity ? t('roomActivity_' + activity) : undefined;
+    const activityLine = activityLabel && <small className="lobby-participant-activity">{activityLabel}</small>;
+    const seatInfo = [t(role === 'host' ? 'host' : 'guest'), isTilePuzzle(activeGame) || activeGame === 'sketch' || activeGame === 'liar' || activeGame === 'slime' || activeGame === 'mole' || activeGame === 'burger'
+      || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)),
+      own ? t('me') : undefined, participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
+    const assignedTeam = mock && teamEditing && room.mockControls ? teamFor(room.teams, role) : undefined;
+    return <li key={role}>
+      {participant ? <>
+        <RouteLink className="person-link" href={own ? '/profile' : '/profiles/' + participant.id} navigate={navigate}>
+          <RoomPlayerAvatar appearance={participant} size={38} path={room.connectionPaths[role]} />
+          <span><strong>{participant.name}</strong><small>{seatInfo}</small>{activityLine}
+            <ParticipantStats key={participant.id} id={participant.id} game={activeGame} own={own ? ownProfile : undefined}
+              cooperative={activeGame === 'burger' && room.settings.burgerMode === 'coop'}
+              latest={room.roomHistory.find(entry => !entry.test && entry.game === activeGame && entry.players.some(player => player.profileId === participant.id))} />
+          </span>
+        </RouteLink>
+        {!own && <FriendButton id={participant.id} model={friends} />}
+      </> : <div className="person-link">
+        {mock ? <span className={'stone stone-' + (color > 2 ? color : sideLabel(activeGame, color) === 'black' ? 0 : 1)} aria-hidden="true" />
+          : <RoomPlayerAvatar size={38} path={room.connectionPaths[role]} />}
+        <span><strong>{mock ? t('mockSeat', { number: roomRoles.indexOf(role) }) : t('anonymousPlayer')}</strong>
+          <small>{mock ? t('mockIdle') : seatInfo}</small>{activityLine}</span>
+      </div>}
+      {assignedTeam && <select className="lobby-mock-team" aria-label={t('roomMockTeam', { number: roomRoles.indexOf(role) })}
+        value={assignedTeam.id} onChange={event => {
+          const destination = room.teams?.find(team => String(team.id) === event.target.value);
+          if (destination) room.mockControls?.move(role, destination.id);
+        }}>
+        {room.teams?.map(team => <option key={team.id} value={team.id}
+          disabled={team.id !== assignedTeam.id && team.members.length >= teamSize}>{t('roomTeam', { number: team.id })}</option>)}
+      </select>}
+    </li>;
   }
 
   if (!hasRoom) return <div className="site-width subpage match-workspace">
@@ -250,7 +303,8 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           </div></header>
           {room.state && <div className="lobby-status">
             <p id="lobby-connection" className="connection lobby-connection" role="status">
-              {t(activeGame === 'liar' && !room.started && participants.length < 3 ? 'liarNeedPlayers'
+              {t(needsRivals ? 'burgerTeamsNeedRivals' : activeGame === 'liar' && !room.started && participants.length < 3 ? 'liarNeedPlayers'
+                : room.role === 'host' && !room.started && room.testMatch && room.canStart ? 'roomMockReady'
                 : room.role === 'host' && !room.started && connected && !room.canStart ? 'waitingAllConnections'
                   : connected && room.role !== 'host' && room.started && !room.inMatch ? 'waitingNextRound'
                     : connected && room.role !== 'host' && !room.started ? 'waitingStart' : room.state)}
@@ -259,35 +313,41 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
             {connected && <ConnectionReport key={room.code} read={room.connectionReport} />}
           </div>}
           {room.rematchNotice === 'incoming' && <p role="status">{t('rematchIncoming')}</p>}
-          <ul className="people-list">{rosterPlayers.map(({ role, profile, mock, activity }) => {
-            const color = room.colorFor(role) ?? (role === 'host' ? room.hostColor : oppositeStone(room.hostColor));
-            const own = room.role === role;
-            const participant = own ? ownProfile ?? profile : profile;
-            const activityLabel = activity?.startsWith('play:') ? t('roomActivity_play', { game: t(activity.slice(5)) })
-              : activity ? t('roomActivity_' + activity) : undefined;
-            const activityLine = activityLabel && <small className="lobby-participant-activity">{activityLabel}</small>;
-            const seatInfo = [t(role === 'host' ? 'host' : 'guest'), isTilePuzzle(activeGame) || activeGame === 'sketch' || activeGame === 'liar' || activeGame === 'slime' || activeGame === 'mole' || activeGame === 'burger'
-              || (activeGame === 'physics' && !room.physicsSeats) ? undefined : t(sideLabel(activeGame, color)),
-              own ? t('me') : undefined, participant ? t('levelValue', { level: participant.level }) : undefined].filter(Boolean).join(' · ');
-            return <li key={role}>
-              {participant ? <>
-                <RouteLink className="person-link" href={own ? '/profile' : '/profiles/' + participant.id} navigate={navigate}>
-                  <RoomPlayerAvatar appearance={participant} size={38} path={room.connectionPaths[role]} />
-                  <span><strong>{participant.name}</strong><small>{seatInfo}</small>{activityLine}
-                    <ParticipantStats key={participant.id} id={participant.id} game={activeGame} own={own ? ownProfile : undefined}
-                      cooperative={activeGame === 'burger' && room.settings.burgerMode === 'coop'}
-                      latest={room.roomHistory.find(entry => !entry.test && entry.game === activeGame && entry.players.some(player => player.profileId === participant.id))} />
-                  </span>
-                </RouteLink>
-                {!own && <FriendButton id={participant.id} model={friends} />}
-              </> : <div className="person-link">
-                {mock ? <span className={'stone stone-' + (color > 2 ? color : sideLabel(activeGame, color) === 'black' ? 0 : 1)} aria-hidden="true" />
-                  : <RoomPlayerAvatar size={38} path={room.connectionPaths[role]} />}
-                <span><strong>{mock ? t('mockSeat', { number: roomRoles.indexOf(role) }) : t('anonymousPlayer')}</strong>
-                  <small>{mock ? t('mockIdle') : seatInfo}</small>{activityLine}</span>
-              </div>}
-            </li>;
-          })}</ul>
+          {room.teams ? <>
+            {teamEditing && <p className="lobby-team-help">{t('burgerTeamsMoveHelp')}</p>}
+            <div className="lobby-team-grid">
+              {room.teams.map(team => {
+                const ownTeam = room.role && !waitingOwn && team.members.includes(room.role);
+                const players = rosterPlayers.filter(person => team.members.includes(person.role));
+                return <section className="lobby-team" data-team={team.id} data-own={ownTeam || undefined} key={team.id}
+                  aria-label={t('roomTeam', { number: team.id })}>
+                  <header>
+                    <h3>{t('roomTeam', { number: team.id })}</h3>
+                    <span className="lobby-team-count">{team.members.length}/{teamSize}</span>
+                    {teamEditing && room.role === 'host' && room.teams!.length > 2 && !team.members.length &&
+                      <button type="button" className="lobby-team-remove" aria-label={t('roomTeamRemove', { number: team.id })}
+                        onClick={() => room.editTeam(team.id)}>−</button>}
+                  </header>
+                  {players.length ? <ul className="people-list">{players.map(renderParticipant)}</ul>
+                    : <p className="lobby-team-empty">{t('roomTeamEmpty')}</p>}
+                  {teamEditing && <button type="button" className="button button-secondary lobby-team-join" aria-pressed={Boolean(ownTeam)}
+                    disabled={Boolean(ownTeam) || team.members.length >= teamSize || (!connected && room.role !== 'host')}
+                    onClick={() => room.chooseTeam(team.id)}>
+                    {t(ownTeam ? 'roomTeamYours' : team.members.length >= teamSize ? 'roomTeamFull' : 'roomTeamJoin', { number: team.id })}
+                  </button>}
+                </section>;
+              })}
+            </div>
+            {teamEditing && room.role === 'host' && room.teams.length < maxTeams &&
+              <button type="button" className="button button-secondary lobby-team-add" onClick={() => room.editTeam()}>
+                <span aria-hidden="true">+</span> {t('roomTeamAdd')}
+              </button>}
+            {unassigned.length > 0 && <ul className="people-list">{unassigned.map(renderParticipant)}</ul>}
+          </> : <ul className="people-list">{rosterPlayers.map(renderParticipant)}</ul>}
+          {room.waitingParticipants.length > 0 && <section className="lobby-next-round">
+            <h3>{t('waitingNextRound')}</h3>
+            <ul className="people-list">{room.waitingParticipants.map(renderParticipant)}</ul>
+          </section>}
           {room.mockControls && <div className="panel-actions">
             <button type="button" className="button button-secondary" disabled={!room.mockControls.canAdd} onClick={room.mockControls.add}>{t('addMockPlayer')}</button>
             {room.mockControls.canRemove && <button type="button" className="button button-secondary" onClick={room.mockControls.remove}>{t('removeMockPlayer')}</button>}
@@ -298,7 +358,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
           </div>
           {copyState === 'manual' && <input aria-label={t('link')} readOnly value={shareUrl.href} onFocus={event => event.currentTarget.select()} />}
           {room.role === 'host' && <button className="button button-secondary lobby-invite" type="button"
-            disabled={!friends.owner || participants.length >= capacity} onClick={() => setInviteOpen(true)}>{t('inviteFriend')}</button>}
+            disabled={!friends.owner || room.realParticipantCount >= capacity} onClick={() => setInviteOpen(true)}>{t('inviteFriend')}</button>}
         </section>
       </div>
       <div className="panel-actions lobby-feature-actions">
@@ -315,7 +375,7 @@ export function RoomPage({ room, friends, ownProfile, invite, navigate, onPlay }
       </div>
     </GameFeature>
     {inviteOpen && room.role === 'host' && <InviteDialog owner={friends.owner} navigate={navigate} invite={room.invite} close={() => setInviteOpen(false)} />}
-    {gamesOpen && room.role === 'host' && <RoomGamesDialog room={room} choices={gameChoices} participants={participants.length} close={() => setGamesOpen(false)} />}
+    {gamesOpen && room.role === 'host' && <RoomGamesDialog room={room} choices={gameChoices} participants={room.realParticipantCount} close={() => setGamesOpen(false)} />}
     {settingsOpen && canEdit && <RoomSettingsDialog room={room} close={() => setSettingsOpen(false)} />}
   </div>;
 }

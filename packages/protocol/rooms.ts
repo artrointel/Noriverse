@@ -8,7 +8,7 @@ export const roomCodePattern = /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/;
 export type RoomGame = GameId;
 export { roomCapacity, isGameId as isRoomGame } from './games.ts';
 
-export const roomRoles = ['host', 'guest', 'guest2', 'guest3'] as const;
+export const roomRoles = ['host', 'guest', 'guest2', 'guest3', 'guest4', 'guest5', 'guest6', 'guest7'] as const;
 export type Role = (typeof roomRoles)[number];
 export const isRoomRole = (value: unknown): value is Role => roomRoles.some(role => role === value);
 const roomActivityPages = ['lobby', 'home', 'profile', 'library', 'friends', 'setup', 'characters', 'other'] as const;

@@ -1,6 +1,7 @@
 import { createRoomCode, isRoomGame, roomCodePattern } from '../../packages/protocol/rooms.ts';
 import { profileIdPattern } from '../../packages/protocol/profile.ts';
 import { readRoomTitle, roomTitleOptions } from '../../packages/protocol/room-titles.ts';
+import { readBurgerMode } from '../../packages/protocol/games.ts';
 import { notifyFriends, profileRequest, profileSession, verifiedFriends } from './profiles.ts';
 import { readBody } from './http.ts';
 import type { Env } from './bindings.ts';
@@ -81,11 +82,13 @@ export default {
 
     const gameRoomCode = url.pathname.match(/^\/api\/rooms\/([^/]+)\/game$/)?.[1];
     if (gameRoomCode && roomCodePattern.test(gameRoomCode) && request.method === 'POST') {
-      const input = await readBody(request) as { seat?: unknown; game?: unknown } | undefined;
+      const input = await readBody(request) as { seat?: unknown; game?: unknown; burgerMode?: unknown } | undefined;
       if (typeof input?.seat !== 'string' || !profileIdPattern.test(input.seat) || !isRoomGame(input.game)) {
         return cors(new Response(null, { status: 400 }));
       }
-      const changed = await env.ROOMS.getByName(gameRoomCode).changeGame(input.seat, input.game);
+      const burgerMode = readBurgerMode(input.burgerMode);
+      if (input.burgerMode !== undefined && (input.game !== 'burger' || !burgerMode)) return cors(new Response(null, { status: 400 }));
+      const changed = await env.ROOMS.getByName(gameRoomCode).changeGame(input.seat, input.game, burgerMode);
       return cors(new Response(null, { status: changed ? 204 : 409 }));
     }
 
@@ -107,6 +110,9 @@ export default {
       const body = await readBody(request);
       const game = body && typeof body === 'object' && 'game' in body ? body.game : 'omok';
       if (!isRoomGame(game)) return cors(new Response(null, { status: 400 }));
+      const mode = body && typeof body === 'object' && 'burgerMode' in body ? body.burgerMode : undefined;
+      const burgerMode = readBurgerMode(mode);
+      if (mode !== undefined && (game !== 'burger' || !burgerMode)) return cors(new Response(null, { status: 400 }));
       const input = body && typeof body === 'object' && 'title' in body ? body.title : undefined;
       const customTitle = readRoomTitle(input);
       if (input !== undefined && !customTitle) return cors(new Response(null, { status: 400 }));
@@ -117,7 +123,7 @@ export default {
       for (let attempt = 0; attempt < 4; attempt++) {
         const code = createRoomCode();
         const room = env.ROOMS.getByName(code);
-        const token = await room.reserve(game, title, profile ?? undefined);
+        const token = await room.reserve(game, title, profile ?? undefined, burgerMode);
         if (token) return cors(Response.json({ code, token, title }, { status: 201 }));
       }
       return cors(new Response(null, { status: 503 }));

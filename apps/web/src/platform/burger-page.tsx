@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { elapsedPlaySeconds } from '../../../../packages/protocol/profile.ts';
 import type { MatchReport, ProfileSummary, TouchEffect } from '../../../../packages/protocol/profile.ts';
 import type { Role } from '../../../../packages/protocol/rooms.ts';
+import { activeTeams, teamFor } from '../../../../packages/protocol/room-teams.ts';
 import {
   advanceBurger, applyBurgerAction, burgerCounter, burgerDeadline, burgerOutcome, burgerRank, burgerResigned, createBurgerRound,
   nextBurgerAt, resignBurger, startBurgerRound,
@@ -45,6 +46,7 @@ export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, da
   const role = room?.role ?? 'host';
   const counter = burgerCounter(round, role);
   const cooperative = round.mode === 'coop';
+  const ownTeam = teamFor(round.teams, role);
   const resigned = burgerResigned(round, role);
   const finishedAt = room?.finishedAt ?? practice.finishedAt;
   const roundStart = useRoundStart(id, room, room?.displayStart ?? 0, at =>
@@ -103,7 +105,7 @@ export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, da
     if (cooperative) return { id, game: 'burger', mode: 'coop', outcome: 'score', seconds, score: counter.money };
     if (outcome) return { id, game: 'burger', mode: room ? 'online' : 'practice', outcome, seconds };
   }, [id, Boolean(room), cooperative, counter.money, outcome, finishedAt, startedAt]);
-  const mode = cooperative ? 'coop' : room ? 'burgerRace' : 'practice';
+  const mode = ownTeam ? 'burgerTeams' : cooperative ? 'coop' : room ? 'burgerRace' : 'practice';
   const waitingForRivals = room && !cooperative && round.minutes === 'endless' && counter.closed && !counter.bankrupt;
   const status = finishedAt ? t(counter.bankrupt ? 'burgerBankrupt' : endlessTimeout ? 'burgerEndlessTimeout'
     : room && outcome ? 'outcome_' + outcome : resigned ? 'gameFinished' : 'burgerClosed')
@@ -115,15 +117,25 @@ export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, da
     const name = profile?.name ?? t(participant?.mock ? 'mockSeat'
       : player === role ? 'me' : player === 'host' ? 'host' : 'anonymousSeat', { number: index + 1 });
     return { player, profile, name, data: burgerCounter(round, player), result: room && burgerOutcome(round, player) };
-  }).sort((a, b) => Number(a.data.retired) - Number(b.data.retired) || b.data.money - a.data.money);
+  });
+  const scoreRows = (round.teams ? activeTeams(round.teams).map(team => {
+    const members = players.filter(player => team.members.includes(player.player));
+    const winner = members.find(member => round.winners?.includes(member.player));
+    return { key: team.id, team: team.id, own: team === ownTeam, name: t('roomTeam', { number: team.id }),
+      members, data: burgerCounter(round, team.members[0]), result: winner?.result ?? (round.winners ? 'loss' : undefined) };
+  }) : players.map(player => ({ key: player.player, team: undefined, own: player.player === role, name: player.name, members: [player],
+    data: player.data, result: player.result })))
+    .sort((a, b) => Number(a.data.retired) - Number(b.data.retired) || b.data.money - a.data.money);
   const stats = <section className="sichuan-score" aria-label={t('sichuanPlayerStats')}>
     {cooperative ? <div>
       <strong>{t('burgerSharedKitchen')}</strong>
       <span>{t('burgerTeamSales')} <b>{counter.money.toLocaleString()}</b></span>
       <span>{t('burgerServed')} <b>{counter.served}</b></span>
       <span>{t('burgerBest')} <b>{counter.best}</b></span>
-    </div> : players.map(({ player, profile, name, data, result }) => <div key={player}>
-      <strong>{room && <RoomPlayerAvatar appearance={profile} size={22} path={room.connectionPaths[player]} />}{name}
+    </div> : scoreRows.map(({ key, team, members, name, data, result }) => <div key={key} data-team={team} className={team ? 'burger-team-score' : undefined}>
+      <strong>{room && members.map(({ player, profile, name }) => <span key={player} title={name}>
+        <RoomPlayerAvatar appearance={profile} size={22} path={room.connectionPaths[player]} />
+      </span>)}{name}
         {result && <small>{t('outcome_' + result)}</small>}</strong>
       <span>{labels.money} <b>{data.money.toLocaleString()}</b></span>
       <span>{t('burgerServed')} <b>{data.served}</b></span>
@@ -154,7 +166,7 @@ export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, da
     <div className="play-layout">
       <MatchStage id="burger" matchId={id} antialias={antialias} resolution={resolution} onResolution={onResolution} onAntialias={onAntialias} landscapeFullscreen
         onReady={roundStart.ready} beginsAt={roundStart.beginsAt} ending={ending}
-        stageContext={{ mode: t(mode),
+        stageContext={{ mode: ownTeam ? t(mode) + ' · ' + t('roomTeam', { number: ownTeam.id }) : t(mode),
           map: (round.minutes === 'endless' ? t('burgerEndless') : formatPlayTime(round.minutes * 60)) + ' · '
             + t('burgerDifficulty_' + (round.difficulty ?? defaultBurgerDifficulty)) }}
         endAction={!finishedAt && !resigned && !counter.closed && <EndRoundAction key={id} online={Boolean(room)} disabled={!active} end={end} />}
@@ -170,11 +182,11 @@ export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, da
             translate: key => t(key),
             cardHud: { showDraft: canInteract && !room?.recoveryAt && Boolean(counter.draft), describe: cardDetails,
               title: t('burgerLevelUp', { level: burgerRank(counter) }),
-              instruction: t(cooperative ? 'burgerDraftCoop' : 'burgerDraftChoose'),
+              instruction: t(cooperative || ownTeam ? 'burgerDraftCoop' : 'burgerDraftChoose'),
               lockedInstruction: t('burgerDraftLocked'),
               reroll: (remaining, limit) => t('burgerDraftReroll', { remaining, limit }),
               history: t('burgerCardHistory'), empty: t('burgerNoCards') },
-            rivals: cooperative ? [] : players.filter(player => player.player !== role)
+            rivals: cooperative ? [] : scoreRows.filter(row => !row.own)
               .map(({ name, data }) => ({ name, money: data.money })) } }} />
     </div>
   </div>;

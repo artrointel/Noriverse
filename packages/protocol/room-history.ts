@@ -1,6 +1,6 @@
 import { isAvatarId, profileIdPattern, readName } from './profile.ts';
 import type { AvatarId } from './profile.ts';
-import { isRoomGame, isRoomRole } from './rooms.ts';
+import { isRoomGame, isRoomRole, roomCapacity } from './rooms.ts';
 import type { Participant, Role, RoomGame } from './rooms.ts';
 
 export type RoomResultPlayer = { role: Role; name?: string; avatar?: AvatarId; profileId?: string; memberId?: string; mock?: true;
@@ -20,7 +20,7 @@ export function readRoomResult(raw: unknown): RoomResult | undefined {
   if (typeof id !== 'string' || !profileIdPattern.test(id) || !isRoomGame(game)
     || typeof endedAt !== 'number' || !Number.isSafeInteger(endedAt) || endedAt <= 0 || endedAt > 8.64e15
     || typeof seconds !== 'number' || !Number.isSafeInteger(seconds) || seconds < 0
-    || !Array.isArray(players) || players.length < 2 || players.length > 4
+    || !Array.isArray(players) || players.length < 2 || players.length > roomCapacity[game]
     || (test !== undefined && test !== true)) return;
   if (players.some(entry => !entry || !isRoomRole(entry.role) || (entry.name !== undefined && !readName(entry.name))
     || (entry.avatar !== undefined && !isAvatarId(entry.avatar))

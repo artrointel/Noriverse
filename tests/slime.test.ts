@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { roomRoles } from '../packages/protocol/rooms.ts';
+import { roomCapacity, roomRoles } from '../packages/protocol/rooms.ts';
 import { advanceOrbit, applyOrbitInput, createOrbitRound, nextOrbitAt, orbitClearMs, orbitGravityMs, orbitHeight, orbitLanding, orbitOutcome,
   orbitWidth, readOrbitRound, resignOrbit, resolveOrbitTiles } from '../apps/web/src/games/slime/rules.ts';
 import type { OrbitCell } from '../apps/web/src/games/slime/rules.ts';
@@ -9,6 +9,7 @@ import { blankMatch, readMatchSnapshot } from '../apps/web/src/network/room-matc
 import { awardRoomPoints } from '../apps/web/src/network/room-scoring.ts';
 
 const at = (x: number, fromBottom = 0) => x + (orbitHeight - fromBottom - 1) * orbitWidth;
+const slimeSeats = roomRoles.slice(0, roomCapacity.slime);
 
 function chainTiles() {
   const cells = Array<OrbitCell>(orbitWidth * orbitHeight).fill(0);
@@ -80,7 +81,7 @@ test('down drops only on consecutive presses within 500 ms on the same pair and 
 });
 
 test('chains queue meteors on the next live board and the last survivor receives the win', () => {
-  let round = { ...createOrbitRound([...roomRoles], 77), tickAt: 1_000 };
+  let round = { ...createOrbitRound(slimeSeats, 77), tickAt: 1_000 };
   round = resignOrbit(round, 'guest')!;
   const host = round.boards.host!;
   host.cells = chainTiles();
@@ -153,7 +154,7 @@ test('a blocked spawn loses, including a draw when all survivors top out on the 
 });
 
 test('room snapshots restore separate boards and reject a rollback or invalid piece', () => {
-  const slime = { ...createOrbitRound([...roomRoles], 9), tickAt: 400 + orbitGravityMs };
+  const slime = { ...createOrbitRound(slimeSeats, 9), tickAt: 400 + orbitGravityMs };
   const snapshot = { ...blankMatch, type: 'snapshot', id: 'orbit', game: 'slime', startedAt: 100, beginsAt: 400, slime };
   const updated = applyOrbitInput(slime, 'guest2', { serial: 0, input: 'drop' })!;
   const read = readMatchSnapshot({ ...snapshot, slime: updated }, blankMatch, 500)!;

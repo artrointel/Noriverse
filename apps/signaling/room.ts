@@ -5,17 +5,18 @@ import type { ProfileSummary } from '../../packages/protocol/profile.ts';
 import { profileIdPattern } from '../../packages/protocol/profile.ts';
 import type { Env } from './bindings.ts';
 import { notifyFriends } from './profiles.ts';
-import { minimumRoomPlayers } from '../../packages/protocol/games.ts';
+import { minimumRoomPlayers, roomPlayerCapacity } from '../../packages/protocol/games.ts';
+import type { BurgerMode } from '../../packages/protocol/games.ts';
 import { readRoomResult, roomStandings } from '../../packages/protocol/room-history.ts';
 import type { RoomResult } from '../../packages/protocol/room-history.ts';
 import { roomStreakBadges } from '../../packages/protocol/room-badges.ts';
 
-interface Reservation { host: string; hostJoined?: boolean; hostAwayUntil?: number; guest?: string; guest2?: string; guest3?: string; game?: RoomGame; expires: number;
+interface Reservation extends Partial<Record<Role, string>> { host: string; hostJoined?: boolean; hostAwayUntil?: number; game?: RoomGame; burgerMode?: BurgerMode; expires: number;
   profiles?: Partial<Record<Role, ProfileSummary>>; memberIds?: Partial<Record<Role, string>>; closedAt?: number; title?: string }
 type AttachedSeat = { role: Role; token?: string; relay?: boolean; upgrade?: string; activity?: RoomActivity };
 const unclaimedRoomLifetime = 30 * 60 * 1000;
 const guests = roomRoles.filter(role => role !== 'host');
-const hasOpenSeat = (room: Reservation) => roomRoles.filter(role => room[role]).length < roomCapacity[room.game ?? 'omok'];
+const hasOpenSeat = (room: Reservation) => roomRoles.filter(role => room[role]).length < roomPlayerCapacity(room.game ?? 'omok', room.burgerMode);
 
 function send(socket: WebSocket, message: RoomMessage) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
@@ -32,7 +33,7 @@ export class Room extends DurableObject<Env> {
     `);
   }
 
-  async reserve(game: RoomGame, title: string, profile?: ProfileSummary): Promise<string | null> {
+  async reserve(game: RoomGame, title: string, profile?: ProfileSummary, burgerMode?: BurgerMode): Promise<string | null> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const previous = await this.ctx.storage.get<Reservation>('reservation');
       if (previous) {
@@ -41,7 +42,7 @@ export class Room extends DurableObject<Env> {
           || !await this.finishRoom(previous)) return null;
       }
       this.closeRoomSockets();
-      const reservation: Reservation = { host: crypto.randomUUID(), hostJoined: false, game, title, expires: Date.now() + unclaimedRoomLifetime,
+      const reservation: Reservation = { host: crypto.randomUUID(), hostJoined: false, game, burgerMode, title, expires: Date.now() + unclaimedRoomLifetime,
         profiles: profile ? { host: profile } : undefined, memberIds: { host: crypto.randomUUID() } };
       await this.ctx.storage.put('reservation', reservation);
       this.rememberBadgeMembers(reservation);
@@ -50,19 +51,19 @@ export class Room extends DurableObject<Env> {
     });
   }
 
-  async changeGame(seat: string, game: RoomGame) {
+  async changeGame(seat: string, game: RoomGame, burgerMode?: BurgerMode) {
     return this.ctx.blockConcurrencyWhile(async () => {
       const reservation = await this.openReservation();
       if (!reservation || reservation.host !== seat) return false;
-      if (roomRoles.filter(role => this.socketFor(role)).length > roomCapacity[game]) return false;
-      const next = { ...reservation, game, profiles: { ...reservation.profiles }, memberIds: { ...reservation.memberIds } };
+      if (roomRoles.filter(role => this.socketFor(role)).length > roomPlayerCapacity(game, burgerMode)) return false;
+      const next = { ...reservation, game, burgerMode, profiles: { ...reservation.profiles }, memberIds: { ...reservation.memberIds } };
       for (const role of guests) if (!this.socketFor(role)) {
         delete next[role];
         delete next.profiles[role];
         delete next.memberIds[role];
       }
       await this.ctx.storage.put('reservation', next);
-      this.notifyRoomChange(reservation);
+      this.notifyRoomChange(next);
       return true;
     });
   }

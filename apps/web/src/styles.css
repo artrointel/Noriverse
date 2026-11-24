@@ -656,6 +656,34 @@ select { appearance: none; padding-right: 32px; background-image: url("data:imag
 .game-setup .setup-actions .button { min-width: 134px; justify-content: center; }
 .lobby-participants { display: grid; gap: 12px; min-width: 0; }
 .lobby-participants h2 { font-size: 1.16rem; }
+.lobby-team-help { margin: 0; color: var(--muted); font-size: .9rem; }
+.lobby-team-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 275px), 1fr)); gap: 12px; }
+.lobby-team[data-team="1"], .burger-team-score[data-team="1"] { --team-accent: #df6077; }
+.lobby-team[data-team="2"], .burger-team-score[data-team="2"] { --team-accent: #488de3; }
+.lobby-team[data-team="3"], .burger-team-score[data-team="3"] { --team-accent: #2caa7b; }
+.lobby-team[data-team="4"], .burger-team-score[data-team="4"] { --team-accent: #dc9c32; }
+.lobby-team {
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--team-accent) 46%, transparent);
+  border-radius: 14px; background: color-mix(in srgb, var(--team-accent) 9%, var(--surface));
+}
+.lobby-team[data-own] { border-color: var(--team-accent); }
+.lobby-team header { display: flex; align-items: center; gap: 8px; }
+.lobby-team h3 { margin: 0; font-size: 1rem; }
+.lobby-team h3::before {
+  display: inline-block; width: 8px; height: 8px; margin-inline-end: 7px;
+  border-radius: 50%; background: var(--team-accent); content: '';
+}
+.lobby-team-count { margin-inline-start: auto; color: var(--muted); font-size: .83rem; font-variant-numeric: tabular-nums; }
+.lobby-team-remove { width: 32px; height: 32px; padding: 0; border-radius: 9px; border: 1px solid var(--line); color: inherit; background: transparent; cursor: pointer; }
+.lobby-team-empty { margin: 0; color: var(--muted); font-size: .87rem; }
+.lobby-team .people-list { margin: 0; }
+.lobby-mock-team { min-width: 0; max-width: 45%; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 5px; }
+.lobby-next-round { display: grid; gap: 8px; }
+.lobby-next-round h3 { margin: 0; font-size: .95rem; }
+.lobby-team-join { margin-block-start: auto; align-self: flex-start; }
+.lobby-team-add { justify-self: start; }
+.burger-team-score { border-inline-start: 3px solid var(--team-accent); padding-inline-start: 8px; }
 .lobby-empty { padding: 15px; background: var(--raised); border-radius: 11px; color: var(--muted); }
 .match-rule-list { display: grid; gap: 12px 18px; margin: 0; }
 .match-rule-list > div { display: grid; gap: 2px; min-width: 0; }

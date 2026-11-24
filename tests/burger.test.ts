@@ -14,11 +14,127 @@ import {
 } from '../apps/web/src/games/burger/rules.ts';
 import type { BurgerAction, BurgerRound, BurgerStack, Order } from '../apps/web/src/games/burger/rules.ts';
 import { defaultMatchSettings } from '../apps/web/src/games/match-settings.ts';
-import { blankMatch, lobbyMatch, matchOutcome, onlineMatchReport, readMatchSnapshot } from '../apps/web/src/network/room-match.ts';
+import { blankMatch, inRound, lobbyMatch, matchOutcome, onlineMatchReport, readMatchSnapshot, reconcileLobbySeats, roundSeats, sharesTouchSurface } from '../apps/web/src/network/room-match.ts';
+import { roomRoles } from '../packages/protocol/rooms.ts';
+import { addRoomTeam, fillRoomTeams, moveRoomTeamMember, readRoomTeams, removeRoomTeam, teamFor, validTeamLineup } from '../packages/protocol/room-teams.ts';
+import { readRoomResult } from '../packages/protocol/room-history.ts';
+import { awardRoomPoints } from '../apps/web/src/network/room-scoring.ts';
 import { readReport } from '../packages/protocol/profile.ts';
 
 const opening = 100_000;
 const firstGuest = opening + burgerPreparationMs;
+
+test('team lobbies balance two to eight seats and let a member move to an open team', () => {
+  let teams = fillRoomTeams([], ['host']);
+  for (let count = 2; count <= roomRoles.length; count++) {
+    const seats = roomRoles.slice(0, count);
+    teams = fillRoomTeams(teams, ['host', ...seats]);
+    assert.equal(teams.length, Math.max(2, Math.ceil(count / 2)));
+    assert(teams.every(team => team.members.length <= 2));
+    assert(validTeamLineup(teams, seats));
+    assert.deepEqual(roundSeats('burger', seats.slice(1), [], 'teams'), seats);
+  }
+  assert.equal(roundSeats('burger', roomRoles.slice(1), [], 'coop'), undefined);
+  assert.equal(addRoomTeam(teams), teams);
+  assert.equal(moveRoomTeamMember(teams, 'host', 4), teams);
+  assert.equal(removeRoomTeam(teams, 4), teams);
+  assert.equal(readRoomTeams([{ id: 1, members: ['host'] }, { id: 2, members: ['host'] }]), undefined);
+
+  teams = addRoomTeam(fillRoomTeams([], ['host', 'guest']));
+  teams = moveRoomTeamMember(teams, 'guest', 3);
+  assert.equal(teamFor(teams, 'guest')?.id, 3);
+  teams = removeRoomTeam(teams, 2);
+  assert.deepEqual(teams.map(team => team.id), [1, 3]);
+  teams = moveRoomTeamMember(teams, 'host', 3);
+  assert.equal(validTeamLineup(teams, ['host', 'guest']), false);
+});
+
+test('test lobbies sync mock identities and team counts, keeping space for real arrivals', () => {
+  const host = { role: 'host' } as const;
+  const guest = { role: 'guest' } as const;
+  const settings = { ...defaultMatchSettings, burgerMode: 'teams' } as const;
+  const initial = lobbyMatch('burger', settings);
+  const full = reconcileLobbySeats(initial, [host], 7);
+  assert.equal(full.burgerTeams?.length, 4);
+  assert.deepEqual(full.mockSeats, roomRoles.slice(1));
+  const packet = (match: typeof initial) => JSON.parse(JSON.stringify({ ...match, type: 'snapshot' }));
+  const received = readMatchSnapshot(packet(full), initial, opening)!;
+  assert.deepEqual(received.burgerTeams, full.burgerTeams);
+  assert.deepEqual(received.mockSeats, full.mockSeats);
+
+  const joined = reconcileLobbySeats(full, [host, guest], 7);
+  assert.deepEqual(joined.mockSeats, roomRoles.slice(2));
+  assert.deepEqual(joined.burgerTeams, full.burgerTeams);
+  assert.equal(readMatchSnapshot(packet({ ...joined, burgerTeams: initial.burgerTeams }), received, opening), undefined);
+  const reduced = reconcileLobbySeats(joined, [host, guest], 0);
+  assert.equal(reduced.mockSeats, undefined);
+  assert.deepEqual(reduced.burgerTeams?.map(team => team.members), [['host'], ['guest']]);
+
+  const manual = addRoomTeam(reduced.burgerTeams!);
+  assert.equal(reconcileLobbySeats({ ...reduced, burgerTeams: manual }, [host, guest], 0).burgerTeams?.[2].manual, true);
+  const started = { ...full, startedAt: opening };
+  assert.equal(reconcileLobbySeats(started, [host, guest], 0), started);
+  assert.equal(inRound(started, 'guest'), false);
+});
+
+test('four team kitchens restore without a host-named kitchen and rank eight players by their team score', () => {
+  const seats = [...roomRoles];
+  const teams = [
+    { id: 1, members: ['guest', 'host'] }, { id: 2, members: ['guest2', 'guest3'] },
+    { id: 3, members: ['guest4', 'guest5'] }, { id: 4, members: ['guest6', 'guest7'] },
+  ] satisfies NonNullable<BurgerRound['teams']>;
+  const lobby = lobbyMatch('burger', { ...defaultMatchSettings, burgerMode: 'teams' });
+  assert(readMatchSnapshot({ ...lobby, burgerTeams: teams, type: 'snapshot' }, blankMatch, opening));
+  const started = startBurgerRound(createXpRound(5, seats, 17, 'teams', 'normal', teams), opening);
+  const snapshot = (burger: BurgerRound, finishedAt = 0) => JSON.parse(JSON.stringify({
+    ...lobby, burgerTeams: undefined, burger, startedAt: opening - 5000, beginsAt: burger.start, finishedAt, type: 'snapshot',
+  }));
+  let round = readMatchSnapshot(snapshot(started), blankMatch, opening)!.burger!;
+  assert.equal(Object.keys(round.counters).length, 4);
+  assert.equal(round.counters.host, undefined);
+  assert.equal(burgerCounter(round, 'host'), burgerCounter(round, 'guest'));
+  assert.deepEqual(burgerCounter(round, 'host').cards, ['assembly']);
+  const paper = { type: 'add', item: 'paper', slot: 1 } as const;
+  round = applyBurgerAction(round, 'guest', paper, opening + 1)!;
+  assert.equal(burgerCounter(round, 'host').burgers[1].paper, true);
+  assert.equal(burgerCounter(round, 'guest7').burgers[1].paper, false);
+  const live = readMatchSnapshot(snapshot(round), blankMatch, opening + 1)!;
+  assert(sharesTouchSurface(live, 'guest6', 'guest7'));
+  assert.equal(sharesTouchSurface(live, 'guest6', 'guest'), false);
+  assert.equal(readBurgerRound({ ...round, teams: [{ id: 1, members: ['host'] }, { id: 2, members: ['guest'] }] }), undefined);
+
+  burgerCounter(round, 'guest7').money = 400;
+  burgerCounter(round, 'guest2').money = 200;
+  const tie = structuredClone(round);
+  burgerCounter(tie, 'guest5').money = 400;
+  const tied = advanceBurger(tie, tie.end)!;
+  assert.equal(burgerOutcome(tied, 'guest7'), 'draw');
+  assert.equal(burgerOutcome(tied, 'guest4'), 'draw');
+  round = advanceBurger(round, round.end)!;
+  const final = readMatchSnapshot(snapshot(round, round.end), live, round.end)!;
+  assert.deepEqual(final.burger?.winners, ['guest6', 'guest7']);
+  assert.equal(onlineMatchReport(final, 'guest7')?.outcome, 'win');
+  assert.equal(onlineMatchReport(final, 'host')?.outcome, 'loss');
+  assert.equal(awardRoomPoints(final, 'guest3', 'loss').points, 25);
+  const entry = readRoomResult({ id: lobby.id, game: 'burger', endedAt: round.end, seconds: 320,
+    players: seats.map(role => ({ role, outcome: matchOutcome(final, role) })) });
+  assert.equal(entry?.players.length, 8);
+});
+
+test('a resignation leaves the shared kitchen open until the last teammate resigns', () => {
+  const seats = roomRoles.slice(0, 4);
+  let round = startBurgerRound(createXpRound('endless', seats, 17, 'teams'), opening);
+  const hostMate = teamFor(round.teams, 'host')!.members.find(role => role !== 'host')!;
+  round = resignBurger(round, 'host')!;
+  assert(burgerResigned(round, 'host'));
+  assert.equal(burgerCounter(round, hostMate).closed, undefined);
+  assert(applyBurgerAction(round, hostMate, { type: 'add', item: 'paper', slot: 0 }, opening + 10));
+  round = resignBurger(round, hostMate)!;
+  assert.equal(burgerCounter(round, hostMate).retired, true);
+  assert.equal(burgerOutcome(round, hostMate), 'loss');
+  assert.equal(round.winners?.length, 2);
+  assert(round.winners?.every(role => burgerOutcome(round, role) === 'win'));
+});
 function createCardRound(...args: Parameters<typeof createXpRound>) {
   const round = createXpRound(...args);
   for (const counter of Object.values(round.counters)) {

@@ -629,6 +629,7 @@ export function connectToRoom(code: string, token: string | undefined, events: R
 
   return {
     connectedPeers,
+    relayedPeerCount: () => connectedPeers().filter(id => peers.get(id)?.relay === 'open').length,
     setActivity(next: RoomActivity) {
       if (activity === next) return;
       activity = next;

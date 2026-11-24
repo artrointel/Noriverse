@@ -1,5 +1,10 @@
-export const roomCapacity = { omok: 2, physics: 4, othello: 2, chess: 2, sichuan: 4, memory: 4, sketch: 4, liar: 4, slime: 4, mole: 4, burger: 4 } as const;
+export const roomCapacity = { omok: 2, physics: 4, othello: 2, chess: 2, sichuan: 4, memory: 4, sketch: 4, liar: 4, slime: 4, mole: 4, burger: 8 } as const;
 export type GameId = keyof typeof roomCapacity;
+const burgerModes = ['race', 'coop', 'teams'] as const;
+export type BurgerMode = typeof burgerModes[number];
+export const readBurgerMode = (value: unknown) => burgerModes.find(mode => mode === value);
+export const roomPlayerCapacity = (game: GameId, burgerMode?: BurgerMode) =>
+  game === 'burger' && burgerMode !== 'teams' ? 4 : roomCapacity[game];
 export const gameIds = Object.freeze(Object.keys(roomCapacity) as GameId[]);
 export const minimumRoomPlayers = (game: GameId) => game === 'liar' ? 3 : 2;
 export const isOnlineOnlyGame = (game: GameId) => game === 'liar';

@@ -1,5 +1,7 @@
-import { isRoomGame, isRoomRole, roomCapacity, roomRoles } from '../../../../packages/protocol/rooms.ts';
-import { isTilePuzzle } from '../../../../packages/protocol/games.ts';
+import { isRoomGame, isRoomRole, roomRoles } from '../../../../packages/protocol/rooms.ts';
+import { isTilePuzzle, roomPlayerCapacity } from '../../../../packages/protocol/games.ts';
+import { fillRoomTeams, readRoomTeams, teamFor } from '../../../../packages/protocol/room-teams.ts';
+import type { RoomTeam } from '../../../../packages/protocol/room-teams.ts';
 import { minimumRoomPlayers } from '../../../../packages/protocol/games.ts';
 import type { MatchOutcome } from '../../../../packages/protocol/profile.ts';
 import type { Participant, Role, RoomGame } from '../../../../packages/protocol/rooms.ts';
@@ -40,7 +42,7 @@ export type Match = { id: string; game: RoomGame; hostColor: Stone; startedAt: n
   liarConfig?: LiarSettings; liar?: LiarView | LiarRound;
   slime?: OrbitRound;
   moleConfig?: MoleSettings; mole?: MoleRound;
-  burgerMinutes?: BurgerMinutes; burgerMode?: BurgerMode; burgerDifficulty?: BurgerDifficulty; burger?: BurgerRound;
+  burgerMinutes?: BurgerMinutes; burgerMode?: BurgerMode; burgerDifficulty?: BurgerDifficulty; burger?: BurgerRound; burgerTeams?: RoomTeam[];
   mockSeats?: Role[];
   turnLimit: TurnLimit; deadline: number; beginsAt?: number; clockOffset?: number; pausedAt?: number; pausedMs?: number;
   disconnectedSeats?: Role[] };
@@ -54,6 +56,7 @@ export function lobbyMatch(game: RoomGame, settings: MatchSettings): Match {
     moleConfig: game === 'mole' ? mole : undefined,
     burgerMinutes: game === 'burger' ? settings.burger : undefined,
     burgerMode: game === 'burger' ? settings.burgerMode : undefined,
+    burgerTeams: game === 'burger' && settings.burgerMode === 'teams' ? fillRoomTeams([], ['host']) : undefined,
     burgerDifficulty: game === 'burger' ? settings.burgerDifficulty : undefined,
     puzzleConfig: game === 'memory' ? memory : game === 'sichuan' ? puzzle : undefined, flickSettings: game === 'physics' ? flick : undefined,
     physics: game === 'physics' ? createFlickRound(flick) : undefined };
@@ -71,19 +74,32 @@ export function inRound(match: Match, role: Role) {
     && (!match.burger || match.burger.players.includes(role));
 }
 
-export function sharesTouchSurface(match: Pick<Match, 'game' | 'burgerMode' | 'puzzleConfig'>) {
-  if (match.game === 'burger') return match.burgerMode === 'coop';
+export function sharesTouchSurface(match: Pick<Match, 'game' | 'burgerMode' | 'burger' | 'puzzleConfig'>, from?: Role, to?: Role) {
+  if (match.game === 'burger') {
+    if (match.burgerMode !== 'teams') return match.burgerMode === 'coop';
+    const team = from && teamFor(match.burger?.teams, from);
+    return Boolean(team && (to ? team.members.includes(to) : team.members.length > 1));
+  }
   if (match.game === 'sichuan') return match.puzzleConfig?.mode === 'coop';
   return isBoardGame(match.game) || match.game === 'physics' || match.game === 'sketch';
 }
 
-export function mockSeatsFor(game: RoomGame, participants: readonly Participant[], count: number) {
+export function mockSeatsFor(game: RoomGame, participants: readonly Participant[], count: number, mode?: BurgerMode) {
   const taken = new Set<Role>(['host', ...participants.map(player => player.role)]);
-  return roomRoles.filter(role => !taken.has(role)).slice(0, Math.max(0, Math.min(count, roomCapacity[game] - taken.size)));
+  return roomRoles.filter(role => !taken.has(role)).slice(0, Math.max(0, Math.min(count, roomPlayerCapacity(game, mode) - taken.size)));
 }
 
-export function roundSeats(game: RoomGame, peers: Role[], participants: Participant[]): Role[] | undefined {
-  if (peers.length + 1 < minimumRoomPlayers(game) || peers.length + 1 > roomCapacity[game]
+export function reconcileLobbySeats(match: Match, participants: readonly Participant[], mockCount: number): Match {
+  if (match.startedAt) return match;
+  const mocks = mockSeatsFor(match.game, participants, mockCount, match.burgerMode);
+  const burgerTeams = match.burgerTeams && fillRoomTeams(match.burgerTeams, ['host', ...participants.map(person => person.role), ...mocks]);
+  if (mocks.length === (match.mockSeats?.length ?? 0) && mocks.every((role, index) => role === match.mockSeats?.[index])
+    && JSON.stringify(burgerTeams) === JSON.stringify(match.burgerTeams)) return match;
+  return { ...match, burgerTeams, mockSeats: mocks.length ? mocks : undefined };
+}
+
+export function roundSeats(game: RoomGame, peers: Role[], participants: Participant[], mode?: BurgerMode): Role[] | undefined {
+  if (peers.length + 1 < minimumRoomPlayers(game) || peers.length + 1 > roomPlayerCapacity(game, mode)
     || participants.some(person => person.role !== 'host' && !peers.includes(person.role))) return;
   return ['host', ...peers];
 }
@@ -191,8 +207,10 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
     && 'allowDoubleThree' in raw && typeof raw.allowDoubleThree === 'boolean')) return;
   const game = 'game' in raw ? raw.game : 'omok';
   if (!isRoomGame(game)) return;
+  const burgerMode = game === 'burger' ? ('burgerMode' in raw && raw.burgerMode !== undefined ? readBurgerMode(raw.burgerMode) : 'race') : undefined;
+  const capacity = roomPlayerCapacity(game, burgerMode);
   const mockSeats = 'mockSeats' in raw ? raw.mockSeats : undefined;
-  if (mockSeats !== undefined && (!Array.isArray(mockSeats) || mockSeats.length >= roomCapacity[game]
+  if (mockSeats !== undefined && (!Array.isArray(mockSeats) || mockSeats.length >= capacity
     || !mockSeats.every(role => isRoomRole(role) && role !== 'host') || new Set(mockSeats).size !== mockSeats.length)) return;
   const puzzleConfig = isTilePuzzle(game) && 'puzzleConfig' in raw ? readSichuanRoomSettings(raw.puzzleConfig, game === 'memory') : undefined;
   if (isTilePuzzle(game) && !puzzleConfig) return;
@@ -211,10 +229,14 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
     || mockSeats?.some(role => slime && !slime.players.includes(role)))) return;
   const moleConfig = game === 'mole' && 'moleConfig' in raw ? readMoleSettings(raw.moleConfig) : undefined;
   const burgerMinutes = game === 'burger' && 'burgerMinutes' in raw ? readBurgerMinutes(raw.burgerMinutes) : undefined;
-  const burgerMode = game === 'burger' ? ('burgerMode' in raw && raw.burgerMode !== undefined ? readBurgerMode(raw.burgerMode) : 'race') : undefined;
   const burgerDifficulty = game === 'burger' ? ('burgerDifficulty' in raw && raw.burgerDifficulty !== undefined
     ? readBurgerDifficulty(raw.burgerDifficulty) : defaultBurgerDifficulty) : undefined;
   const burger = burgerMinutes && 'burger' in raw ? readBurgerRound(raw.burger) : undefined;
+  const rawTeams = 'burgerTeams' in raw ? raw.burgerTeams : undefined;
+  const burgerTeams = readRoomTeams(rawTeams);
+  if (burgerMode === 'teams' && !raw.startedAt
+    ? !burgerTeams || !teamFor(burgerTeams, 'host') || mockSeats?.some(role => !teamFor(burgerTeams, role))
+    : rawTeams !== undefined) return;
   if (game === 'burger' && (!burgerMinutes || !burgerMode || !burgerDifficulty || Boolean(raw.startedAt) !== Boolean(burger)
     || Boolean(raw.finishedAt) !== Boolean(burger?.winners) || (burger && (burger.minutes !== burgerMinutes
       || (burger.mode ?? 'race') !== burgerMode
@@ -252,7 +274,7 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
     || !raw.startedAt || pausedAt < raw.startedAt || raw.finishedAt)) return;
   if (pausedMs !== undefined && (typeof pausedMs !== 'number' || !Number.isSafeInteger(pausedMs) || pausedMs < 0 || !raw.startedAt)) return;
   if (disconnectedSeats !== undefined && (!pausedAt || !Array.isArray(disconnectedSeats) || !disconnectedSeats.length
-    || disconnectedSeats.length >= roomCapacity[game] || !disconnectedSeats.every(role => isRoomRole(role) && role !== 'host')
+    || disconnectedSeats.length >= capacity || !disconnectedSeats.every(role => isRoomRole(role) && role !== 'host')
     || new Set(disconnectedSeats).size !== disconnectedSeats.length)) return;
   if (beginsAt !== undefined && (typeof beginsAt !== 'number' || !Number.isSafeInteger(beginsAt) || beginsAt < 0
     || (beginsAt > 0 && (!raw.startedAt || beginsAt < raw.startedAt)))) return;
@@ -275,7 +297,7 @@ export function readMatchSnapshot(raw: unknown, current: Match, receivedAt: numb
   const next: Match = { id: raw.id, game, hostColor: nextHostColor, startedAt: raw.startedAt, finishedAt: raw.finishedAt, allowDoubleThree: raw.allowDoubleThree,
     overline: nextOverline, history, physics, power, surrendered: endedBySurrender, timedOut: timeoutColor, timeoutPending: pending,
     turnLimit: nextLimit, deadline: nextDeadlineAt, beginsAt, clockOffset, pausedAt, pausedMs, disconnectedSeats,
-    puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, slime, moleConfig, mole, burgerMinutes, burgerMode, burgerDifficulty, burger, flickSettings, physicsSeats, mockSeats };
+    puzzleConfig, puzzle, sketchConfig, sketch, liarConfig, liar, slime, moleConfig, mole, burgerMinutes, burgerMode, burgerDifficulty, burger, burgerTeams, flickSettings, physicsSeats, mockSeats };
   if (pending && (!nextLimit || pending.color !== matchTurn(next))) return;
   if (disconnectedSeats?.some(role => !inRound(next, role))) return;
   if (followsSnapshot(current, next)) return next;
