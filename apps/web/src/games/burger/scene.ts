@@ -114,6 +114,9 @@ const cardColorFadeMs = 500;
 const cardChoiceDelayMs = cardGrayHoldMs + cardColorFadeMs;
 const draftEnterMs = 360;
 const draftExitMs = 300;
+const cardConfirmGrowMs = 220;
+const cardConfirmHoldMs = 300;
+const cardConfirmFadeMs = 360;
 const cardEnterMs = 280;
 const cardStaggerMs = 60;
 const flightMs = 180;
@@ -151,7 +154,8 @@ export const burgerScene: SceneFactory = view => {
   let manual: ReturnType<typeof createBurgerManual>;
   let manualPress: { id: number; x: number; y: number } | undefined;
   let visibleDraft: { roundId: string; at: number; rerollsUsed: number; openedAt: number; shownAt: number;
-    offers: readonly BurgerCard[]; closedAt?: number } | undefined;
+    offers: readonly BurgerCard[]; historyLength: number; closedAt?: number;
+    confirmation?: { card: BurgerCard; elapsed: number; frameAt: number } } | undefined;
   let historyPage: number | undefined;
   let store: { offset: number; limit: number; drag?: { id: number; startY: number; offset: number };
     cached?: { cards: Counter['cards']; locale: string; rows: StoreStatusRow[] } } | undefined;
@@ -1193,38 +1197,57 @@ export const burgerScene: SceneFactory = view => {
     const now = performance.now();
     if (draft && (!visibleDraft || visibleDraft.closedAt !== undefined || visibleDraft.at !== draft.at || visibleDraft.rerollsUsed !== rerollsUsed)) {
       const openedAt = visibleDraft && visibleDraft.closedAt === undefined && visibleDraft.at === draft.at ? visibleDraft.openedAt : now;
-      visibleDraft = { roundId: data.id, at: draft.at, rerollsUsed, openedAt, shownAt: now, offers: draft.offers };
+      visibleDraft = { roundId: data.id, at: draft.at, rerollsUsed, openedAt, shownAt: now, offers: draft.offers,
+        historyLength: data.counter.cards?.length ?? 0 };
       gesture = undefined;
     }
     if (!draft && visibleDraft) {
+      // Every viewer gets the committed card in the kitchen snapshot, including guests who did not click.
+      const selected = !data.counter.draft ? data.counter.cards?.[visibleDraft.historyLength] : undefined;
+      if (selected && !visibleDraft.confirmation) {
+        visibleDraft.confirmation = { card: selected, elapsed: 0, frameAt: now };
+        visibleDraft.closedAt = now;
+      }
       visibleDraft.closedAt ??= now;
-      if (reduced.matches || now - visibleDraft.closedAt >= draftExitMs) visibleDraft = undefined;
+      const confirmation = visibleDraft.confirmation;
+      if (confirmation) {
+        // Leave time to draw the enlarged card even when a frame takes longer than the zoom.
+        const elapsed = now - confirmation.frameAt;
+        confirmation.elapsed += reduced.matches ? elapsed : Math.min(elapsed, cardConfirmGrowMs);
+        confirmation.frameAt = now;
+        if (confirmation.elapsed >= cardConfirmHoldMs + cardConfirmFadeMs) visibleDraft = undefined;
+      } else if (reduced.matches || now - visibleDraft.closedAt >= draftExitMs) visibleDraft = undefined;
     }
     if (!copy || (!visibleDraft && historyPage === undefined)) return;
     const through = (elapsed: number, duration: number) => Phaser.Math.Clamp(elapsed / duration, 0, 1);
     const closedAt = visibleDraft?.closedAt;
+    const confirmation = visibleDraft?.confirmation;
+    const closingAge = confirmation?.elapsed ?? (closedAt === undefined ? 0 : now - closedAt);
     const shownUntil = closedAt ?? now;
     const age = visibleDraft ? shownUntil - visibleDraft.shownAt : cardChoiceDelayMs;
     const saturation = reduced.matches ? Number(age >= cardChoiceDelayMs) : through(age - cardGrayHoldMs, cardColorFadeMs);
     const incoming = !visibleDraft || reduced.matches ? 1 : through(shownUntil - visibleDraft.openedAt, draftEnterMs);
-    const outgoing = closedAt === undefined ? 0 : through(now - closedAt, draftExitMs);
+    const outgoing = confirmation
+      ? reduced.matches ? 0 : through(closingAge - cardConfirmHoldMs, cardConfirmFadeMs)
+      : through(closingAge, draftExitMs);
     const opacity = incoming * (1 - outgoing);
     const motion = (1 - incoming) ** 2;
-    const panelScale = 1 - .055 * motion - .035 * outgoing;
+    const exitSlide = confirmation ? 0 : outgoing;
+    const panelScale = 1 - .055 * motion - .035 * exitSlide;
     const panelLeft = width / 2 * (1 - panelScale);
-    const panelTop = burgerSceneHeight / 2 * (1 - panelScale) + 15 * motion + 12 * outgoing;
+    const panelTop = burgerSceneHeight / 2 * (1 - panelScale) + 15 * motion + 12 * exitSlide;
 
-    function paint(alpha: number, scale: number, left: number, top: number, colorAmount = 1) {
+    function paint(alpha: number, scale: number, left: number, top: number, colorAmount = 1, raise = 0) {
       return {
         image(sprite: Sprite, x: number, y: number, w: number, h: number, depth: number, opacity = 1) {
           if (alpha <= 0) return;
           const px = x * scale + left, py = y * scale + top;
-          if (colorAmount < 1) picture(scene, grayscaleCardSprite(scene, sprite), px, py, w * scale, h * scale, depth, opacity * alpha).setPosition(px, py);
-          if (colorAmount > 0) picture(scene, sprite, px, py, w * scale, h * scale, depth, opacity * alpha * colorAmount).setPosition(px, py);
+          if (colorAmount < 1) picture(scene, grayscaleCardSprite(scene, sprite), px, py, w * scale, h * scale, depth + raise, opacity * alpha).setPosition(px, py);
+          if (colorAmount > 0) picture(scene, sprite, px, py, w * scale, h * scale, depth + raise, opacity * alpha * colorAmount).setPosition(px, py);
         },
         text(value: string, x: number, y: number, size: number, color: string, maxWidth?: number) {
           if (alpha <= 0) return;
-          const caption = label(scene, value, x, y, size, cardTextColor(color, colorAmount), maxWidth, 55);
+          const caption = label(scene, value, x, y, size, cardTextColor(color, colorAmount), maxWidth, 55 + raise);
           caption.setPosition(x * scale + left, y * scale + top).setScale(caption.scaleX * scale, scale).setAlpha(alpha);
         },
       };
@@ -1234,16 +1257,19 @@ export const burgerScene: SceneFactory = view => {
     layout = [];
     drawCardHud(copy, {
       ...paint(opacity, panelScale, panelLeft, panelTop),
-      card(index, x, y) {
-        const entrance = !visibleDraft || reduced.matches ? 1 : through(age - 55 - index * cardStaggerMs, cardEnterMs);
+      card(index, x, y, selected) {
+        const entrance = !visibleDraft || reduced.matches || selected ? 1 : through(age - 55 - index * cardStaggerMs, cardEnterMs);
         const lift = (1 - entrance) ** 2;
-        const scale = .95 + .05 * (1 - lift);
-        return paint(opacity * entrance, panelScale * scale, panelLeft + x * (1 - scale) * panelScale,
-          panelTop + (y * (1 - scale) + 18 * lift) * panelScale, saturation);
+        const grow = selected && !reduced.matches ? 1 - (1 - through(closingAge, cardConfirmGrowMs)) ** 3 : 0;
+        const scale = 1 - .05 * lift + .17 * grow;
+        const emphasis = confirmation && !selected ? reduced.matches ? 0 : 1 - through(closingAge, cardConfirmGrowMs) : 1;
+        return paint(opacity * entrance * emphasis, panelScale * scale, panelLeft + x * (1 - scale) * panelScale,
+          panelTop + (y * (1 - scale) + 18 * lift) * panelScale, selected ? 1 : saturation, selected ? 4 : 0);
       },
       hit: (type, index, zone) => { if (closedAt === undefined) spot(type, index, zone); },
       item: name => name === 'cola' || name === 'soda' ? prop(name) : foods(name as Item),
-    }, visibleDraft && { offers: visibleDraft.offers, canChoose: age >= cardChoiceDelayMs, rerollsLeft: cardRerollLimit - visibleDraft.rerollsUsed },
+    }, visibleDraft && { offers: visibleDraft.offers, selected: confirmation?.card,
+      canChoose: closedAt === undefined && age >= cardChoiceDelayMs, rerollsLeft: cardRerollLimit - visibleDraft.rerollsUsed },
     data.counter.cards ?? [], historyPage ?? 0);
   }
 
@@ -1443,7 +1469,7 @@ export const burgerScene: SceneFactory = view => {
           gesture = undefined;
           manual.open();
         } else if (data.active && !visibleDraft && !trayPicker && historyPage === undefined && key === 's') store = { offset: 0, limit: 0 };
-        else if (data.active && data.counter.cards && key === 'c') historyPage = historyPage === undefined ? 0 : undefined;
+        else if (data.active && !visibleDraft && data.counter.cards && key === 'c') historyPage = historyPage === undefined ? 0 : undefined;
         else if (historyPage !== undefined && key === 'escape') historyPage = undefined;
         else if (historyPage !== undefined && key === 'arrowleft') pageCards(data, -1);
         else if (historyPage !== undefined && key === 'arrowright') pageCards(data, 1);

@@ -28,6 +28,7 @@ npm run dev
 - [햄버거 타이쿤 규칙·성장·난이도·카드](docs/burger-tycoon.md)
 - [방 랭킹보드와 점수 기준](docs/room-ranking.md)
 - [별길 탐사대 설정집](docs/characters.md)
+- [별길 탐사대 게임 기획서](docs/startrail-crew.md)
 - [장기 검토 항목](docs/long-term.md)
 
 ## GitHub Pages 첫 배포

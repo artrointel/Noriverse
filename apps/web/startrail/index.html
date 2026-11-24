@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>별길 탐사대 · 1-1 지표 중계소</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div><p>Noriverse / 얼음 아래의 구조 신호</p><h1>별길 탐사대</h1></div>
+        <a href="../">놀이버스 홈 ↗</a>
+      </header>
+      <section id="game-shell" data-auto="true" aria-label="별길 탐사대 지표 중계소">
+        <div id="stage" aria-label="별길 탐사대 1-1 지표 중계소 게임 화면">
+          <canvas id="stage-hud" aria-hidden="true"></canvas>
+        </div>
+        <footer>
+          <span>Space 구르기 · 좌클릭 주무기 · 우클릭 부무기 · R 재장전</span>
+          <div class="view-options">
+            <div class="view-group">
+              <label for="pixel-size">픽셀 크기</label>
+              <input id="pixel-size" type="range" min="1" max="5" step="1" value="1">
+              <output id="pixel-value" for="pixel-size">1 px</output>
+            </div>
+            <div class="view-group">
+              <label for="view-scale">웹뷰 해상도</label>
+              <button id="view-auto" type="button" aria-pressed="true">자동</button>
+              <input id="view-scale" type="range" min="50" max="100" step="1" value="100">
+              <output id="view-size" for="view-scale"></output>
+            </div>
+            <button id="sound" type="button" aria-pressed="false">음소거</button>
+            <button id="fullscreen" type="button" aria-pressed="false">전체 화면</button>
+          </div>
+        </footer>
+      </section>
+    </main>
+    <script type="module" src="/src/startrail.ts"></script>
+  </body>
+</html>

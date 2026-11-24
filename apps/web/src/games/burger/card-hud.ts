@@ -9,7 +9,7 @@ import storeIconArt from '../../assets/burger/store-status.webp';
 
 export type CardHud = {
   showDraft: boolean;
-  title: string; instruction: string; lockedInstruction: string; history: string; empty: string;
+  title: string; instruction: string; lockedInstruction: string; confirmed: string; history: string; empty: string;
   reroll: (remaining: number, limit: number) => string;
   describe: (card: BurgerCard) => { category: 'unlock' | 'guest' | 'special'; tag: string; name: string; detail: string };
 };
@@ -21,7 +21,7 @@ type CardPaint = {
   text: (text: string, x: number, y: number, size: number, color: string, maxWidth?: number) => void;
 };
 type CardDraw = CardPaint & {
-  card: (index: number, x: number, y: number) => CardPaint;
+  card: (index: number, x: number, y: number, selected: boolean) => CardPaint;
   hit: (type: CardHit, index: number, zone: CardZone) => void;
   item: (name: string) => CardSprite;
 };
@@ -77,21 +77,21 @@ export function cardTextColor(hex: string, saturation: number) {
 }
 
 export function drawCardHud(copy: CardHud, draw: CardDraw,
-  draft: { offers: readonly BurgerCard[]; canChoose: boolean; rerollsLeft: number } | undefined,
+  draft: { offers: readonly BurgerCard[]; canChoose: boolean; rerollsLeft: number; selected?: BurgerCard } | undefined,
   history: readonly BurgerCard[], page: number) {
   const unique = [...new Set(history)];
   const pages = Math.max(1, Math.ceil(unique.length / cardsPerPage));
-  const { offers, canChoose, rerollsLeft = 0 } = draft ?? {};
-  const visible = offers ?? unique.slice(page * cardsPerPage, (page + 1) * cardsPerPage);
+  const { offers, canChoose, rerollsLeft = 0, selected } = draft ?? {};
+  const visible = selected && !offers?.includes(selected) ? [selected] : offers ?? unique.slice(page * cardsPerPage, (page + 1) * cardsPerPage);
   draw.image(cardPanel, 240, 160, 464, 307, 51);
   draw.image(cardDeck, 240, 46, 27, 27, 52);
-  draw.text(offers ? copy.title : copy.history, 240, 71, 18, '#ffedd2', 360);
-  if (offers) draw.text(canChoose ? copy.instruction : copy.lockedInstruction, 240, 89, 9, '#f7ddba', 397);
+  draw.text(selected ? copy.confirmed : offers ? copy.title : copy.history, 240, 71, 18, '#ffedd2', 360);
+  if (offers && !selected) draw.text(canChoose ? copy.instruction : copy.lockedInstruction, 240, 89, 9, '#f7ddba', 397);
   if (!visible.length) draw.text(copy.empty, 240, 155, 13, '#f7ddba', 315);
 
   visible.forEach((card, index) => {
     const x = 240 + (index - (visible.length - 1) / 2) * 140;
-    const paint = draw.card(index, x, 184);
+    const paint = draw.card(index, x, 184, card === selected);
     const { category, tag, name, detail } = copy.describe(card);
     const { frame, color } = categories[category];
     const stock = card.includes(':') ? card.slice(card.indexOf(':') + 1) : undefined;
@@ -120,6 +120,7 @@ export function drawCardHud(copy: CardHud, draw: CardDraw,
   });
 
   if (offers) {
+    if (selected) return;
     const enabled = canChoose && rerollsLeft > 0;
     draw.image(cardDeck, 178, 283, 18, 18, 54, enabled ? 1 : .55);
     draw.text(copy.reroll(rerollsLeft, cardRerollLimit), 253, 283, 11, enabled ? '#ffedd2' : '#c2bfaa', 124);

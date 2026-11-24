@@ -184,6 +184,7 @@ export function BurgerPage({ room, minutes, difficulty, ownProfile, navigate, da
               title: t('burgerLevelUp', { level: burgerRank(counter) }),
               instruction: t(cooperative || ownTeam ? 'burgerDraftCoop' : 'burgerDraftChoose'),
               lockedInstruction: t('burgerDraftLocked'),
+              confirmed: t('burgerDraftConfirmed'),
               reroll: (remaining, limit) => t('burgerDraftReroll', { remaining, limit }),
               history: t('burgerCardHistory'), empty: t('burgerNoCards') },
             rivals: cooperative ? [] : scoreRows.filter(row => !row.own)

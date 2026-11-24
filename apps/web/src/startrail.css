@@ -1,0 +1,47 @@
+@font-face {
+  font-family: 'Sketch Jua';
+  src: url('./assets/sketch-prompt-jua.woff2') format('woff2');
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  font-family: 'Sketch Jua', 'Malgun Gothic', sans-serif;
+  background: #0a1525;
+  color: #effbff;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  overflow-x: clip;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at 48% -20%, #234252, #0a1525 68%);
+}
+
+main { width: 100%; padding: 15px 0; }
+header, footer { width: min(calc(100% - 32px), calc(100dvh * 1.7778)); margin-inline: auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+header { margin-bottom: 12px; }
+header p { color: #98cfce; font-size: .86rem; margin: 0 0 3px; }
+h1 { font-weight: normal; font-size: clamp(1.5rem, 3vw, 2.3rem); margin: 0; }
+a { color: #b5e4e1; text-decoration: none; border-bottom: 1px solid #5b878c; }
+a:hover { color: #efffff; }
+#stage { aspect-ratio: 16 / 9; position: relative; width: calc(min(100%, 100dvh * 1.7778) * var(--view-scale, 1)); margin-inline: auto; background: #071321; outline: 1px solid #355367; box-shadow: 0 16px 60px #030812a8; }
+#game-shell[data-auto='true'] #stage { width: min(calc(100% - 32px), max(280px, calc((100dvh - 132px) * 1.7778))); }
+#stage canvas { display: block; position: absolute; inset: 0 auto auto 0; cursor: crosshair; }
+#stage canvas:not(#stage-hud) { image-rendering: pixelated; }
+#stage-hud { z-index: 1; pointer-events: none; image-rendering: auto; }
+footer { margin-top: 11px; flex-wrap: wrap; color: #a2bdcc; font-size: clamp(.75rem, 1.8vw, .9rem); }
+.view-options, .view-group { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.view-options { gap: 12px; }
+.view-options input { width: 86px; accent-color: #8ad9d0; }
+.view-options button { padding: 3px 8px; border-radius: 5px; border: 1px solid #355367; color: #c5d8e3; background: #102234; font: inherit; cursor: pointer; }
+.view-options button[aria-pressed='true'] { color: #a6f0dc; border-color: #5c9d92; }
+.view-options output { font-variant-numeric: tabular-nums; }
+#view-size { min-width: 92px; }
+#game-shell:is(:fullscreen, [data-fill='true']) { width: 100%; height: 100dvh; display: grid; place-items: center; background: #000; }
+#game-shell[data-fill='true'] { position: fixed; inset: 0; z-index: 1; }
+#game-shell:is(:fullscreen, [data-fill='true']) #stage { width: min(100%, calc(100dvh * 1.7778)); outline: none; box-shadow: none; }
+#game-shell:is(:fullscreen, [data-fill='true']) footer { position: absolute; z-index: 2; left: 50%; bottom: 0; transform: translateX(-50%); padding: 8px 12px; box-sizing: border-box; border-radius: 7px 7px 0 0; background: #0c1927ed; opacity: 0; transition: opacity .16s ease; }
+#game-shell:is(:fullscreen, [data-fill='true']) footer:is(:hover, :focus-within) { opacity: 1; }
