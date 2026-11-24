@@ -6,6 +6,8 @@ export const kitchenShade = 'burger-surface-shade';
 export const kitchenCup = 'burger-cup';
 export const pattyOilTexture = 'burger-patty-oil';
 export const pattyOilGlint = 'burger-patty-oil-glint';
+export const burgerFoodFrames = { bunTop: 0, bun: 1, riceTop: 2, rice: 3, cheese: 4, lettuce: 5, onion: 6,
+  pickle: 7, tomato: 8, egg: 9, bacon: 10, wrap: 11 } as const;
 export const assemblerArt = {
   texture: 'burger-assembler', frameWidth: 224, frameHeight: 280,
   waiting: 0, assembling: 1, cooldown: 2,

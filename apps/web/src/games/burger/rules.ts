@@ -20,6 +20,7 @@ export const burgerStorageSize = 8;
 export const burgerPreparationMs = 20_000;
 export const burgerEndlessOpeningMs = 90_000;
 const pattyBurnPoint = 200;
+const pattyBurnWarningPoint = 180;
 const autoFlipPoint = 180;
 const assemblyStepMs = 500;
 export const assemblyCooldownMs = 10_000;
@@ -314,6 +315,10 @@ export function pattyAt(counter: Counter, from: PattyLocation) {
 }
 
 function isBurnt(faces: readonly number[]) { return faces.some(face => face >= pattyBurnPoint); }
+
+export function isPattyNearBurn(faces: Patty['faces'], cookingSide: Patty['side']) {
+  return faces[cookingSide] >= pattyBurnWarningPoint && !isBurnt(faces);
+}
 
 export function pattyDoneness(faces: readonly number[]): Doneness | undefined {
   if (isBurnt(faces) || faces.some(face => face < 50)) return;

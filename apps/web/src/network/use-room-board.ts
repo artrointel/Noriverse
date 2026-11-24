@@ -314,10 +314,19 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
 
   function markRoundReady(actor: Role) {
     const current = match.current;
-    if (!current.startedAt || current.finishedAt || current.pausedAt || !inRound(current, actor)) return;
-    if (current.puzzle) { markPuzzleReady(actor); return; }
+    if (!current.startedAt || !inRound(current, actor)) return;
+    if (current.puzzle) {
+      if (!current.pausedAt) markPuzzleReady(actor);
+      return;
+    }
     const seats = matchRoster.current?.seats;
-    if (current.beginsAt !== 0 || !seats?.includes(actor)) return;
+    if (!seats?.includes(actor)) return;
+    if (current.beginsAt) {
+      // A guest still sending readiness may have missed the scheduled start.
+      if (actor !== 'host') snapshot(actor);
+      return;
+    }
+    if (current.beginsAt !== 0 || current.finishedAt || current.pausedAt) return;
     preparedSeats.current.add(actor);
     if (!seats.every(player => preparedSeats.current.has(player))) return;
     const beginsAt = Date.now() + countdownDuration;
@@ -740,9 +749,9 @@ export function useRoomBoard(profile: ProfileSummary | undefined, language: 'ko'
             snapshot(peer);
             return;
           }
+          if (raw.type === 'round-ready' || raw.type === 'puzzle-ready') { markRoundReady(peer); return; }
           if (current.finishedAt) return;
           if (raw.type === 'sketch-sync' && current.sketch) { snapshot(peer); return; }
-          if (raw.type === 'round-ready' || raw.type === 'puzzle-ready') { markRoundReady(peer); return; }
           if (!matchInProgress(current, Date.now())) return;
           if (raw.type === 'burger-action' && 'action' in raw) { commitBurger(peer, raw.action); return; }
           if (raw.type === 'mole-action' && 'target' in raw) { commitMole(peer, raw.target); return; }

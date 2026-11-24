@@ -10,7 +10,7 @@ import { burgerDifficultyAtLevel, burgerPressure, burgerRankFromXp, burgerXpToRe
 import {
   advanceBurger, applyBurgerAction, burgerCounter, burgerDeadline, burgerEndlessOpeningMs, burgerLevel, burgerOutcome, burgerPreparationMs, burgerResigned, burgerSupplyUnlocked,
   burgerGrowthProgress, burgerLevelSettings, burgerOrderXp, burgerRank, createBurgerRound as createXpRound, cupAmount, cupSize, grillCount,
-  burgerStorageSize, judgeOrder, nextBurgerAt, pattyAt, pattyDoneness, pattyFaces, pattyFrame, readBurgerRound, resignBurger, shiftBurgerClock, startBurgerRound,
+  burgerStorageSize, isPattyNearBurn, judgeOrder, nextBurgerAt, pattyAt, pattyDoneness, pattyFaces, pattyFrame, readBurgerRound, resignBurger, shiftBurgerClock, startBurgerRound,
 } from '../apps/web/src/games/burger/rules.ts';
 import type { BurgerAction, BurgerRound, BurgerStack, Order } from '../apps/web/src/games/burger/rules.ts';
 import { defaultMatchSettings } from '../apps/web/src/games/match-settings.ts';
@@ -44,6 +44,17 @@ test('the pixel slider keeps a 3:2 screen and uses whole display pixels at each 
     frame: { width: 390, height: 260 }, buffer: { width: 390, height: 260 }, step: 3,
   });
   assert.equal(fitBurgerPixels(1920, 1280, 3, 1).step, 3);
+});
+
+test('the grill warning starts at 180 percent on the cooking face and ends when burnt', () => {
+  const patty = { kind: 'beef', side: 0, faces: [0, 100], heatAt: opening } as const;
+  const heat = (elapsed: number) => pattyFaces({ ...patty, faces: [...patty.faces] }, opening + elapsed);
+  assert.equal(isPattyNearBurn(heat(12_599), 0), false);
+  assert.equal(isPattyNearBurn(heat(12_600), 0), true);
+  assert.equal(isPattyNearBurn(heat(13_999), 0), true);
+  assert.equal(isPattyNearBurn(heat(14_000), 0), false);
+  assert.equal(isPattyNearBurn([180, 110], 1), false);
+  assert.equal(isPattyNearBurn([200, 190], 1), false);
 });
 
 test('shop status lists only current card effects, including the latest supply change', () => {
