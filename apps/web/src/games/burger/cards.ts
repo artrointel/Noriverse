@@ -20,6 +20,7 @@ export type BurgerCard = typeof facilities[number] | typeof guestCards[number] |
 export const ordersPerLevel = 4;
 export const cardRerollLimit = 3;
 export const minimumXpMultiplier = .1;
+export const soldOutCardWeight = .5;
 
 export const cardCount = (cards: readonly BurgerCard[], card: BurgerCard) => cards.filter(item => item === card).length;
 const isGrillUpgrade = (card: string): card is GrillUpgrade => Object.hasOwn(grillPrerequisites, card);
@@ -37,9 +38,9 @@ export function upgradeAvailable(cards: readonly BurgerCard[], card: BurgerCard,
   return prerequisite ? cards.includes(prerequisite) && !cards.includes(card) : !cards.some(isGrillUpgrade);
 }
 
-export function validUpgradeHistory(cards: readonly BurgerCard[]) {
+export function validUpgradeHistory(cards: readonly BurgerCard[], starterCount = 0) {
   return cards.every((card, index) => !(isGrillUpgrade(card) || isStationUpgrade(card))
-    || upgradeAvailable(cards.slice(0, index), card, isStationUpgrade(card) ? index + 2 : Infinity));
+    || upgradeAvailable(cards.slice(0, index), card, isStationUpgrade(card) ? index + 2 - starterCount : Infinity));
 }
 
 export function supplyAvailable(cards: readonly BurgerCard[], item: string) {
@@ -55,8 +56,19 @@ export function cardOffers(cards: readonly BurgerCard[], level: number, roll: (i
     if (level >= unlockLevels[item] && !supplyAvailable(cards, item)) pool.push(`unlock:${item}`);
     if (cards.includes(`unlock:${item}`)) pool.push(`sold:${item}`);
   }
-  const candidates = pool.filter(card => !previous.includes(card));
-  return Array.from({ length: 3 }, (_, i) => candidates.splice(Math.floor(roll(i) * candidates.length), 1)[0]);
+  const candidates = pool.filter(card => !previous.includes(card))
+    .map(card => ({ card, weight: card.startsWith('sold:') ? soldOutCardWeight : 1 }));
+  let totalWeight = candidates.reduce((sum, entry) => sum + entry.weight, 0);
+  return Array.from({ length: 3 }, (_, i) => {
+    let ticket = roll(i) * totalWeight;
+    const index = candidates.findIndex(({ weight }) => {
+      ticket -= weight;
+      return ticket < 0;
+    });
+    const [{ card, weight }] = candidates.splice(index, 1);
+    totalWeight -= weight;
+    return card;
+  });
 }
 
 export function readBurgerCard(card: unknown): card is BurgerCard {

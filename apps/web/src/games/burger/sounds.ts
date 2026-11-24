@@ -2,7 +2,7 @@ import { playRecordedEffect } from '../../platform/audio.ts';
 import type { BurgerAction } from './rules.ts';
 
 const clips = import.meta.glob<string>('../../assets/burger/sounds/*.wav', { eager: true, import: 'default', query: '?url' });
-type Clip = 'paper' | 'wrap' | 'toss' | 'flip' | 'touch' | 'plate' | 'knob' | 'bell' | 'call-bell' | 'sizzle' | 'pour' | 'splash' | 'burn' | 'fever';
+type Clip = 'paper' | 'wrap' | 'toss' | 'flip' | 'touch' | 'plate' | 'knob' | 'bell' | 'call-bell' | 'sizzle' | 'pour' | 'splash' | 'burn' | 'scrape' | 'fever';
 
 export function kitchenSound(clip: Clip, volume = .32, loop = false) {
   const url = clips['../../assets/burger/sounds/' + clip + '.wav'];
@@ -27,7 +27,7 @@ export function kitchenActionSound(action: BurgerAction) {
       case 'discard': case 'discard-stored': case 'discard-tray': case 'shoo': return 'toss';
       case 'spill': return 'splash';
       case 'grill': case 'stack': case 'stack-tray': return 'flip';
-      case 'stage-burger': case 'stage-drink': case 'store-burger': case 'store-drink': case 'stage-stored': case 'shift-stored': return 'plate';
+      case 'stage-burger': case 'stage-drink': case 'store-burger': case 'retrieve-burger': case 'store-drink': case 'stage-stored': case 'shift-stored': return 'plate';
     }
   })();
   if (cue) kitchenSound(cue, cue === 'call-bell' ? .24 : undefined);

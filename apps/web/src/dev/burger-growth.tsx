@@ -1,4 +1,4 @@
-import { baseOrderXp, burgerXpToReach, firstLevelXp, levelXpGrowth, roundBurgerXp } from '../games/burger/balance.ts';
+import { baseOrderXp, burgerRewardRates, burgerXpToReach, firstLevelXp, levelXpGrowth, roundBurgerXp } from '../games/burger/balance.ts';
 
 const format = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 });
 export function BurgerGrowthTable({ levels }: { levels: readonly number[] }) {
@@ -22,7 +22,7 @@ export function BurgerGrowthTable({ levels }: { levels: readonly number[] }) {
         })}</tbody>
       </table>
     </div>
-    <p className="balance-note">버거번과 위치별 속재료, 주문 또는 제출에 음료가 있을 때의 음료 한 칸을 비교합니다. 빠졌거나 추가된 재료는 불일치로 세며, 굽기는 팁 판정에 사용합니다. 음료는 종류와 양이 모두 맞아야 일치합니다.</p>
+    <p className="balance-note">버거번과 위치별 속재료, 주문 또는 제출에 음료가 있을 때의 음료 한 칸을 비교합니다. 빠졌거나 추가된 재료는 불일치로 셉니다. 음료는 종류와 양이 모두 맞아야 일치합니다. 주문 전체와 모든 패티 굽기가 맞으면 카드 보정 후 XP에 {Math.round(burgerRewardRates.perfectXp * 100)}%를 더합니다.</p>
     <p className="balance-note">레벨업 때 초과한 XP는 다음 구간에 이어집니다. 대전은 주방별, 협동은 공동 주방 단위로 계산하며 새 경기는 Lv. 1부터 시작합니다.</p>
   </section>;
 }

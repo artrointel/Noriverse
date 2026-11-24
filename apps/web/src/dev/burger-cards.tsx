@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { cardModifiers, cardXpPercent, minimumXpMultiplier, readBurgerCard } from '../games/burger/cards.ts';
+import { cardModifiers, cardXpPercent, minimumXpMultiplier, readBurgerCard, soldOutCardWeight } from '../games/burger/cards.ts';
 import handbook from '../../../../docs/burger-tycoon.md?raw';
 import { BurgerDifficultyTable } from './burger-difficulty.tsx';
 import { BurgerGrowthTable } from './burger-growth.tsx';
@@ -53,6 +53,7 @@ function CardBalanceTable() {
 
   return <section aria-label="카드 밸런스">
     <p className="balance-note">정산액과 경험치 보정은 게임 코드에서 불러옵니다. 선택한 카드의 경험치 보정률을 합산하며 최종 배율은 기본의 {minimumXpMultiplier * 100}% 이상입니다.</p>
+    <p className="balance-note">매진 카드의 추첨 가중치는 일반 카드 한 장의 {soldOutCardWeight * 100}%입니다. 다시 뽑기에도 같은 가중치를 적용합니다.</p>
     <div className="filters">
       <label>카드 검색<input type="search" value={query} onChange={event => setQuery(event.target.value)}
         placeholder="카드 이름, ID, 효과" /></label>

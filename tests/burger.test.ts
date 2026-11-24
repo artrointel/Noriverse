@@ -10,7 +10,7 @@ import { burgerDifficultyAtLevel, burgerPressure, burgerRankFromXp, burgerXpToRe
 import {
   advanceBurger, applyBurgerAction, burgerCounter, burgerDeadline, burgerEndlessOpeningMs, burgerLevel, burgerOutcome, burgerPreparationMs, burgerResigned, burgerSupplyUnlocked,
   burgerGrowthProgress, burgerLevelSettings, burgerOrderXp, burgerRank, createBurgerRound as createXpRound, cupAmount, cupSize, grillCount,
-  burgerStorageSize, isPattyNearBurn, judgeOrder, nextBurgerAt, pattyAt, pattyDoneness, pattyFaces, pattyFrame, readBurgerRound, resignBurger, shiftBurgerClock, startBurgerRound,
+  burgerStorageSize, grillScrapeMs, grillSlotAvailable, isPattyNearBurn, judgeOrder, nextBurgerAt, pattyAt, pattyDoneness, pattyFaces, pattyFrame, readBurgerRound, resignBurger, shiftBurgerClock, startBurgerRound,
 } from '../apps/web/src/games/burger/rules.ts';
 import type { BurgerAction, BurgerRound, BurgerStack, Order } from '../apps/web/src/games/burger/rules.ts';
 import { defaultMatchSettings } from '../apps/web/src/games/match-settings.ts';
@@ -21,7 +21,10 @@ const opening = 100_000;
 const firstGuest = opening + burgerPreparationMs;
 function createCardRound(...args: Parameters<typeof createXpRound>) {
   const round = createXpRound(...args);
-  for (const counter of Object.values(round.counters)) delete counter!.xp;
+  for (const counter of Object.values(round.counters)) {
+    delete counter!.xp;
+    counter!.cards = [];
+  }
   return round;
 }
 function createBurgerRound(...args: Parameters<typeof createCardRound>) {
@@ -55,6 +58,87 @@ test('the grill warning starts at 180 percent on the cooking face and ends when 
   assert.equal(isPattyNearBurn(heat(14_000), 0), false);
   assert.equal(isPattyNearBurn([180, 110], 1), false);
   assert.equal(isPattyNearBurn([200, 190], 1), false);
+});
+
+test('discarding a burnt patty blocks just that grill slot until the shared scrape finishes', () => {
+  let round = startBurgerRound(createXpRound(5, ['host', 'guest'], 17, 'coop'), opening);
+  const cook = { type: 'grill', kind: 'beef', slot: 0 } as const;
+  const scrape = { type: 'scrape-grill', slot: 0 } as const;
+  const discard = { type: 'move', from: 0, to: 'trash' } as const;
+  round = action(round, cook, opening + 100);
+  const burnt = opening + 16_000;
+  assert.equal(applyBurgerAction(round, 'guest', { ...discard, to: 1 }, burnt), undefined);
+  assert.equal(applyBurgerAction(round, 'guest', { ...discard, to: 'beef' }, burnt), undefined);
+  round = applyBurgerAction(round, 'guest', discard, burnt)!;
+  assert.equal(round.counters.host!.grill[0], null);
+  assert.equal(round.counters.host!.grillResidue?.[0], 0);
+  assert.equal(grillSlotAvailable(round.counters.host!, 0), false);
+  assert.equal(applyBurgerAction(round, 'host', cook, burnt + 200), undefined);
+  round = action(round, { ...cook, slot: 1 }, burnt + 200);
+  const scrapeAt = burnt + 500;
+  round = applyBurgerAction(round, 'guest', scrape, scrapeAt)!;
+  assert.equal(nextBurgerAt(round), scrapeAt + grillScrapeMs);
+  assert.equal(applyBurgerAction(round, 'host', { type: 'move', from: 1, to: 0 }, scrapeAt + grillScrapeMs - 1), undefined);
+  assert.equal(advanceBurger(round, scrapeAt + grillScrapeMs - 1), undefined);
+  assert.equal(grillSlotAvailable(advanceBurger(round, scrapeAt + grillScrapeMs)!.counters.host!, 0), true);
+
+  const accelerated = applyBurgerAction(round, 'host', scrape, scrapeAt + 250)!;
+  const cleanAt = scrapeAt + grillScrapeMs - 300;
+  assert.equal(nextBurgerAt(accelerated), cleanAt);
+  const restored = readBurgerRound(JSON.parse(JSON.stringify(shiftBurgerClock(accelerated, 3000))))!;
+  assert.equal(nextBurgerAt(restored), cleanAt + 3000);
+  assert.equal(applyBurgerAction(restored, 'host', cook, cleanAt + 2999), undefined);
+
+  let shared = accelerated;
+  for (let i = 1; i <= 5; i++) {
+    shared = applyBurgerAction(shared, i % 2 ? 'guest' : 'host', scrape, scrapeAt + 250 + i * 20)!;
+  }
+  assert.equal(shared.counters.host!.grillResidue, undefined);
+  assert.equal(applyBurgerAction(shared, 'guest', scrape, scrapeAt + 360), undefined);
+  const ready = applyBurgerAction(shared, 'guest', cook, scrapeAt + 360)!;
+  assert.equal(ready.counters.host!.grill[0]?.kind, 'beef');
+  assert.equal(ready.counters.host!.grill[1]?.kind, 'beef');
+});
+
+test('co-op starts with the assembly card and can restore the first earned card', () => {
+  const players = ['host', 'guest'] as const;
+  const round = createXpRound(5, [...players], 17, 'coop');
+  const board = round.counters.host!;
+  assert.deepEqual(board.cards, ['assembly']);
+  assert.equal(burgerRank(board), 1);
+  const restore = (snapshot: BurgerRound) => readBurgerRound(JSON.parse(JSON.stringify(snapshot)));
+  assert.deepEqual(restore(round)?.counters.host?.cards, ['assembly']);
+
+  const solo = startBurgerRound(createXpRound(5, ['host'], 17), opening);
+  const race = startBurgerRound(createXpRound(5, [...players], 17), opening);
+  const right = { type: 'add', item: 'paper', slot: 1 } as const;
+  assert.equal(applyBurgerAction(solo, 'host', right, opening + 1), undefined);
+  assert.equal(applyBurgerAction(race, 'host', right, opening + 1), undefined);
+  race.counters.host!.cards = ['assembly'];
+  assert.equal(restore(race), undefined);
+
+  const old = structuredClone(round);
+  old.counters.host!.cards = [];
+  assert.deepEqual(restore(old)?.counters.host?.cards, []);
+
+  let started = startBurgerRound(round, opening);
+  started = applyBurgerAction(started, 'host', { ...right, slot: 0 }, opening + 1)!;
+  started = applyBurgerAction(started, 'guest', right, opening + 2)!;
+  started = advanceBurger(started, firstGuest)!;
+  const shared = started.counters.host!;
+  assert.deepEqual(shared.burgers.map(burger => burger.paper), [true, true]);
+  shared.xp = 300;
+  shared.served = 3;
+  shared.service = { burger: { paper: true, bread: 'bun', top: true, packed: true,
+    layers: [{ ingredient: 'beef', source: 0, patty: { kind: 'beef', faces: [100, 100], side: 0, heatAt: 0 } }] } };
+  const drafted = applyBurgerAction(started, 'guest', { type: 'serve', order: 1 }, firstGuest + 10)!;
+  assert.equal(burgerRank(drafted.counters.host!), 2);
+  const draft = restore(drafted)?.counters.host?.draft;
+  assert.ok(draft);
+  assert.equal(draft.offers.includes('assembly'), false);
+  const card = draft.offers[0];
+  const chosen = applyBurgerAction(drafted, 'host', { type: 'choose-card', level: 2, card }, firstGuest + 2000)!;
+  assert.deepEqual(restore(chosen)?.counters.host?.cards, ['assembly', card]);
 });
 
 test('shop status lists only current card effects, including the latest supply change', () => {
@@ -367,7 +451,7 @@ test('four co-op players share one kitchen, and stale inputs cannot flip a patty
   perform('guest3', { type: 'wrap', slot: 0 }, opening + 14_280);
   perform('host', { type: 'stage-burger', slot: 0 }, opening + 14_310);
   perform('guest', { type: 'serve', order: 1 }, firstGuest);
-  assert(roster.every(role => burgerCounter(round, role).money === 233));
+  assert(roster.every(role => burgerCounter(round, role).money === 186));
   assert.equal(applyBurgerAction(round, 'guest2', { type: 'serve', order: 1 }, firstGuest + 1), undefined);
   const submitted = { id: 1, at: firstGuest };
   const snapshotAfterSpill = structuredClone(round);
@@ -392,7 +476,7 @@ test('four co-op players share one kitchen, and stale inputs cannot flip a patty
   assert.equal(matchOutcome(recovered, 'host'), undefined);
   assert.equal(onlineMatchReport(recovered, 'guest2'), undefined);
   const report = onlineMatchReport(recovered, 'guest3');
-  assert.deepEqual(report, { id: lobby.id, game: 'burger', mode: 'coop', outcome: 'score', seconds: 300 + burgerPreparationMs / 1000, score: 233 });
+  assert.deepEqual(report, { id: lobby.id, game: 'burger', mode: 'coop', outcome: 'score', seconds: 300 + burgerPreparationMs / 1000, score: 186 });
   assert.deepEqual(readReport(report), report);
   assert.equal(readReport({ ...report, game: 'omok' }), undefined);
   assert.equal(readReport({ ...report, score: -1 }), undefined);
@@ -435,7 +519,7 @@ test('grill heat follows both faces independently and tray and burger moves pres
   assert.equal(applyBurgerAction(round, 'host', { type: 'pop', slot: 1 }, opening + 15_800), undefined);
   tap({ type: 'stage-burger', slot: 1 }, 15_900);
   tap({ type: 'serve', order: 1 }, 21_000);
-  assert.equal(round.counters.host!.money, 233);
+  assert.equal(round.counters.host!.money, 186);
   assert.equal(round.counters.host!.combo, 1);
   assert.deepEqual([pattyDoneness([70, 70]), pattyDoneness([90, 110]), pattyDoneness([130, 130])], ['rare', 'medium', 'well']);
   assert.equal(pattyDoneness([49, 110]), undefined);
@@ -515,7 +599,7 @@ test('the rack preserves eight distinct orders and only stages one burger at a t
   round = action(round, { type: 'discard-stored', index: 6 }, firstGuest + 500);
   assert.equal(round.counters.host!.storage?.[6], null);
   round = action(round, { type: 'serve', order: 1 }, firstGuest + 600);
-  assert.equal(round.counters.host!.money, 233);
+  assert.equal(round.counters.host!.money, 186);
   assert.equal(round.counters.host!.storage?.filter(Boolean).length, 6);
 });
 
@@ -557,6 +641,57 @@ test('co-op storage moves and swaps atomically and service returns to its reserv
   move({ type: 'add', slot: 0, item: 'paper' }, 'host');
   move({ type: 'return-burger', to: 'origin', serial: 3 });
   assert.deepEqual(kitchen().burgers[1], burger(3));
+});
+
+test('a staged burger can move to any free rack slot and a stored burger can return to a free manual station', () => {
+  let round = startBurgerRound(createXpRound(5, ['host', 'guest'], 17, 'coop'), opening);
+  const now = opening + 1500;
+  const kitchen = () => round.counters.host!;
+  const move = (input: BurgerAction, actor: 'host' | 'guest' = 'guest') => {
+    const next = applyBurgerAction(round, actor, input, now);
+    assert(next);
+    round = next;
+  };
+  const burger: BurgerStack = { paper: true, bread: 'bun', top: true, packed: true, layers: [
+    { ingredient: 'beef', source: 0, patty: { kind: 'beef', faces: [100, 100], side: 0, heatAt: 0, serial: 1 } },
+  ] };
+  const cola = { kind: 'cola', amount: 100 } as const;
+  kitchen().cards = ['storage', 'unlock:cola', 'orderStorage'];
+  kitchen().xp = burgerXpToReach(4);
+  kitchen().served = 14;
+  kitchen().pattySequence = 1;
+  kitchen().burgers[0] = burger;
+  kitchen().cups[0] = { amount: cola.amount, pourAt: 0 };
+  move({ type: 'store-drink', drink: 0, index: 3 });
+  move({ type: 'stage-burger', slot: 0 });
+  move({ type: 'add', slot: 0, item: 'paper' });
+  const stash = { type: 'store-burger', slot: 'service', index: 3, serial: 1 } as const;
+  assert.equal(applyBurgerAction(round, 'host', { ...stash, serial: 2 }, now), undefined);
+  move(stash, 'host');
+  assert.equal(kitchen().service?.burger, undefined);
+  assert.equal(kitchen().service?.origin, undefined);
+  assert.deepEqual(kitchen().storage?.[3], burger);
+  assert.deepEqual(kitchen().storedDrinks?.[3], cola);
+  assert.equal(kitchen().burgers[0].paper, true);
+  round = readBurgerRound(JSON.parse(JSON.stringify(round)))!;
+  assert.ok(round);
+  const retrieve = { type: 'retrieve-burger', index: 3, slot: 0, serial: 1 } as const;
+  assert.equal(applyBurgerAction(round, 'host', retrieve, now), undefined);
+  assert.equal(applyBurgerAction(round, 'host', { ...retrieve, slot: 1 }, now), undefined);
+  assert.deepEqual(kitchen().storage?.[3], burger);
+  move({ type: 'discard', slot: 0 });
+  assert.equal(applyBurgerAction(round, 'host', { ...retrieve, serial: 2 }, now), undefined);
+  move(retrieve);
+  assert.equal(kitchen().storage?.[3], null);
+  assert.deepEqual(kitchen().storedDrinks?.[3], cola);
+  assert.deepEqual(kitchen().burgers[0], burger);
+  move({ type: 'store-burger', slot: 0, index: 4 });
+  move({ type: 'stage-stored', index: 4 });
+  move({ ...stash, index: 7 });
+  assert.equal(kitchen().storage?.[4], null);
+  assert.deepEqual(kitchen().storage?.[7], burger);
+  assert.equal(kitchen().money, 100);
+  assert.ok(readBurgerRound(JSON.parse(JSON.stringify(round))));
 });
 
 test('the order rack stores a burger and drink or a drink on its own and restores both through the shared kitchen', () => {
@@ -627,13 +762,16 @@ test('the order judge compares layer positions, doneness, and drink separately',
     layers: [{ ingredient: 'cheese' }, { ingredient: 'chicken', patty: { kind: 'chicken', side: 0, faces: [131, 129], heatAt: 0 } },
       { ingredient: 'pickle' }],
   } satisfies Parameters<typeof judgeOrder>[1];
-  assert.deepEqual(judgeOrder(meal, burger, meal.drink), { money: 305, perfect: true, satisfaction: 'love', tip: 153, similarity: 1 });
+  assert.deepEqual(judgeOrder(meal, burger, meal.drink), { money: 305, perfect: true, satisfaction: 'love', tip: 61, similarity: 1 });
+  assert.equal(burgerOrderXp(meal, burger, meal.drink), 120);
+  assert.equal(burgerOrderXp(meal, burger, meal.drink, 1.07), 128.4);
   const cookedDifferently = { ...burger, layers: burger.layers.map(layer => layer.patty
     ? { ...layer, patty: { ...layer.patty, faces: [70, 70] as [number, number] } } : layer) };
   const exactRecipe = judgeOrder(meal, cookedDifferently, meal.drink);
   assert.equal(exactRecipe.money, 305);
   assert.equal(exactRecipe.perfect, true);
   assert.equal(exactRecipe.tip, 0);
+  assert.equal(burgerOrderXp(meal, cookedDifferently, meal.drink), 100);
   const wrong = judgeOrder(meal, { ...burger, layers: [...burger.layers].reverse() }, { kind: 'cola', size: 'small' });
   assert(!wrong.perfect);
   assert(wrong.money > 0 && wrong.money < 110);
@@ -642,6 +780,7 @@ test('the order judge compares layer positions, doneness, and drink separately',
   assert.equal(withoutDrink.perfect, false);
   assert.equal(withoutDrink.satisfaction, 'content');
   assert.equal(withoutDrink.tip, 0);
+  assert.equal(burgerOrderXp(meal, burger), 80);
 });
 
 test('dining satisfaction distinguishes five levels using ingredient accuracy', () => {
@@ -667,10 +806,10 @@ test('each fifth perfect order resets the fever timer to twenty seconds', () => 
   round = action(round, { type: 'serve', order: 1 }, firstGuest + 1000);
   assert.equal(round.counters.host!.feverUntil, firstGuest + 21_000);
   assert.equal(round.counters.host!.feverTrigger, 5);
-  assert.equal(round.counters.host!.money, 233);
+  assert.equal(round.counters.host!.money, 186);
   Object.assign(round.counters.host!, { combo: 9, served: 9, best: 9, sequence: 2, orders: [{ ...first, id: 2 }], service: { burger: ready } });
   round = action(round, { type: 'serve', order: 2 }, firstGuest + 2500);
-  assert.equal(round.counters.host!.money, 621);
+  assert.equal(round.counters.host!.money, 527);
   assert.equal(round.counters.host!.feverUntil, firstGuest + 22_500);
   assert.equal(round.counters.host!.feverTrigger, 10);
   const restored = readBurgerRound(JSON.parse(JSON.stringify(round)));
@@ -712,7 +851,7 @@ test('the service tray moves food without paying and only submits to the guest a
   assert.equal(round.counters.host!.cups[0].amount, 100);
   round = action(round, { type: 'stage-burger', slot: 1 }, now);
   round = action(round, { type: 'serve', order: 1 }, now);
-  assert.equal(round.counters.host!.money, 233);
+  assert.equal(round.counters.host!.money, 186);
   assert.equal(round.counters.host!.orders[0].id, 2);
   assert.equal(round.counters.host!.service, undefined);
   assert.equal(round.counters.host!.diners?.[0].id, 1);
@@ -1062,6 +1201,22 @@ test('card effects stack with caps and eligible supplies return after a sellout'
   assert(!offered.has('unlock:chicken'));
 });
 
+test('a sellout has half of each other card’s draw weight, including on rerolls', () => {
+  const previous = ['rush', 'patient', 'advertise'] as const;
+  for (const excluded of [[], previous]) {
+    const counts = new Map<BurgerCard, number>();
+    const draws = 190 - excluded.length * 20;
+    for (let i = 0; i < draws; i++) {
+      const offers = cardOffers(['unlock:cheese'], 2, index => index === 0 ? (i + .5) / draws : .5, excluded);
+      assert.equal(new Set(offers).size, 3);
+      assert(offers.every(card => !excluded.some(candidate => candidate === card)));
+      counts.set(offers[0], (counts.get(offers[0]) ?? 0) + 1);
+    }
+    assert.equal(counts.size, 10 - excluded.length);
+    for (const [card, count] of counts) assert.equal(count, card === 'sold:cheese' ? 10 : 20);
+  }
+});
+
 const offersAt = (cards: BurgerCard[], level: number) => new Set(
   Array.from({ length: 100 }, (_, index) => cardOffers(cards, level, () => index / 100)).flat());
 
@@ -1243,7 +1398,10 @@ test('new games scale guest pressure and retain the selected difficulty through 
 test('endless builds pressure over active time and limits the reserve without forcing a cutoff', () => {
   assert.equal(burgerPressure('normal', 9 * 60_000), 1);
   assert(burgerPressure('normal', 30 * 60_000) > 1.7);
-  assert.equal(endlessOrderReward(1, 1, 0, endlessReserveMs - 1500, 'normal'), 1500);
+  assert.equal(endlessReserveMs, 3 * 60_000);
+  assert.equal(endlessOrderReward(1, 1, 0, 105_000, 'normal'), 25_000);
+  assert.equal(endlessOrderReward(1, 1, 0, 178_500, 'normal'), 1500);
+  assert.equal(endlessOrderReward(1, 1, 0, 180_000, 'normal'), 0);
   assert(endlessOrderReward(8, .95, 31 * 60_000, 0, 'normal') < endlessOrderReward(8, .95, 20 * 60_000, 0, 'normal'));
   assert(endlessOrderReward(8, .95, 31 * 60_000, 0, 'normal') > 0);
 });
@@ -1261,11 +1419,15 @@ test('an endless race syncs separate kitchen clocks and ranks sales after the la
   assert.equal(burgerDeadline(start.burger!, 'guest'), deadline);
 
   round = advanceBurger(round, firstGuest)!;
+  const serveAt = firstGuest + 100;
+  round.counters.host!.playUntil = serveAt + 178_500;
+  round.end = round.counters.host!.playUntil;
   round.counters.host!.service = { burger: { paper: true, bread: 'bun', top: true, packed: true,
     layers: [{ ingredient: 'beef', source: 0, patty: { kind: 'beef', faces: [100, 100], heatAt: 0, side: 0 } }] } };
-  round = action(round, { type: 'serve', order: 1 }, firstGuest + 100);
+  round = action(round, { type: 'serve', order: 1 }, serveAt);
   const hostDeadline = burgerDeadline(round, 'host');
-  assert(hostDeadline > deadline);
+  assert.equal(hostDeadline, serveAt + 180_000);
+  assert.equal(round.counters.host!.feedback?.timeAdded, 1500);
   assert.equal(burgerDeadline(round, 'guest'), deadline);
   round = advanceBurger(round, deadline)!;
   const waiting = readMatchSnapshot(makeSnapshot(round), start, deadline)!;
@@ -1286,34 +1448,36 @@ test('order XP counts matching positions linearly and carries surplus into an au
   const partial: BurgerStack = { ...perfect, layers: [...perfect.layers, { ingredient: 'cheese' }] };
   const wrong: BurgerStack = { ...perfect, bread: 'rice', layers: [{ ingredient: 'cheese' }] };
   const first = round.counters.host!.orders[0];
-  assert.equal(burgerOrderXp(first, perfect), 100);
+  assert.equal(burgerOrderXp(first, perfect), 120);
   assert.equal(burgerOrderXp(first, { ...perfect, bread: 'rice' }), 50);
   assert.equal(burgerOrderXp(first, partial), 66.67);
   assert.equal(burgerOrderXp(first, wrong), 0);
   assert.equal(burgerOrderXp(first, perfect, { kind: 'cola', size: 'small' }), 66.67);
-  assert.equal(burgerOrderXp({ ...first, drink: { kind: 'cola', size: 'small' } }, perfect, { kind: 'cola', size: 'small' }), 100);
+  assert.equal(burgerOrderXp({ ...first, drink: { kind: 'cola', size: 'small' } }, perfect, { kind: 'cola', size: 'small' }), 120);
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 4; i++) {
     const at = firstGuest + i * 14_000 + 100;
     round = advanceBurger(round, at) ?? round;
     const board = round.counters.host!;
-    board.service = { burger: i ? perfect : partial };
-    round = action(round, { type: 'serve', order: board.orders[0].id }, at);
-    if (i === 3) {
-      assert.equal(round.counters.host!.xp, 366.67);
+    const order = board.orders[0];
+    const heat = { rare: 70, medium: 100, well: 130 }[order.layers[0].cooked!];
+    board.service = { burger: i ? { ...perfect, layers: [{ ...patty, patty: { ...patty.patty, faces: [heat, heat] } }] } : partial };
+    round = action(round, { type: 'serve', order: order.id }, at);
+    if (i === 2) {
+      assert.equal(round.counters.host!.xp, 306.67);
       assert.equal(round.counters.host!.draft, undefined);
     }
   }
   const board = round.counters.host!;
-  assert.equal(board.xp, 466.67);
+  assert.equal(board.xp, 426.67);
   assert.equal(round.counters.guest!.xp, 0);
   assert.equal(burgerRank(board), 2);
   assert.equal(burgerLevel(board), 2);
   assert.equal(board.draft?.offers.length, 3);
   const restored = readBurgerRound(JSON.parse(JSON.stringify(round)))!;
   round = action(restored, { type: 'choose-card', card: board.draft!.offers[0], level: 2 }, firstGuest + 65_500);
-  assert.equal(round.counters.host!.xp, 466.67);
-  assert(Math.abs(burgerGrowthProgress(round.counters.host!) - 66.67 / 440) < 1e-10);
+  assert.equal(round.counters.host!.xp, 426.67);
+  assert(Math.abs(burgerGrowthProgress(round.counters.host!) - 26.67 / 440) < 1e-10);
 });
 
 test('XP levels and pressure keep rising past eight while food and bonus caps remain', () => {
@@ -1360,16 +1524,16 @@ test('unlock and sellout cards modify order XP and boosted snapshots remain vali
     return action(next, { type: 'serve', order: order.id }, firstGuest + 100);
   };
   const boosted = serveFirstGuest(round);
-  assert.equal(boosted.counters.host!.xp, 507);
+  assert.equal(boosted.counters.host!.xp, 528.4);
   assert.equal(boosted.counters.guest!.xp, 0);
-  assert.equal(readBurgerRound(JSON.parse(JSON.stringify(boosted)))?.counters.host?.xp, 507);
-  boosted.counters.host!.xp = 536;
+  assert.equal(readBurgerRound(JSON.parse(JSON.stringify(boosted)))?.counters.host?.xp, 528.4);
+  boosted.counters.host!.xp = 643;
   assert.equal(readBurgerRound(boosted), undefined);
 
   host.xp = 850;
   host.served = 9;
   host.cards.push('sold:cheese');
   const afterSellout = serveFirstGuest(round);
-  assert.equal(afterSellout.counters.host!.xp, 952);
-  assert.equal(readBurgerRound(JSON.parse(JSON.stringify(afterSellout)))?.counters.host?.xp, 952);
+  assert.equal(afterSellout.counters.host!.xp, 972.4);
+  assert.equal(readBurgerRound(JSON.parse(JSON.stringify(afterSellout)))?.counters.host?.xp, 972.4);
 });

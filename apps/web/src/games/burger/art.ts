@@ -6,6 +6,7 @@ export const kitchenShade = 'burger-surface-shade';
 export const kitchenCup = 'burger-cup';
 export const pattyOilTexture = 'burger-patty-oil';
 export const pattyOilGlint = 'burger-patty-oil-glint';
+export const grillResidueArt = 'burger-grill-residue';
 export const burgerFoodFrames = { bunTop: 0, bun: 1, riceTop: 2, rice: 3, cheese: 4, lettuce: 5, onion: 6,
   pickle: 7, tomato: 8, egg: 9, bacon: 10, wrap: 11 } as const;
 export const assemblerArt = {
@@ -44,9 +45,34 @@ export function createKitchenArt(scene: Phaser.Scene) {
   paintCup(scene, kitchenCup);
   paintOilTexture(scene, pattyOilTexture, false);
   paintOilTexture(scene, pattyOilGlint, true);
+  paintGrillResidue(scene);
   for (const kind of drinkKinds) {
     for (const size of Object.keys(fillLevels) as CupSize[]) paintCup(scene, cupTexture(kind, size), kind, fillLevels[size]);
   }
+}
+
+function paintGrillResidue(scene: Phaser.Scene) {
+  const width = 96, height = 56;
+  const texture = scene.textures.createCanvas(grillResidueArt, width, height);
+  if (!texture) return;
+  const ctx = texture.getContext();
+  const pixels = ctx.createImageData(width, height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const u = (x + .5 - width / 2) / 38, v = (y + .5 - height / 2) / 20;
+      const angle = Math.atan2(v, u);
+      const ragged = .12 * Math.cos(angle * 5 + .6) + .06 * Math.sin(angle * 9) + .04 * Math.cos(angle * 17);
+      const grain = ((Math.imul(x + 17, 0x45d9f3b) ^ Math.imul(y + 11, 0x119de1f3)) >>> 0) % 997 / 997;
+      const radius = Math.hypot(u, v) + ragged;
+      const edge = Math.max(0, Math.min(1, (1.03 - radius) * 7 + (grain - .6) * .46));
+      const crust = Math.min(1, radius ** 3) * (.3 + grain * .7);
+      const flake = grain > .965 ? Math.pow(grain, 12) * 30 : 0;
+      pixels.data.set([18 + crust * 35 + flake, 12 + crust * 20 + flake * .65, 11 + crust * 12 + flake * .4,
+        (radius > 1.04 && radius < 1.20 && grain > .975 ? .34 : edge * (.73 + grain * .25)) * 255], (y * width + x) * 4);
+    }
+  }
+  ctx.putImageData(pixels, 0, 0);
+  texture.refresh().setFilter(Phaser.Textures.FilterMode.LINEAR);
 }
 
 function paintOilTexture(scene: Phaser.Scene, key: string, glint: boolean) {

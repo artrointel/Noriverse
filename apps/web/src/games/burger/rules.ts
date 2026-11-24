@@ -5,7 +5,7 @@ import { diningExitMs, diningReplyMs, diningSatisfaction, seatDiner, seatWalkMs,
 import type { Diner, DiningReaction, DiningSatisfaction } from './dining.ts';
 import { cardCount, cardModifiers, cardOffers, cardRerollLimit, cardXpPercent, ordersPerLevel, readBurgerCard, supplyAvailable, unlockLevels, upgradeAvailable, validUpgradeHistory } from './cards.ts';
 import type { BurgerCard } from './cards.ts';
-import { baseOrderXp, burgerCashPayout, burgerDifficultyAtLevel, burgerMenuPrice, burgerPressure, burgerPrices, burgerRankFromXp, burgerRewardRates, burgerXpToReach, defaultBurgerDifficulty, endlessBonusAtLevel, endlessOrderReward, endlessReserveMs, readBurgerDifficulty, roundBurgerXp } from './balance.ts';
+import { baseOrderXp, burgerCashPayout, burgerDifficultyAtLevel, burgerMenuPrice, burgerPressure, burgerPrices, burgerRankFromXp, burgerRewardRates, burgerXpToReach, defaultBurgerDifficulty, endlessBonusAtLevel, endlessOrderReward, endlessReserveMs, limitEndlessReward, readBurgerDifficulty, roundBurgerXp } from './balance.ts';
 import type { BurgerDifficulty } from './balance.ts';
 
 export const burgerMinutes = [5, 10, 15, 'endless'] as const;
@@ -21,6 +21,8 @@ export const burgerPreparationMs = 20_000;
 export const burgerEndlessOpeningMs = 90_000;
 const pattyBurnPoint = 200;
 const pattyBurnWarningPoint = 180;
+export const grillScrapeMs = 2000;
+const grillScrapeTapMs = 300;
 const autoFlipPoint = 180;
 const assemblyStepMs = 500;
 export const assemblyCooldownMs = 10_000;
@@ -64,6 +66,8 @@ type Shoo = { sequence: number; order: number; at: number; left: boolean; varian
 type AssemblyJob = { order: number; next: number; reorderedAt?: number };
 export type Counter = {
   grill: (Patty | null)[]; tray: Patty[]; burgers: [BurgerStack, BurgerStack]; cups: [Cup, Cup]; orders: Order[];
+  // Null is clear, zero is dirty, and follow-up taps move a positive scrape start back.
+  grillResidue?: (number | null)[];
   service?: ServiceTray;
   diners?: Diner[];
   storage?: (BurgerStack | null)[];
@@ -88,6 +92,7 @@ export type BurgerRound = { players: Role[]; counters: Partial<Record<Role, Coun
   mode?: BurgerMode; resigned?: Role[]; start: number; opensAt?: number; end: number; revision: number; winners?: Role[] };
 export type BurgerAction =
   | { type: 'grill'; kind: PattyKind; slot: number }
+  | { type: 'scrape-grill'; slot: number }
   | { type: 'flip'; slot: number; side?: Patty['side']; serial?: number }
   | { type: 'hold'; slot: number; serial?: number }
   | { type: 'move'; from: PattyLocation; to: PattyLocation | 'trash'; serial?: number }
@@ -98,7 +103,8 @@ export type BurgerAction =
   | { type: 'pop' | 'wrap' | 'discard'; slot: number }
   | { type: 'pour' | 'spill'; drink: number; pouring?: boolean }
   | { type: 'stage-burger'; slot: number }
-  | { type: 'store-burger'; slot: number; index: number }
+  | { type: 'store-burger'; slot: number | 'service'; index: number; serial?: number }
+  | { type: 'retrieve-burger'; index: number; slot: number; serial?: number }
   | ({ type: 'stage-stored' | 'discard-stored'; index: number } & StorageSelection)
   | ({ type: 'shift-stored'; from: number; to: number } & StorageSelection)
   | { type: 'store-drink'; drink: number | 'service'; index: number }
@@ -166,6 +172,8 @@ export const burgerTables = (counter: Counter) => counter.cards ? cardCount(coun
 export const burgerGrillCapacity = (counter: Counter) => burgerFacility(counter, 'griddle') ? grillCount : grillColumns;
 export const burgerTrayCapacity = (counter: Counter) => burgerFacility(counter, 'tray') ? trayLimit : 4;
 const allowedGrill = (counter: Counter, slot: number) => slot < burgerGrillCapacity(counter);
+export const grillSlotAvailable = (counter: Counter, slot: number) =>
+  allowedGrill(counter, slot) && !counter.grill[slot] && counter.grillResidue?.[slot] == null;
 const assemblyLimit = (counter: Counter) => stackLimit + (counter.cards ? cardCount(counter.cards, 'picky') : 0);
 type BurgerBalance = Pick<BurgerRound, 'difficulty' | 'minutes'>;
 const endlessAge = (counter: Pick<Counter, 'salesStartedAt'>, now: number) => Math.max(0, now - (counter.salesStartedAt ?? now));
@@ -204,7 +212,8 @@ export const burgerResigned = (round: BurgerRound, role: Role) =>
 
 export function createBurgerRound(minutes: BurgerMinutes, players: Role[], seed = Math.floor(Math.random() * 0x1_0000_0000),
   mode: BurgerMode = 'race', difficulty = defaultBurgerDifficulty): BurgerRound {
-  return { players, counters: Object.fromEntries(kitchenRoles({ mode, players }).map(role => [role, { ...emptyCounter(), money: 100, cards: [], xp: 0 }])),
+  return { players, counters: Object.fromEntries(kitchenRoles({ mode, players }).map(role =>
+    [role, { ...emptyCounter(), money: 100, cards: mode === 'coop' ? ['assembly'] : [], xp: 0 }])),
     seed, minutes, difficulty, ...(mode === 'coop' && { mode }), start: 0, end: 0, revision: 0 };
 }
 
@@ -384,6 +393,9 @@ export function nextBurgerAt(round: BurgerRound) {
     event = Math.min(event, burgerDeadline(round, role), counter.next, counter.assemblyJob?.next || Infinity,
       ...counter.orders.map(order => order.until), ...(counter.diners ?? []).map(diner => diner.exitAt),
       ...counter.cups.filter(cup => cup.pourAt).map(overflowAt));
+    for (const scrapeAt of counter.grillResidue ?? []) {
+      if (scrapeAt) event = Math.min(event, scrapeAt + grillScrapeMs);
+    }
     if (counter.cards?.includes('autoGrill')) {
       const autoUnload = counter.cards.includes('autoGrill2');
       event = Math.min(event, ...counter.grill.map(patty => {
@@ -408,6 +420,10 @@ export function advanceBurger(round: BurgerRound, now: number) {
       continue;
     }
     const nextCounter = { ...counter, orders: counter.orders.filter(order => now < order.until) };
+    if (counter.grillResidue?.some(at => at && at + grillScrapeMs <= now)) {
+      const residue = counter.grillResidue.map(at => at && at + grillScrapeMs <= now ? null : at);
+      keepGrillResidue(nextCounter, residue);
+    }
     if (counter.diners) nextCounter.diners = counter.diners.filter(diner => now < diner.exitAt);
     if (nextCounter.orders.length !== counter.orders.length) {
       const expired = counter.orders.filter(order => order.until <= now);
@@ -431,6 +447,13 @@ export function advanceBurger(round: BurgerRound, now: number) {
   return changed(round, counters);
 }
 
+function matchesOrderedDoneness(order: Order, burger: BurgerStack) {
+  return order.layers.some(layer => layer.cooked) && order.layers.every(({ cooked }, index) => {
+    const patty = burger.layers[index]?.patty;
+    return !cooked || Boolean(patty && pattyDoneness(patty.faces) === cooked);
+  });
+}
+
 export function judgeOrder(order: Order, burger: BurgerStack, side?: { kind: DrinkKind; size: CupSize }) {
   const matches = order.layers.reduce((sum, requested, index) =>
     sum + Number(burger.layers[index]?.ingredient === requested.ingredient), burger.bread === order.bread ? 2 : 0);
@@ -443,11 +466,7 @@ export function judgeOrder(order: Order, burger: BurgerStack, side?: { kind: Dri
   const perfect = similarity >= .999999 && (order.drink ? drinkSimilarity >= .999999 : !side);
   const accuracy = Math.min(1, (order.price * similarity + drinkValue * drinkSimilarity) / (order.price + drinkValue))
     * (!order.drink && side ? .87 : 1);
-  const matchesDoneness = order.layers.every((requested, index) => {
-    const patty = burger.layers[index]?.patty;
-    return !requested.cooked || Boolean(patty && pattyDoneness(patty.faces) === requested.cooked);
-  });
-  const tip = perfect && matchesDoneness && order.layers.some(layer => layer.cooked)
+  const tip = perfect && matchesOrderedDoneness(order, burger)
     ? Math.round((order.price + drinkValue) * rates.perfectTip) : 0;
   const satisfaction: DiningSatisfaction = perfect ? 'love' : accuracy >= .82 ? 'delighted'
     : accuracy >= .67 ? 'content' : accuracy >= .48 ? 'puzzled' : 'disappointed';
@@ -460,7 +479,9 @@ export function burgerOrderXp(order: Order, burger: BurgerStack, side?: { kind: 
     sum + Number(burger.layers[index]?.ingredient === requested.ingredient), Number(burger.bread === order.bread));
   const drinkMatches = Number(Boolean(order.drink && side && order.drink.kind === side.kind && order.drink.size === side.size));
   const slots = 1 + Math.max(order.layers.length, burger.layers.length) + Number(Boolean(order.drink || side));
-  return roundBurgerXp(baseOrderXp * (matches + drinkMatches) / slots * multiplier);
+  const matched = matches + drinkMatches;
+  const donenessBonus = matched === slots && matchesOrderedDoneness(order, burger) ? 1 + burgerRewardRates.perfectXp : 1;
+  return roundBurgerXp(baseOrderXp * matched / slots * multiplier * donenessBonus);
 }
 
 const isGrill = (value: unknown): value is number => integer(value, grillCount - 1);
@@ -485,8 +506,18 @@ function putPatty(counter: Counter, patty: Patty, to: PattyLocation, now: number
     if ((to !== 'tray' && to !== patty.kind) || !trayHasRoom(counter, patty.kind)) return false;
     counter.tray.push(patty);
   }
-  else { if (!allowedGrill(counter, to) || counter.grill[to]) return false; counter.grill[to] = { ...patty, heatAt: now }; }
+  else { if (!grillSlotAvailable(counter, to)) return false; counter.grill[to] = { ...patty, heatAt: now }; }
   return true;
+}
+
+function keepGrillResidue(counter: Counter, residue: NonNullable<Counter['grillResidue']>) {
+  counter.grillResidue = residue.some(at => at !== null) ? residue : undefined;
+}
+
+function markGrillResidue(counter: Counter, slot: number, at: number | null) {
+  const residue = counter.grillResidue?.slice() ?? Array<number | null>(grillCount).fill(null);
+  residue[slot] = at;
+  keepGrillResidue(counter, residue);
 }
 
 function fillOpenTraySpace(counter: Counter, now: number) {
@@ -606,13 +637,21 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       return true;
     }
     case 'grill':
-      if (!isGrill(action.slot) || !allowedGrill(counter, action.slot) || counter.grill[action.slot] || !includes(pattyKinds, action.kind)
+      if (!isGrill(action.slot) || !grillSlotAvailable(counter, action.slot) || !includes(pattyKinds, action.kind)
         || !burgerSupplyUnlocked(action.kind, counter)) return false;
       const sequence = (counter.pattySequence ?? 0) + 1;
       const speed = 900 + Math.floor(random(seed, sequence, 61) * 201);
       counter.pattySequence = sequence;
       charge(counter, 10);
       return putPatty(counter, { kind: action.kind, faces: [0, 0], side: 0, heatAt: 0, speed, serial: sequence }, action.slot, now);
+    case 'scrape-grill': {
+      if (!isGrill(action.slot) || !allowedGrill(counter, action.slot)) return false;
+      const scrapeAt = counter.grillResidue?.[action.slot];
+      if (scrapeAt == null) return false;
+      const effectiveStart = scrapeAt === 0 ? now : scrapeAt - grillScrapeTapMs;
+      markGrillResidue(counter, action.slot, effectiveStart + grillScrapeMs <= now ? null : effectiveStart);
+      return true;
+    }
     case 'flip': {
       if (fullyAutomatic) return false;
       const patty = isGrill(action.slot) && counter.grill[action.slot];
@@ -632,8 +671,12 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       if (fullyAutomatic && typeof action.from === 'number' && action.to !== 'trash') return false;
       if (action.serial !== undefined && pattyAt(counter, action.from)?.serial !== action.serial) return false;
       const patty = removePatty(counter, action.from, now);
-      if (patty && action.to === 'trash') charge(counter, 10);
-      return Boolean(patty && (action.to === 'trash' || putPatty(counter, patty, action.to, now)));
+      if (!patty) return false;
+      const burnt = isBurnt(patty.faces);
+      if (action.to !== 'trash') return !burnt && putPatty(counter, patty, action.to, now);
+      if (burnt && typeof action.from === 'number') markGrillResidue(counter, action.from, 0);
+      charge(counter, 10);
+      return true;
     }
     case 'pour':
     case 'spill': {
@@ -656,12 +699,28 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       return true;
     }
     case 'store-burger': {
-      if (!burgerFacility(counter, 'storage') || !canAccessAssembly(counter, action.slot) || !integer(action.index, burgerStorageSize - 1)
-        || counter.storage?.[action.index] || storageReserved(counter, action.index)) return false;
-      const burger = counter.burgers[action.slot];
-      if (!burger.packed) return false;
-      counter.storage = writeStorageSlot(counter.storage, action.index, burger);
-      counter.burgers[action.slot] = emptyBurger();
+      const { slot, index, serial } = action;
+      if (!burgerFacility(counter, 'storage') || !integer(index, burgerStorageSize - 1) || counter.storage?.[index]) return false;
+      if (slot === 'service') {
+        const burger = counter.service?.burger;
+        if (!burger?.packed || (serial !== undefined && burgerSerial(burger) !== serial)) return false;
+        counter.storage = writeStorageSlot(counter.storage, index, burger);
+        counter.service = { ...counter.service, burger: undefined, origin: undefined };
+      } else {
+        if (!canAccessAssembly(counter, slot) || storageReserved(counter, index) || !counter.burgers[slot].packed) return false;
+        counter.storage = writeStorageSlot(counter.storage, index, counter.burgers[slot]);
+        counter.burgers[slot] = emptyBurger();
+      }
+      return true;
+    }
+    case 'retrieve-burger': {
+      const { index, slot, serial } = action;
+      if (!burgerFacility(counter, 'storage') || !integer(index, burgerStorageSize - 1) || !canAccessAssembly(counter, slot)
+        || isAutoAssemblySlot(counter, slot) || counter.burgers[slot].paper) return false;
+      const burger = counter.storage?.[index];
+      if (!burger?.packed || (serial !== undefined && burgerSerial(burger) !== serial)) return false;
+      counter.burgers[slot] = burger;
+      counter.storage = writeStorageSlot(counter.storage, index, null);
       return true;
     }
     case 'store-drink': {
@@ -780,11 +839,12 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       counter.money += money;
       const oldRank = burgerRank(counter);
       const oldLevel = burgerLevel(counter);
-      const timeAdded = round.minutes !== 'endless' ? 0 : counter.xp !== undefined && counter.playUntil !== undefined
-        ? Math.max(0, Math.min(endlessBonusAtLevel(oldLevel) * 1000, endlessReserveMs - (counter.playUntil - now)))
-        : round.difficulty && counter.playUntil !== undefined
-        ? endlessOrderReward(oldLevel, verdict.similarity, endlessAge(counter, now), counter.playUntil - now, round.difficulty)
-        : 1000 * Math.max(1, Math.floor(endlessRewards[oldLevel - 1] * verdict.similarity));
+      const spareTime = (counter.playUntil ?? round.end) - now;
+      const timeAdded = round.minutes !== 'endless' ? 0 : counter.xp !== undefined
+        ? limitEndlessReward(endlessBonusAtLevel(oldLevel) * 1000, spareTime)
+        : round.difficulty
+        ? endlessOrderReward(oldLevel, verdict.similarity, endlessAge(counter, now), spareTime, round.difficulty)
+        : limitEndlessReward(1000 * Math.max(1, Math.floor(endlessRewards[oldLevel - 1] * verdict.similarity)), spareTime);
       if (counter.playUntil !== undefined) counter.playUntil += timeAdded;
       if (counter.xp !== undefined) counter.xp = roundBurgerXp(counter.xp + burgerOrderXp(order, burger, delivered, modifiers.xp));
       counter.served++;
@@ -859,7 +919,7 @@ function editBurger(counter: Counter, action: BurgerAction, now: number, round: 
       if (burger.top) { burger.top = false; return true; }
       const layer = burger.layers.pop();
       if (layer?.patty && layer.source !== undefined) {
-        const fallback = counter.grill.findIndex((value, index) => !value && allowedGrill(counter, index));
+        const fallback = counter.grill.findIndex((_, index) => grillSlotAvailable(counter, index));
         return putPatty(counter, layer.patty, layer.source, now) || putPatty(counter, layer.patty, 'tray', now)
           || (fallback >= 0 && putPatty(counter, layer.patty, fallback, now));
       }
@@ -956,6 +1016,7 @@ function shiftCounter(counter: Counter, pause: number): Counter {
   const shift = (value: number) => value ? value + pause : 0;
   return { ...counter, next: shift(counter.next), feverUntil: shift(counter.feverUntil),
       grill: counter.grill.map(patty => patty && { ...patty, heatAt: shift(patty.heatAt) }),
+      ...(counter.grillResidue && { grillResidue: counter.grillResidue.map(at => at === null ? null : shift(at)) }),
       cups: counter.cups.map(cup => ({ ...cup, pourAt: shift(cup.pourAt) })) as Counter['cups'],
       orders: counter.orders.map(order => ({ ...order, at: shift(order.at), until: shift(order.until),
         ...(order.reorderedAt !== undefined && { reorderedAt: shift(order.reorderedAt) }) })),
@@ -1043,6 +1104,15 @@ function validDiners(diners: Diner[], sequence: number) {
     && (!index || diners[index - 1].id < diner.id));
 }
 
+function validCardHistory(counter: Counter, mode?: BurgerMode) {
+  const { cards } = counter;
+  if (!Array.isArray(cards) || !cards.every(readBurgerCard)) return false;
+  const earned = burgerRank(counter) - 1 - Number(Boolean(counter.draft));
+  const startsWithAssembly = mode === 'coop' && counter.xp !== undefined && cards[0] === 'assembly' && cards.length === earned + 1;
+  if (startsWithAssembly && cards.includes('assembly', 1)) return false;
+  return earned >= 0 && cards.length === earned + Number(startsWithAssembly) && validUpgradeHistory(cards, Number(startsWithAssembly));
+}
+
 export function readBurgerRound(raw: unknown): BurgerRound | undefined {
   if (!raw || typeof raw !== 'object') return;
   const { players, counters, seed, start, opensAt, end, minutes, difficulty, mode, resigned, revision, winners } = raw as BurgerRound;
@@ -1068,8 +1138,7 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
     if (!counter || ![counter.money, counter.served, counter.combo, counter.best, counter.sequence, counter.next, counter.feverUntil].every(value => integer(value))
       || (xpRound ? !cardRound || typeof counter.xp !== 'number' || !Number.isFinite(counter.xp) || counter.xp < 0 : counter.xp !== undefined)
       || (difficulty && start ? !integer(counter.salesStartedAt, end) || counter.salesStartedAt < salesStart : counter.salesStartedAt !== undefined)
-      || (cardRound ? !Array.isArray(counter.cards) || counter.cards.length !== burgerRank(counter) - 1 - Number(Boolean(counter.draft))
-        || !counter.cards.every(readBurgerCard) || !validUpgradeHistory(counter.cards)
+      || (cardRound ? !validCardHistory(counter, mode)
         : counter.cards !== undefined || counter.draft !== undefined || counter.bankrupt !== undefined || counter.rerollsUsed !== undefined)
       || (counter.rerollsUsed !== undefined && !integer(counter.rerollsUsed, cardRerollLimit))
       || (counter.draft !== undefined && (!counter.draft || !integer(counter.draft.at, end) || counter.draft.at < start
@@ -1082,6 +1151,9 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
         || !integer(counter.submission.at, end) || counter.submission.at < start))
       || counter.combo > counter.best || counter.best > counter.served || typeof counter.retired !== 'boolean'
       || !Array.isArray(counter.grill) || counter.grill.length !== grillCount || !counter.grill.every(patty => patty === null || readPatty(patty))
+      || (counter.grillResidue !== undefined && (!start || !Array.isArray(counter.grillResidue) || counter.grillResidue.length !== grillCount
+        || !counter.grillResidue.every((at, slot) => at === null || (!counter.grill[slot] && allowedGrill(counter, slot)
+          && integer(at, end) && (at === 0 || at > start - grillScrapeMs)))))
       || !Array.isArray(counter.tray) || counter.tray.length > previousTrayLimit * pattyKinds.length || !counter.tray.every(readPatty)
       || pattyKinds.some(kind => counter.tray.filter(patty => patty.kind === kind).length > previousTrayLimit)
       || (counter.pattySequence !== undefined && !integer(counter.pattySequence))
@@ -1122,7 +1194,7 @@ export function readBurgerRound(raw: unknown): BurgerRound | undefined {
     if (counter.xp !== undefined) {
       // Sellout cards never revoke XP earned before the sale.
       const maxBonus = counter.cards!.reduce((sum, card) => sum + Math.max(0, cardXpPercent(card)), 0);
-      const maxPerOrder = roundBurgerXp(baseOrderXp * (1 + maxBonus / 100));
+      const maxPerOrder = roundBurgerXp(baseOrderXp * (1 + maxBonus / 100) * (1 + burgerRewardRates.perfectXp));
       if (counter.xp > counter.served * maxPerOrder) return;
     }
     const overflow = pattyKinds.some(kind => counter.tray.filter(patty => patty.kind === kind).length > trayLimit);

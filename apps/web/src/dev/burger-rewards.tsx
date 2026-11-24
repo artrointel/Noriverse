@@ -44,7 +44,7 @@ export function BurgerRewards() {
         <li>버거와 음료를 각각 채점합니다. 해당 항목이 정확하면 정가를 지급합니다. 일부만 맞으면 정가 × {rates.partial} × 유사도<sup>{rates.partialPower}</sup>를 반올림합니다. 빠진 음료나 주문에 없던 음료의 판매액은 0입니다.</li>
         <li>버거 유사도는 같은 위치의 속재료와 위·아래 빵이 일치한 수를 주문과 제출 각각의 전체 층수의 기하평균으로 나눈 값입니다. 음료 유사도는 종류 일치 {percent(rates.drinkKind)}와 사이즈 일치 {percent(rates.drinkSize)}를 더합니다.</li>
         <li>버거와 음료 정산액을 합쳐 카드의 정산액 배율을 곱하고 반올림한 뒤, 이미 피버 중이면 {rates.fever}배로 지급합니다. 주문이 피버를 발동시켰다면 다음 주문부터 적용합니다.</li>
-        <li>빵·속재료 순서·음료·모든 패티의 굽기가 일치하면 주문 정가의 {percent(rates.perfectTip)}를 반올림해 팁으로 더합니다. 굽기만 다르면 정가와 콤보는 유지되고 이 팁이 빠집니다. 팁에는 카드와 피버 배율을 적용하지 않습니다.</li>
+        <li>빵·속재료 순서·음료·모든 패티의 굽기가 일치하면 주문 정가의 {percent(rates.perfectTip)}를 반올림해 팁으로 더합니다. 같은 조건에서 카드 보정 후 <a href="?view=growth">경험치</a>도 {percent(rates.perfectXp)}를 더 받습니다. 팁에는 카드와 피버 배율을 적용하지 않습니다.</li>
       </ol>
     </section>
     <section className="progression" aria-labelledby="payout-example-title">
