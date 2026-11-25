@@ -7,6 +7,7 @@ export const statusSpecs = {
 } as const;
 
 export type StatusKind = keyof typeof statusSpecs;
+export type BlockingStatus = 'stun' | 'poison' | 'shock';
 export type StatusLevel = 1 | 2;
 export type StatusEffect = { kind: StatusKind; level: StatusLevel; until: number; tickAt: number };
 export type Statuses = Partial<Record<StatusKind, StatusEffect>>;
@@ -49,10 +50,12 @@ export function shortenStatuses(statuses: Statuses, now: number, time: number) {
 export function statusModifiers(statuses: Statuses, now: number) {
   const active = (kind: StatusKind) => (statuses[kind]?.until ?? -Infinity) > now;
   const stunned = active('stun'), shocked = active('shock');
+  const attackBlock: BlockingStatus | undefined = stunned ? 'stun' : shocked ? 'shock' : undefined;
+  const supportBlock: BlockingStatus | undefined = stunned ? 'stun' : active('poison') ? 'poison' : undefined;
   return {
     speed: stunned ? 0 : active('freeze') ? statuses.freeze!.level === 2 ? .5 : .7 : 1,
-    stunned, attack: !stunned && !shocked, roll: !stunned && !shocked,
-    support: !stunned && !active('poison'), outgoing: shocked && statuses.shock!.level === 2 ? .5 : 1,
+    stunned, attack: !attackBlock, roll: !attackBlock, attackBlock,
+    support: !supportBlock, supportBlock, outgoing: shocked && statuses.shock!.level === 2 ? .5 : 1,
   };
 }
 

@@ -6,14 +6,22 @@ export const readBurgerMode = (value: unknown) => burgerModes.find(mode => mode 
 export const roomPlayerCapacity = (game: GameId, burgerMode?: BurgerMode) =>
   game === 'burger' && burgerMode !== 'teams' ? 4 : roomCapacity[game];
 export const gameIds = Object.freeze(Object.keys(roomCapacity) as GameId[]);
+const standaloneGameIds = ['startrail'] as const;
+export type CatalogGameId = GameId | typeof standaloneGameIds[number];
+export const catalogGameIds: readonly CatalogGameId[] = Object.freeze([...gameIds, ...standaloneGameIds]);
 export const minimumRoomPlayers = (game: GameId) => game === 'liar' ? 3 : 2;
 export const isOnlineOnlyGame = (game: GameId) => game === 'liar';
 export const isTilePuzzle = (game: GameId) => game === 'sichuan' || game === 'memory';
 
-export function supportsPlayerCount(game: GameId, count: number) {
+export function supportsPlayerCount(game: CatalogGameId, count: number) {
+  if (!isGameId(game)) return count === 1;
   return count === 1 ? !isOnlineOnlyGame(game) : Number.isInteger(count) && count >= minimumRoomPlayers(game) && count <= roomCapacity[game];
 }
 
 export function isGameId(value: unknown): value is GameId {
   return typeof value === 'string' && Object.hasOwn(roomCapacity, value);
+}
+
+export function isCatalogGameId(value: unknown): value is CatalogGameId {
+  return catalogGameIds.some(id => id === value);
 }

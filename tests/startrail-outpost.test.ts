@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { caches, distance, floor, gate, landing, lift, mapWallEdges, patrols, relayAccess, tileSize, waves, weaponPickups, world } from '../apps/web/src/games/startrail/outpost.ts';
+import { balance, blockerClearance, caches, cliffs, distance, floor, gate, landing, lift, mapWallEdges, patrols,
+  rayDistance, relayAccess, terrainOutlines, tileSize, walkable, weaponPickups, world } from '../apps/web/src/games/startrail/outpost.ts';
 import type { Point } from '../apps/web/src/games/startrail/outpost.ts';
-import { cameraView, projectToScreen, projectToWorld } from '../apps/web/src/games/startrail/camera.ts';
-import { dispersedHeading, finishReload, makeGun, medical, refillMagazine, startReload, weapons } from '../apps/web/src/games/startrail/gear.ts';
+import { cameraView, playerHitFeedback, projectToScreen, projectToWorld } from '../apps/web/src/games/startrail/camera.ts';
+import { dispersedHeading, finishReload, knife, knifeSwingDirection, makeGun, medical, outOfAmmo, refillMagazine, startReload, weapons } from '../apps/web/src/games/startrail/gear.ts';
 import { createGridPuzzle } from '../apps/web/src/games/startrail/puzzle.ts';
 import { flareFalloff, flarePoseAt, SupportGear, supportSpecs, targetAlertSeconds, turretSite } from '../apps/web/src/games/startrail/support.ts';
 import { joinShadowFootprints, shadowBasis, shadowFootprint, shadowProjections } from '../apps/web/src/games/startrail/shadow.ts';
@@ -11,6 +12,10 @@ import { fixtureGroundRatio } from '../apps/web/src/games/startrail/shadow-art.t
 import { activeStatuses, applyStatus, rollCombatStatus, shortenStatuses, statusModifiers, tickStatuses } from '../apps/web/src/games/startrail/status.ts';
 import type { Statuses } from '../apps/web/src/games/startrail/status.ts';
 import { gunArt, heldPose, projectBarrelPoint, supportPose, turretArt, turretBaseCenter } from '../apps/web/src/games/startrail/weapon-pose.ts';
+import { flashlightLevel } from '../apps/web/src/games/startrail/visibility.ts';
+import { observatoryStage, outpostStage } from '../apps/web/src/games/startrail/expedition-maps.ts';
+import { concealed, encounterRange, EnemyFlow, openPath } from '../apps/web/src/games/startrail/encounters.ts';
+import { powerTransfer } from '../apps/web/src/games/startrail/power-transfer.ts';
 
 const cell = (point: Point) => [Math.floor(point.x / tileSize), Math.floor(point.y / tileSize)] as const;
 const label = (x: number, y: number) => `${x}:${y}`;
@@ -27,18 +32,140 @@ test('the wider camera keeps the same screen aspect, map bounds and aim projecti
   assert.deepEqual(cameraView({ x: -120, y: Infinity }, 1.5), { x: 0, y: world.height - 405, width: 720, height: 405 });
 });
 
-function explore(from: Point, blocked: (x: number, y: number) => boolean) {
+test('hit feedback rises as health drops, flickers briefly and respects reduced motion', () => {
+  const { duration, shake } = balance.hitFeedback;
+  const high = playerHitFeedback(0, 0, .9, false);
+  const low = playerHitFeedback(0, 0, .2, false);
+  assert.ok(low.offset.x > high.offset.x && low.offset.x <= shake[1]);
+  assert.ok(low.tint > high.tint);
+  const dip = playerHitFeedback(duration / 4, 0, .2, false);
+  const rebound = playerHitFeedback(duration / 2, 0, .2, false);
+  assert.ok(dip.offset.x < 0 && rebound.offset.x > 0);
+  assert.ok(rebound.tint > dip.tint && rebound.tint < low.tint);
+  const still = playerHitFeedback(duration / 4, 0, .2, true);
+  assert.equal(Math.hypot(still.offset.x, still.offset.y), 0);
+  assert.ok(still.tint < low.tint && still.tint > dip.tint);
+  const finished = playerHitFeedback(duration, 0, .2, false);
+  assert.equal(Math.hypot(finished.offset.x, finished.offset.y), 0);
+  assert.equal(finished.tint, 0);
+});
+
+test('the last magazine suppresses the empty-ammo warning while it is being loaded', () => {
+  const gun = makeGun('eagle');
+  gun.ammo = 0;
+  gun.spare = 1;
+  assert.equal(outOfAmmo(gun), false);
+  assert.equal(startReload(gun, weapons.eagle, 0), true);
+  assert.equal(gun.spare, 0);
+  assert.equal(outOfAmmo(gun), false);
+  finishReload(gun, weapons.eagle);
+  assert.equal(outOfAmmo(gun), false);
+  gun.ammo = 0;
+  assert.equal(outOfAmmo(gun), true);
+});
+
+test('knife swings alternate within one second and reset after a break', () => {
+  const first = knifeSwingDirection(undefined, 0);
+  const second = knifeSwingDirection({ at: 0, direction: first }, .55);
+  assert.equal(first, 1);
+  assert.equal(second, -1);
+  assert.equal(knifeSwingDirection({ at: .55, direction: second }, 1.2), 1);
+  assert.equal(knifeSwingDirection({ at: 0, direction: first }, 1), -1);
+  assert.equal(knifeSwingDirection({ at: 0, direction: first }, 1.001), 1);
+  assert.ok(Math.abs(knife.recovery - .169) < 1e-8);
+});
+
+test('both explorers roll at seventy percent of their prior speed for the same travel distance', () => {
+  for (const spec of [balance.roll, balance.cometDash]) {
+    const ratio = (spec.range / spec.duration) / (spec.range / (.30 / .70));
+    assert.ok(Math.abs(ratio - .70) < 1e-8);
+  }
+  assert.equal(balance.roll.range, 74);
+  assert.equal(balance.cometDash.range, 86);
+});
+
+function explore(from: Point, blocked: (x: number, y: number) => boolean, terrain: readonly (readonly boolean[])[] = floor) {
   const queue = [cell(from)];
   const seen = new Set([at(from)]);
   for (const [x, y] of queue) {
     for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]] as const) {
-      if (!floor[ny]?.[nx] || seen.has(label(nx, ny)) || blocked(nx, ny)) continue;
+      if (!terrain[ny]?.[nx] || seen.has(label(nx, ny)) || blocked(nx, ny)) continue;
       seen.add(label(nx, ny));
       queue.push([nx, ny]);
     }
   }
   return seen;
 }
+
+test('the observatory is about thirty percent larger and both routes reach the shelter', () => {
+  const stage = observatoryStage;
+  const area = (map: { width: number; height: number }) => map.width * map.height;
+  const open = (terrain: readonly (readonly boolean[])[]) => terrain.flat().filter(Boolean).length;
+  assert.ok(Math.abs(area(stage.world) / area(outpostStage.world) - 1.3) < .01);
+  assert.ok(Math.abs(open(stage.floor) / open(outpostStage.floor) - 1.3) < .05);
+  const gateClosed = (x: number, y: number) => x === Math.floor(stage.gate.x / tileSize) && y >= 9 && y <= 10;
+  const west = explore(stage.landing, (x, y) => gateClosed(x, y) || x === 14 && y >= 24, stage.floor);
+  const south = explore(stage.landing, (x, y) => gateClosed(x, y) || y === 17 && x >= 9 && x <= 12, stage.floor);
+  for (const route of [west, south]) {
+    assert.ok(route.has(at(stage.shelter)) && route.has(at(stage.relayAccess)));
+    assert.ok(!route.has(at(stage.lift)));
+  }
+  assert.ok(explore(stage.shelter, () => false, stage.floor).has(at(stage.lift)));
+  assert.equal(new Set(stage.floor.flatMap((row, y) => row.flatMap((walkable, x) => [walkable ? stage.material(x, y).cell : stage.outsideMaterial(x, y).cell]))).size, 8);
+  for (const anchor of [stage.landing, stage.shelter, stage.relayAccess, stage.lift, ...stage.caches, ...stage.patrols]) {
+    assert.ok(stage.walkable(anchor), JSON.stringify(anchor));
+  }
+});
+
+test('both landing areas can supply reachable reinforcements concealed from the player', () => {
+  for (const stage of [outpostStage, observatoryStage]) {
+    const flow = new EnemyFlow(stage);
+    const walls = [...stage.obstacles, stage.gate];
+    const blockers = [...walls];
+    for (const [kind, points] of [['crate', stage.crates], ['crystal', stage.crystals]] as const) {
+      const { width, height } = balance.props[kind];
+      blockers.push(...points.map(point => ({ x: point.x - width / 2, y: point.y - height / 2, width, height })));
+    }
+    const camera = cameraView({ x: stage.landing.x - 240, y: stage.landing.y - 135 }, 1, stage.world);
+    flow.update(stage.landing, true, walls);
+    assert.equal(flow.spawnPoint(stage.landing, 0, Infinity, point => at(point) === at(stage.lift), () => 0), undefined);
+    const valid = (point: Point) => blockers.every(box => blockerClearance(point, box) > 11) &&
+      concealed(point, camera, stage.landing, blockers, () => false);
+    const point = flow.spawnPoint(stage.landing, encounterRange.safe, encounterRange.approach, valid, () => 0);
+    assert.ok(point, stage.id);
+    assert.ok(stage.walkable(point) && valid(point));
+    assert.ok(distance(stage.landing, point) >= encounterRange.safe);
+    assert.ok(distance(stage.landing, point) <= encounterRange.approach);
+  }
+});
+
+test('reinforcements avoid open lines and illuminated cells in the view and can pursue around a wall', () => {
+  const start = { x: 24, y: 24 }, corner = { x: 24, y: 72 }, player = { x: 120, y: 72 };
+  const obstacle = { x: 48, y: 0, width: 48, height: 48 };
+  const camera = { x: 0, y: 0, width: 144, height: 96 };
+  const flow = new EnemyFlow({ floor: [[true, false, true], [true, true, true]], obstacles: [obstacle],
+    gate: { x: 95, y: 48, width: 2, height: 48 }, walkable: () => true });
+  assert.equal(concealed(corner, camera, player, [obstacle], () => false), false);
+  assert.equal(concealed(start, camera, player, [obstacle], () => false), true);
+  assert.equal(concealed(start, camera, player, [obstacle], () => true), false);
+  assert.equal(concealed({ x: 200, y: 72 }, camera, player, [], () => false), true);
+  assert.equal(openPath(start, player, [obstacle]), false);
+  flow.update(player, false, [obstacle]);
+  assert.deepEqual(flow.waypoint(start, [obstacle], 9), corner);
+  flow.update(player, true, [obstacle, { x: 95, y: 48, width: 2, height: 48 }]);
+  assert.equal(flow.waypoint(start, [obstacle], 9), undefined);
+});
+
+test('the observatory panel connects the emergency lift in sequence', () => {
+  const panel = powerTransfer();
+  const switchAt = (x: number) => panel.pointerDown(1, { x, y: 142 }, 0);
+  assert.equal(switchAt(368), 'miss');
+  assert.equal(switchAt(112), 'placed');
+  assert.equal(switchAt(368), 'miss');
+  assert.equal(switchAt(240), 'placed');
+  assert.equal(switchAt(368), 'solved');
+  assert.equal(panel.solved, true);
+});
 
 test('the outpost triples the map area and has two approaches to the generator', () => {
   assert.equal(world.width * world.height, 3 * 24 * 14 * tileSize ** 2);
@@ -81,7 +208,7 @@ test('partial reload replaces the whole magazine and resupply restores loaded an
   assert.equal(weapons.pulse.magazines, 4);
 });
 
-test('support equipment limits deployments, blocks shots through walls and recovers a partial battery', () => {
+test('support equipment limits deployments and blocks shots through walls', () => {
   const gear = new SupportGear();
   const target = { x: landing.x + 80, y: landing.y };
   assert.equal(gear.use(landing, target, 0, [], 0), true);
@@ -98,15 +225,36 @@ test('support equipment limits deployments, blocks shots through walls and recov
   assert.equal(gear.turretAmmo.ammo, supportSpecs.turret.capacity - 1);
   assert.equal(supportSpecs.turret.deploy, 3);
   assert.equal(supportSpecs.turret.pickup, 1);
-  gear.selected = 'drone';
-  assert.equal(gear.use(landing, target, 0, [], 2), true);
-  gear.battery = .1;
-  gear.update(2.2, .2, landing, [], [], fire);
-  assert.equal(gear.drone, undefined);
-  gear.update(2.3, .1, landing, [], [], fire);
-  assert.ok(gear.battery > 0 && gear.battery < supportSpecs.drone.duration);
-  assert.equal(gear.use(landing, target, 0, [], 2.3), true);
-  assert.ok(gear.drone);
+});
+
+test('both devices spend their charge on active time and damage, recall and recharge', () => {
+  for (const kind of ['turret', 'drone'] as const) {
+    const gear = new SupportGear();
+    const spec = supportSpecs[kind];
+    let recalls = 0;
+    gear.selected = kind;
+    assert.equal(gear.use(landing, landing, 0, [], 0), true);
+    const device = gear[kind]!;
+    assert.equal('hp' in device, false);
+    gear.update(1, 1, landing, [], [], () => {});
+    assert.equal(gear.hit(device, 1, 10), 'hit');
+    assert.equal(gear.hit(device, 1.1, 10), undefined);
+    const remaining = spec.duration - 1 - 10 * spec.secondsPerDamage;
+    assert.equal(gear.chargeRatio(kind), remaining / spec.duration);
+    gear.update(1 + remaining, remaining, landing, [], [], () => {}, undefined, unit => { assert.equal(unit, device); recalls++; });
+    assert.equal(recalls, 1);
+    assert.equal(gear[kind], undefined);
+    assert.equal(gear.chargeRatio(kind), 0);
+    assert.equal(gear.use(landing, landing, 0, [], 1 + remaining), false);
+    gear.update(2 + remaining, 1, landing, [], [], () => {});
+    assert.ok(Math.abs(gear.chargeRatio(kind) - 1 / spec.recharge) < 1e-8);
+    assert.equal(gear.use(landing, landing, 0, [], 2 + remaining), true);
+    assert.equal(gear.hit(gear[kind]!, 2 + remaining, 10), 'recalled');
+    assert.equal(gear[kind], undefined);
+    assert.equal(gear.chargeRatio(kind), 0);
+    gear.update(2 + remaining + spec.recharge, spec.recharge, landing, [], [], () => {});
+    assert.equal(gear.chargeRatio(kind), 1);
+  }
 });
 
 test('an emplaced turret uses the marked deployment site and only scans and acquires after startup', () => {
@@ -213,15 +361,35 @@ test('a flare consumes one unit, lights from landing for three minutes, and supp
   assert.equal(gear.stock, 12);
 });
 
-test('map walls sample the solid face beside walkable terrain', () => {
+test('curved terrain shares the same boundaries for walkability, ray casts and map wall faces', () => {
   assert.ok(mapWallEdges.length > 100);
+  assert.ok(terrainOutlines.some(outline => outline.length > 100));
+  assert.ok(mapWallEdges.some(({ from, to }) => from.x !== to.x && from.y !== to.y));
+  assert.ok(cliffs.some(({ polygon }) => {
+    const [from, to] = polygon!.vertices;
+    return Math.min(Math.abs(from.x - to.x), Math.abs(from.y - to.y)) >= tileSize;
+  }));
   for (const { from, to, face } of mapWallEdges) {
-    const [x, y] = cell(face);
-    assert.ok(!floor[y]?.[x]);
-    assert.equal(distance(from, to), tileSize / 4);
-    const [fx, fy] = cell({ x: from.x + to.x - face.x, y: from.y + to.y - face.y });
-    assert.equal(floor[fy]?.[fx], true);
+    const inside = { x: from.x + to.x - face.x, y: from.y + to.y - face.y };
+    assert.ok(!walkable(face));
+    assert.ok(walkable(inside));
+    assert.ok(distance(from, to) <= tileSize / 4 + 1e-8);
+    assert.ok(Math.abs(rayDistance(inside, (face.x - inside.x) / 8, (face.y - inside.y) / 8, 8, cliffs) - 4) < 1e-7);
   }
+  for (const cliff of cliffs) {
+    const { center, vertices, planes } = cliff.polygon!;
+    assert.ok(vertices.every(p => planes.every(n => n.x * p.x + n.y * p.y <= n.limit + 1e-8)));
+    assert.equal(blockerClearance(center, cliff), 0);
+  }
+  assert.ok([landing, relayAccess, lift, ...weaponPickups, ...caches, ...patrols].every(walkable));
+});
+
+test('the player headlamp reaches farther in a narrower, gentler beam', () => {
+  const origin = { x: 0, y: 0 };
+  assert.equal(flashlightLevel(origin, 0, origin), .7);
+  assert.ok(flashlightLevel(origin, 0, { x: 250, y: 0 }) > 0);
+  assert.equal(flashlightLevel(origin, 0, { x: 268, y: 0 }), 0);
+  assert.equal(flashlightLevel(origin, 0, { x: 100, y: 100 * Math.tan(.75) }), 0);
 });
 
 test('sprite shadows respond to light position, height, cone and wall occlusion', () => {
@@ -454,6 +622,8 @@ test('damage effects stack and finish their last whole second', () => {
   applyStatus(statuses, 'poison', 2, 0);
   assert.equal(tickStatuses(statuses, 1, 100, 100), 85.5);
   assert.equal(statusModifiers(statuses, 2).support, false);
+  assert.equal(statusModifiers(statuses, 2).supportBlock, 'poison');
+  assert.equal(statusModifiers(statuses, 2).attackBlock, undefined);
   assert.ok(Math.abs(tickStatuses(statuses, 5, 85.5, 100) - 34.396471875) < 1e-8);
   assert.deepEqual(activeStatuses(statuses, 5).map(effect => effect.kind), ['poison']);
   assert.equal(statuses.poison?.until, 20);
@@ -469,9 +639,13 @@ test('medical pulses shorten active effects while stronger status levels are pre
   assert.equal(statuses.stun?.until, 2.5);
   assert.equal(statuses.shock?.until, 4.5);
   assert.equal(statusModifiers(statuses, 1).speed, 0);
+  assert.equal(statusModifiers(statuses, 1).attackBlock, 'stun');
+  assert.equal(statusModifiers(statuses, 1).supportBlock, 'stun');
   assert.equal(statusModifiers(statuses, 3).speed, .5);
   assert.equal(statusModifiers(statuses, 3).attack, false);
   assert.equal(statusModifiers(statuses, 3).roll, false);
+  assert.equal(statusModifiers(statuses, 3).attackBlock, 'shock');
+  assert.equal(statusModifiers(statuses, 3).supportBlock, undefined);
   assert.equal(statusModifiers(statuses, 3).outgoing, .5);
   assert.equal(weapons.medical.interval, .5);
   shortenStatuses(statuses, 4.25, medical.cleanse);
@@ -485,7 +659,7 @@ test('the lift requires the gate and its junction has a northern and an eastern 
   assert.ok(!closed.has(at(lift)));
   assert.ok(explore(relayAccess, (x, y) => x >= 24 && y >= 13).has(at(lift)));
   assert.ok(explore(relayAccess, (x, y) => x <= 24 && y < 10).has(at(lift)));
-  for (const spawn of [...patrols, ...waves.flatMap(wave => wave.spawns)]) {
+  for (const spawn of patrols) {
     const [x, y] = cell(spawn);
     assert.ok(floor[y]?.[x], `${spawn.kind} spawns off the floor at ${x},${y}`);
     assert.ok(distance(spawn, landing) > 170, 'enemies should not start within firing range of the landing pad');

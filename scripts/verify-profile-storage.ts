@@ -56,12 +56,18 @@ try {
   await save({ avatar: 'mint', avatarBackground: null });
   await save({ touchEffect: 'pixelDrift' });
   await save({ favorite: { game: 'omok', selected: true } });
+  await save({ favorite: { game: 'startrail', selected: true } });
   await save({ presence: 'offline' });
   const restored = await reload();
   assert.equal(restored.avatar, 'mint');
   assert.equal(restored.touchEffect, 'pixelDrift');
   assert(restored.favorites.includes('omok'));
+  assert(restored.favorites.includes('startrail'));
   assert.equal(restored.presence, 'offline');
+  const publicFavorites = await (await request('/api/profiles/' + id, 'GET')).json() as PublicProfile;
+  assert(publicFavorites.favorites.includes('startrail'));
+  await save({ favorite: { game: 'startrail', selected: false } });
+  assert(!(await reload()).favorites.includes('startrail'));
 
   const submit = async (record: unknown) => (await request(me + '/matches', 'POST', session, record)).json() as Promise<OwnProfile>;
   const shared = { id: crypto.randomUUID(), game: 'burger', mode: 'coop', outcome: 'score', seconds: 90 };

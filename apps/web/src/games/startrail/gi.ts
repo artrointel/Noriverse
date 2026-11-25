@@ -50,7 +50,13 @@ export function createIndirectLighting() {
         const right = Math.ceil((block.x + block.width - camera.x) * sx);
         const bottom = Math.ceil((block.y + block.height - camera.y) * sy);
         if (right <= 0 || bottom <= 0 || x >= width || y >= height) continue;
-        walls.fillRect(x, y, right - x, bottom - y);
+        if (block.polygon) {
+          const [first, ...rest] = block.polygon.vertices;
+          walls.beginPath();
+          walls.moveTo((first.x - camera.x) * sx, (first.y - camera.y) * sy);
+          for (const p of rest) walls.lineTo((p.x - camera.x) * sx, (p.y - camera.y) * sy);
+          walls.closePath(); walls.fill();
+        } else walls.fillRect(x, y, right - x, bottom - y);
       }
       return true;
     },

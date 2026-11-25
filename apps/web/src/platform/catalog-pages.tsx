@@ -5,9 +5,9 @@ import { apiAvailable } from '../network/api.ts';
 import type { GuestRoom } from '../network/guest-seat.ts';
 import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
 import type { ReactNode, Ref } from 'react';
-import type { GameId } from '../../../../packages/protocol/games.ts';
+import type { CatalogGameId } from '../../../../packages/protocol/games.ts';
 import { isOnlineOnlyGame, roomCapacity, supportsPlayerCount } from '../../../../packages/protocol/games.ts';
-import { gameIds, games, matchesGame } from './game-catalog.ts';
+import { catalogGameIds, games, matchesGame } from './game-catalog.ts';
 import { cardsPerPage, pageNumbers } from './library-pagination.ts';
 import { BackLink, gamePath, RouteLink } from './navigation.tsx';
 import type { Navigate } from './navigation.tsx';
@@ -18,14 +18,14 @@ type LibraryTag = typeof tags[number];
 const playerCounts = Array.from({ length: Math.max(...Object.values(roomCapacity)) }, (_, index) => index + 1);
 const heartPath = 'M12 21S1.8 15.4 1.8 8.8C1.8 3.2 8.8 1.7 12 6.6c3.2-4.9 10.2-3.4 10.2 2.2C22.2 15.4 12 21 12 21Z';
 
-function Tags({ id }: { id: GameId }) {
+function Tags({ id }: { id: CatalogGameId }) {
   const { t } = useTranslation();
   return <div className="game-tags"><span>{t(games[id].category)}</span><span>{t(games[id].players)}</span></div>;
 }
 
-function GameCard({ id, selected, preview, selectable, disabled, onSelect, favorite }: {
-  id: GameId; selected: boolean; preview: boolean; selectable?: boolean; disabled?: boolean; onSelect: (id: GameId, button: HTMLButtonElement) => void;
-  favorite?: { selected: boolean; disabled: boolean; toggle: (id: GameId) => void };
+function GameCard<Id extends CatalogGameId>({ id, selected, preview, selectable, disabled, onSelect, favorite }: {
+  id: Id; selected: boolean; preview: boolean; selectable?: boolean; disabled?: boolean; onSelect: (id: Id, button: HTMLButtonElement) => void;
+  favorite?: { selected: boolean; disabled: boolean; toggle: (id: Id) => void };
 }) {
   const { t } = useTranslation();
   const game = games[id];
@@ -55,10 +55,10 @@ function GameCard({ id, selected, preview, selectable, disabled, onSelect, favor
   );
 }
 
-export function GameSelectionGrid({ ids, selected, onSelect, gridRef, busy, favorites, children, selectable }: {
-  ids: GameId[]; selected?: GameId; onSelect: (id: GameId, button: HTMLButtonElement) => void;
+export function GameSelectionGrid<Id extends CatalogGameId>({ ids, selected, onSelect, gridRef, busy, favorites, children, selectable }: {
+  ids: Id[]; selected?: Id; onSelect: (id: Id, button: HTMLButtonElement) => void;
   gridRef?: Ref<HTMLDivElement>; busy?: boolean; children?: ReactNode; selectable?: boolean;
-  favorites?: { games: GameId[]; disabled: boolean; toggle: (id: GameId) => void };
+  favorites?: { games: readonly CatalogGameId[]; disabled: boolean; toggle: (id: Id) => void };
 }) {
   return <div ref={gridRef} className="game-grid" aria-busy={busy}>
     {ids.map(id => <GameCard key={id} id={id} selected={selected === id} preview={Boolean(favorites)} selectable={selectable} disabled={!favorites && busy}
@@ -67,7 +67,14 @@ export function GameSelectionGrid({ ids, selected, onSelect, gridRef, busy, favo
   </div>;
 }
 
-function GamePreview({ id, active, navigate, onClose }: { id: GameId; active: boolean; navigate: Navigate; onClose: () => void }) {
+function GameLaunchLink({ id, navigate, className }: { id: CatalogGameId; navigate: Navigate; className: string }) {
+  const { t } = useTranslation();
+  const label = <><i className="play-glyph" aria-hidden="true" />{t('selectGame')}</>;
+  if (isRoomGame(id)) return <RouteLink href={gamePath(id, 'setup')} navigate={navigate} className={className}>{label}</RouteLink>;
+  return <a href={import.meta.env.BASE_URL + games[id].launchPath} className={className}>{label}</a>;
+}
+
+function GamePreview({ id, active, navigate, onClose }: { id: CatalogGameId; active: boolean; navigate: Navigate; onClose: () => void }) {
   const { t } = useTranslation();
   const title = useRef<HTMLHeadingElement>(null);
   const game = games[id];
@@ -97,20 +104,18 @@ function GamePreview({ id, active, navigate, onClose }: { id: GameId; active: bo
         </section>
         <div className="preview-modes">
           <span>{t('gameMode')}</span>
-          <strong>{isOnlineOnlyGame(id) ? t(apiAvailable ? 'newRoom' : 'roomUnavailable')
+          <strong>{isRoomGame(id) && isOnlineOnlyGame(id) ? t(apiAvailable ? 'newRoom' : 'roomUnavailable')
             : apiAvailable && isRoomGame(id) ? t('newRoom') + ' · ' + t('local') : t('local')}</strong>
         </div>
-        <RouteLink href={gamePath(id, 'setup')} navigate={navigate} className="button button-primary preview-play">
-          <i className="play-glyph" aria-hidden="true" />{t('selectGame')}
-        </RouteLink>
+        <GameLaunchLink id={id} navigate={navigate} className="button button-primary preview-play" />
       </div>
     </aside>
   );
 }
 
 export function CatalogPage({ home, navigate, favorites, disableFavorite, favoriteError, onFavorite, rejoin }: {
-  home: boolean; navigate: Navigate; favorites: GameId[]; disableFavorite: boolean;
-  favoriteError: boolean; onFavorite: (id: GameId) => void;
+  home: boolean; navigate: Navigate; favorites: CatalogGameId[]; disableFavorite: boolean;
+  favoriteError: boolean; onFavorite: (id: CatalogGameId) => void;
   rejoin?: { room: GuestRoom; resume: () => void };
 }) {
   const { t } = useTranslation();
@@ -118,7 +123,7 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
   const [playerCount, setPlayerCount] = useState(0);
   const [activeTags, setActiveTags] = useState<LibraryTag[]>([]);
   const [query, setQuery] = useState('');
-  const [selection, setSelection] = useState<GameId>();
+  const [selection, setSelection] = useState<CatalogGameId>();
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pageAnchor, setPageAnchor] = useState(0);
   const [capacity, setCapacity] = useState(4);
@@ -127,7 +132,7 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
   const lastCard = useRef<HTMLButtonElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const visibleQuery = useDeferredValue(query);
-  const visibleGames = gameIds.filter(id => (scope === 'all' || favorites.includes(id))
+  const visibleGames = catalogGameIds.filter(id => (scope === 'all' || favorites.includes(id))
     && (!playerCount || supportsPlayerCount(id, playerCount))
     && (!activeTags.length || activeTags.includes(games[id].category))
     && matchesGame(id, visibleQuery, t(id)));
@@ -164,7 +169,7 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
     setPreviewOpen(false);
   }
 
-  function select(id: GameId, button: HTMLButtonElement) {
+  function select(id: CatalogGameId, button: HTMLButtonElement) {
     lastCard.current = button;
     setPageAnchor(visibleGames.indexOf(id));
     setSelection(id);
@@ -288,7 +293,7 @@ export function CatalogPage({ home, navigate, favorites, disableFavorite, favori
   );
 }
 
-export function GameDetail({ id, navigate }: { id: GameId; navigate: Navigate }) {
+export function GameDetail({ id, navigate }: { id: CatalogGameId; navigate: Navigate }) {
   const { t } = useTranslation();
   const game = games[id];
   return (
@@ -300,9 +305,7 @@ export function GameDetail({ id, navigate }: { id: GameId; navigate: Navigate })
           <Tags id={id} />
           <h1 tabIndex={-1}>{t(id)}</h1>
           <p className="lead">{t(game.description)}</p>
-          <RouteLink href={gamePath(id, 'setup')} navigate={navigate} className="button button-primary">
-            <i className="play-glyph" aria-hidden="true" />{t('selectGame')}
-          </RouteLink>
+          <GameLaunchLink id={id} navigate={navigate} className="button button-primary" />
         </div>
       </section>
       <section className="reading-panel">

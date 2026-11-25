@@ -9,8 +9,9 @@ import liarArt from '../assets/liar-cover.webp';
 import slimeArt from '../assets/slime-cover.webp';
 import moleArt from '../assets/mole/cover.webp';
 import burgerArt from '../assets/burger/cover.webp';
-import type { GameId } from '../../../../packages/protocol/games.ts';
-export { gameIds } from '../../../../packages/protocol/games.ts';
+import startrailArt from '../assets/startrail/relay-puzzle.jpg';
+import type { CatalogGameId } from '../../../../packages/protocol/games.ts';
+export { catalogGameIds, gameIds } from '../../../../packages/protocol/games.ts';
 
 export const games = {
   omok: { art: omokArt, category: 'strategy', players: 'twoPlayers', description: 'omokCopy', rules: 'omokRules', searchNames: '오목 omok gomoku five in a row' },
@@ -27,10 +28,12 @@ export const games = {
     searchNames: '두더지 게임 두더지잡기 두더지망치 별길 탐사대 star bop mole whack arcade' },
   burger: { art: burgerArt, category: 'action', players: 'upToEightPlayers', description: 'burgerCopy', rules: 'burgerHelp',
     searchNames: '햄버거 타이쿤 버거 요리 경영 burger tycoon kitchen cooking' },
-} as const satisfies Record<GameId, { art: string; category: string; players: string; description: string; rules: string; searchNames: string;
-  cardSubtitle?: string }>;
+  startrail: { art: startrailArt, category: 'action', players: 'onePlayer', description: 'startrailCopy', rules: 'startrailRules',
+    cardSubtitle: 'startrailCardSubtitle', launchPath: 'startrail/', searchNames: '별길탐사대 탑다운 슈팅 솔오리 꼬미 startrail crew top down shooter solori kommi' },
+} as const satisfies Record<CatalogGameId, { art: string; category: string; players: string; description: string; rules: string; searchNames: string;
+  cardSubtitle?: string; launchPath?: string }>;
 
-export function matchesGame(id: GameId, query: string, title: string) {
+export function matchesGame(id: CatalogGameId, query: string, title: string) {
   const words = query.normalize('NFKC').trim().toLowerCase().split(/\s+/).filter(Boolean);
   const names = (title + ' ' + games[id].searchNames).normalize('NFKC').toLowerCase();
   return words.every(word => names.includes(word));

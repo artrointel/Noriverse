@@ -13,7 +13,7 @@ import type { LocalBoard } from './games/local-round.ts';
 import type { BoardGame } from './games/board-rules.ts';
 import { useRoomBoard } from './network/use-room-board.ts';
 import { apiAvailable } from './network/api.ts';
-import type { GameId } from '../../../packages/protocol/games.ts';
+import type { CatalogGameId, GameId } from '../../../packages/protocol/games.ts';
 import { bindPageAudio, loadAudioLevels, playSound, setAudioLevels, setLobbyMusic } from './platform/audio.ts';
 import type { AudioLevels } from './platform/audio.ts';
 import { CatalogPage, GameDetail } from './platform/catalog-pages.tsx';
@@ -72,7 +72,7 @@ function App() {
   const backdropGame = playGame ?? (roomOpen && (route.page === 'room' || (route.page === 'play' && route.online)) ? room.game : undefined);
   const [nameDismissed, setNameDismissed] = useState(() => Boolean(room.guestRoom));
   const [editName, setEditName] = useState(false);
-  const [pendingFavorite, setPendingFavorite] = useState<GameId>();
+  const [pendingFavorite, setPendingFavorite] = useState<CatalogGameId>();
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [favoriteError, setFavoriteError] = useState(false);
   const [audioLevels, setLevelState] = useState(loadAudioLevels);
@@ -178,7 +178,7 @@ function App() {
     try { localStorage.setItem('noriverse.audio', JSON.stringify(levels)); } catch { /* Storage is optional. */ }
   }
 
-  async function changeFavorite(game: GameId, selected: boolean) {
+  async function changeFavorite(game: CatalogGameId, selected: boolean) {
     setFavoriteBusy(true);
     setFavoriteError(false);
     try { await profile.setPreferences({ favorite: { game, selected } }); }
@@ -186,7 +186,7 @@ function App() {
     finally { setFavoriteBusy(false); }
   }
 
-  function toggleFavorite(game: GameId) {
+  function toggleFavorite(game: CatalogGameId) {
     if (favoriteBusy || !apiAvailable) return;
     if (!profile.profile) {
       setPendingFavorite(game);

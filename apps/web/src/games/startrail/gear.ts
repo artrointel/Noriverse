@@ -2,6 +2,7 @@ import type { Point } from './outpost.ts';
 
 export const slots = ['primary', 'sidearm'] as const;
 export type Slot = typeof slots[number];
+export type WeaponSwap = { from: Slot | 'knife'; to: Slot; startedAt: number; reload?: boolean };
 
 export const weapons = {
   pulse: { name: '펄스 카빈', cell: [0, 0], range: 540, accuracy: .98, damage: 1, impulse: 3.1, interval: .22, capacity: 9, magazines: 4, reload: .95, color: '#a6f5ff', mode: 'beam' },
@@ -34,6 +35,10 @@ export type Gun = Magazine & {
   reloadStage: number;
 };
 
+export function outOfAmmo(gun: Gun) {
+  return gun.ammo === 0 && gun.spare === 0 && gun.reloadAt === undefined;
+}
+
 export function refillMagazine(magazine: Magazine, stats: MagazineSpec) {
   magazine.ammo = stats.capacity;
   magazine.spare = stats.magazines - 1;
@@ -62,7 +67,11 @@ export const reloadStages = [.17, .54, .81] as const;
 export const swapDuration = .3;
 export const medical = { heal: 12, slow: .7, slowChance: .55, slowDuration: 1.1, cleanse: .5, aimCone: .62, selfRadius: 16 } as const;
 export const knife = {
-  cell: [0, 2], reach: 42, arc: .83, windup: .10, duration: .36, cooldown: .49,
+  cell: [0, 2], reach: 42, arc: .83, windup: .10, duration: .36, recovery: .13 * 1.3, comboWindow: 1,
   damage: 3, impulse: 4, color: '#acffe6',
 } as const;
+
+export function knifeSwingDirection(previous: { at: number; direction: 1 | -1 } | undefined, now: number): 1 | -1 {
+  return previous && now - previous.at <= knife.comboWindow + 1e-7 ? previous.direction === 1 ? -1 : 1 : 1;
+}
 

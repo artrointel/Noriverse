@@ -2,13 +2,12 @@ import { balance, rayDistance, screen, world } from './outpost.ts';
 import type { Box, Point } from './outpost.ts';
 import type { IndirectField } from './gi.ts';
 import { flareFalloff } from './support.ts';
+import type { TerrainRelief } from './terrain-material.ts';
 
 const TAU = Math.PI * 2;
 const { width, height } = screen;
 const cell = 2;
 const edgeSample = 2;
-const columns = world.width / cell;
-const rows = world.height / cell;
 const bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
 export function surface(w: number, h: number, read = false) {
@@ -31,9 +30,14 @@ function occlusionPath(origin: Point, range: number, boxes: Box[], edge: 'front'
       Math.max(box.y - origin.y, origin.y - box.y - box.height, 0)) < range,
   );
   const angles = Array.from({ length: 96 }, (_, i) => TAU * i / 96);
+  const sampled = new Set<Point>();
   for (const box of neighbors) {
-    for (const x of [box.x, box.x + box.width]) for (const y of [box.y, box.y + box.height]) {
-      const angle = angleOf(origin, x, y);
+    const corners = box.polygon?.vertices ?? [{ x: box.x, y: box.y }, { x: box.x + box.width, y: box.y },
+      { x: box.x, y: box.y + box.height }, { x: box.x + box.width, y: box.y + box.height }];
+    for (const point of corners) {
+      if (sampled.has(point)) continue;
+      sampled.add(point);
+      const angle = angleOf(origin, point.x, point.y);
       for (const offset of [-.00006, 0, .00006]) angles.push((angle + offset + TAU) % TAU);
     }
   }
@@ -51,9 +55,10 @@ function occlusionPath(origin: Point, range: number, boxes: Box[], edge: 'front'
 }
 
 export type Light = { origin: Point; range: number; amount: number; color: string; reveals?: boolean;
-  heading?: number; halfAngle?: number };
+  heading?: number; halfAngle?: number; stationary?: boolean };
 export type FlashLight = { from: Point; to: Point; color: string; radius: number; amount: number; spread?: boolean;
   passes?: number; emitter?: Point; opensFog?: boolean; spill?: number; additive?: boolean; source?: object; intensityScale?: number };
+type Headlamp = { origin: Point; heading: number };
 type LightPath = { x: number; y: number; path: Path2D };
 type IndirectMask = { image: HTMLCanvasElement; width: number; height: number };
 
@@ -62,7 +67,9 @@ function projectLights(ctx: CanvasRenderingContext2D, camera: Box) {
   ctx.translate(-camera.x, -camera.y);
 }
 
-export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camera: Box) => void) {
+export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camera: Box) => void, terrainRelief?: TerrainRelief, bounds = world) {
+  const columns = bounds.width / cell;
+  const rows = bounds.height / cell;
   const known = new Uint8Array(columns * rows);
   const current = surface(width / cell + 1, height / cell + 1, true);
   const fog = surface(1, 1);
@@ -121,6 +128,15 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
       cache.set(light.origin, sample);
     }
     return sample.path;
+  }
+
+  function headlampSurface(lamp: Point, boxes: Box[]) {
+    const key = `${lamp.x},${lamp.y}:${blockerKey}`;
+    if (key !== headlampIncidentKey) {
+      headlampIncidentPath = occlusionPath(lamp, balance.beam.range, boxes, 'front', balance.indirect.wallDepth);
+      headlampIncidentKey = key;
+    }
+    return headlampIncidentPath;
   }
 
   function paintFlashes(ctx: CanvasRenderingContext2D, flashes: readonly FlashLight[], boxes: Box[], pass: 'surface' | 'spill' | 'emission' | 'bounce' = 'surface') {
@@ -186,11 +202,7 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
       lighting.drawImage(beam.canvas, 0, 0);
       lighting.restore();
       if (captureIncident && incident) {
-        if (nextKey !== headlampIncidentKey) {
-          headlampIncidentPath = occlusionPath(lamp, balance.beam.range, boxes, 'front', balance.indirect.wallDepth);
-          headlampIncidentKey = nextKey;
-        }
-        incident.save(); projectLights(incident, camera); incident.clip(headlampIncidentPath);
+        incident.save(); projectLights(incident, camera); incident.clip(headlampSurface(lamp, boxes));
         incident.resetTransform();
         incident.globalAlpha = exposure;
         incident.drawImage(beam.canvas, 0, 0);
@@ -210,6 +222,16 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
     lighting.restore();
     ctx.save();
     ctx.globalCompositeOperation = 'multiply'; ctx.drawImage(lighting.canvas, 0, 0, camera.width, camera.height);
+    if (directStrength > 0 && terrainRelief) {
+      const influence = (light: Light) => light.amount /
+        (1 + Math.hypot(light.origin.x - origin.x, light.origin.y - origin.y) / light.range * 2);
+      const nearby = lights.filter(light => light.amount > .07).sort((a, b) => influence(b) - influence(a)).slice(0, 3);
+      for (const light of nearby) terrainRelief(ctx, camera, light, pathFor(light, boxes), directStrength);
+      if (flashlightOn) terrainRelief(ctx, camera, {
+        origin: lamp, range: balance.beam.range, heading, halfAngle: balance.beam.halfAngle,
+        amount: balance.beam.intensity, elevation: 33, color: '248,239,214',
+      }, headlampPath, directStrength);
+    }
     ctx.globalAlpha *= directStrength;
     if (directStrength && flashes.some(flash => flash.spill)) {
       beam.clearRect(0, 0, width, height);
@@ -233,7 +255,7 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
   }
 
   function coverUnseen(ctx: CanvasRenderingContext2D, origin: Point, camera: Box, boxes: Box[], lights: Light[], pulses: readonly FlashLight[],
-    pixelStep: number, maskIndirect = false) {
+    pixelStep: number, maskIndirect = false, lamp?: Headlamp) {
     const viewColumns = Math.ceil(camera.width / cell) + 1, viewRows = Math.ceil(camera.height / cell) + 1;
     const rgbaStride = viewColumns * 4;
     if (current.canvas.width !== viewColumns || current.canvas.height !== viewRows) {
@@ -255,8 +277,9 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
     const offsetX = Math.floor(camera.x / cell), offsetY = Math.floor(camera.y / cell);
     const x0 = offsetX * cell, y0 = offsetY * cell;
     const reveals = lights.filter(light => light.reveals);
+    const beamKey = lamp ? `${lamp.origin.x},${lamp.origin.y},${Math.round(lamp.heading * 160)}` : '';
     const nextKey = `${refresh(origin, boxes)}|${offsetX},${offsetY}|${reveals.map(light =>
-      `${Math.round(light.origin.x / cell)},${Math.round(light.origin.y / cell)}`).join(';')}`;
+      `${Math.round(light.origin.x / cell)},${Math.round(light.origin.y / cell)}`).join(';')}|${beamKey}`;
     const { range, feather, visibleLight, rememberedLight } = balance.sight;
     const memoryLight = .27 * rememberedLight / visibleLight;
     if (nextKey !== fogKey) {
@@ -266,6 +289,16 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
       current.fillStyle = '#f00';
       for (const light of reveals) {
         current.fill(pathFor(light, boxes, 'vision'));
+      }
+      if (lamp) {
+        const { x, y } = lamp.origin;
+        const { range, halfAngle } = balance.beam;
+        const glow = current.createRadialGradient(x, y, range * .6, x, y, range);
+        glow.addColorStop(0, '#f00'); glow.addColorStop(1, '#f000');
+        current.save(); current.clip(headlampSurface(lamp.origin, boxes)); current.fillStyle = glow;
+        current.beginPath(); current.moveTo(x, y);
+        current.arc(x, y, range, lamp.heading - halfAngle, lamp.heading + halfAngle);
+        current.closePath(); current.fill(); current.restore();
       }
       current.restore();
       const rays = current.getImageData(0, 0, viewColumns, viewRows).data;
@@ -413,7 +446,7 @@ export function flashlightLevel(origin: Point, heading: number, point: Point) {
   const range = Math.hypot(dx, dy);
   const angle = Math.atan2(dy, dx) - heading;
   const spread = Math.abs(Math.atan2(Math.sin(angle), Math.cos(angle))) / balance.beam.halfAngle;
-  return Math.max(0, 1 - spread) * Math.max(0, 1 - range / balance.beam.range);
+  return balance.beam.intensity * Math.max(0, 1 - spread) * Math.max(0, 1 - range / balance.beam.range);
 }
 
 export function peripheralLight(origin: Point, heading: number, point: Point, flashlightOn = true) {
@@ -432,7 +465,7 @@ function paintHeadlamp(ctx: CanvasRenderingContext2D, origin: Point, heading: nu
   const spread = balance.beam.halfAngle / Math.PI;
   const cone = ctx.createConicGradient(heading - balance.beam.halfAngle, origin.x, origin.y);
   for (const [fraction, opacity] of [[0, 0], [.13, .22], [.3, .66], [.5, .98], [.7, .66], [.87, .22], [1, 0]]) {
-    cone.addColorStop(fraction * spread, `rgba(248,239,214,${opacity})`);
+    cone.addColorStop(fraction * spread, `rgba(248,239,214,${opacity * balance.beam.intensity})`);
   }
   cone.addColorStop(1, 'rgba(248,239,214,0)');
   ctx.fillStyle = cone;
@@ -499,6 +532,21 @@ export function distanceToLight(point: Point, from: Point, to: Point) {
   return Math.hypot(point.x - from.x - t * x, point.y - from.y - t * y);
 }
 
+export function paintLightFan(ctx: CanvasRenderingContext2D, length: number, radius: number, color: string, amount: number) {
+  const gradient = ctx.createLinearGradient(0, 0, length, 0);
+  gradient.addColorStop(0, `rgba(${color},${amount * .65})`);
+  gradient.addColorStop(.16, `rgba(${color},${amount})`);
+  gradient.addColorStop(.56, `rgba(${color},${amount * .52})`);
+  gradient.addColorStop(1, `rgba(${color},0)`);
+  for (const [widthRatio, opacity] of [[1, .46], [.7, .7], [.39, .95]]) {
+    const edge = radius * widthRatio;
+    ctx.save(); ctx.globalAlpha *= opacity; ctx.fillStyle = gradient;
+    ctx.beginPath(); ctx.moveTo(0, -edge * .18); ctx.quadraticCurveTo(length * .34, -edge * .49, length, -edge);
+    ctx.lineTo(length, edge); ctx.quadraticCurveTo(length * .34, edge * .49, 0, edge * .18); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+}
+
 function transientLight(ctx: CanvasRenderingContext2D, light: FlashLight, wide: boolean) {
   const { from, to, color, radius, amount } = light;
   const length = Math.hypot(to.x - from.x, to.y - from.y);
@@ -507,18 +555,7 @@ function transientLight(ctx: CanvasRenderingContext2D, light: FlashLight, wide: 
   ctx.translate(from.x, from.y);
   ctx.rotate(Math.atan2(to.y - from.y, to.x - from.x));
   if (light.spread) {
-    const gradient = ctx.createLinearGradient(0, 0, length, 0);
-    gradient.addColorStop(0, `rgba(${color},${amount * .65})`);
-    gradient.addColorStop(.16, `rgba(${color},${amount})`);
-    gradient.addColorStop(.56, `rgba(${color},${amount * .52})`);
-    gradient.addColorStop(1, `rgba(${color},0)`);
-    for (const [widthRatio, opacity] of [[1, .46], [.7, .7], [.39, .95]]) {
-      const edge = radius * widthRatio;
-      ctx.save(); ctx.globalAlpha *= opacity; ctx.fillStyle = gradient;
-      ctx.beginPath(); ctx.moveTo(0, -edge * .18); ctx.quadraticCurveTo(length * .34, -edge * .49, length, -edge);
-      ctx.lineTo(length, edge); ctx.quadraticCurveTo(length * .34, edge * .49, 0, edge * .18); ctx.closePath(); ctx.fill();
-      ctx.restore();
-    }
+    paintLightFan(ctx, length, radius, color, amount);
   } else {
     const gradient = ctx.createLinearGradient(0, -radius, 0, radius);
     gradient.addColorStop(0, `rgba(${color},0)`);

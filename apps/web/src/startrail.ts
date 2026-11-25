@@ -4,13 +4,21 @@ import { OutpostScene } from './games/startrail/scene.ts';
 import { defaultPixelStep, maxPixelStep, screen } from './games/startrail/outpost.ts';
 import type { IndirectMode } from './games/startrail/gi.ts';
 import type { ShadowMode } from './games/startrail/shadow.ts';
+import { routeHref } from './platform/route-href.ts';
 import './startrail.css';
 
+document.querySelector<HTMLAnchorElement>('#game-library')!.href = routeHref('/games');
 await loadGameFont();
 
 const hudCanvas = document.querySelector<HTMLCanvasElement>('#stage-hud')!;
 const launch = document.querySelector<HTMLButtonElement>('#launch')!;
-const scene = new OutpostScene(hudCanvas.getContext('2d')!, () => { launch.disabled = false; });
+const preferredLanguage = (() => { try { return localStorage.getItem('noriverse.language'); } catch { return null; } })();
+const storyLanguage = preferredLanguage === 'en' || preferredLanguage !== 'ko' && !navigator.language.toLowerCase().startsWith('ko') ? 'en' : 'ko';
+const scene = new OutpostScene(hudCanvas.getContext('2d')!, stage => {
+  launch.disabled = false;
+  document.title = `별길 탐사대 · ${stage.id} ${stage.title}`;
+  document.querySelector('#stage')?.setAttribute('aria-label', `별길 탐사대 ${stage.id} ${stage.title} 게임 화면`);
+}, storyLanguage);
 const game = new Phaser.Game({
   type: Phaser.CANVAS,
   parent: 'stage',

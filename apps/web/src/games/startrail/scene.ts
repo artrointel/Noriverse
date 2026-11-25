@@ -21,22 +21,33 @@ import kommiArmedUrl from '../../assets/startrail/kommi-armed.png';
 import handsUrl from '../../assets/startrail/explorer-hands.png';
 import devicesUrl from '../../assets/startrail/outpost-devices.png';
 import dummyUrl from '../../assets/startrail/medical-dummy.webp';
-import { dispersedHeading, finishReload, knife, makeGun, medical, refillMagazine, reloadStages, slots, startReload, swapDuration, weapons } from './gear.ts';
-import type { Bullet, BulletSpec, Gun, Impact, Slot, SpentMetal } from './gear.ts';
-import { balance, caches, crates, crystals, defaultPixelStep, distance, gate, landing, lift, maxPixelStep, obstacles, onRay, patrols, pulseLightDuration, rayDistance, relayAccess, screen, waves, weaponPickups } from './outpost.ts';
+import outpostComicUrl from '../../assets/startrail/comic-outpost.jpg';
+import observatoryComicUrl from '../../assets/startrail/comic-observatory.jpg';
+import observatoryTilesUrl from '../../assets/startrail/observatory-tiles.jpg';
+import residentUrl from '../../assets/startrail/observatory-resident.png';
+import observatorySetpiecesUrl from '../../assets/startrail/observatory-setpieces.png';
+import { dispersedHeading, finishReload, knife, knifeSwingDirection, makeGun, medical, refillMagazine, reloadStages, slots, startReload, swapDuration, weapons } from './gear.ts';
+import type { Bullet, BulletSpec, Gun, Impact, Slot, SpentMetal, WeaponSwap } from './gear.ts';
+import { balance, blockerClearance, defaultPixelStep, distance, maxPixelStep, onRay, pulseLightDuration, rayDistance, screen, waves } from './outpost.ts';
 import type { Box, EnemyKind, ExplorerKind, MapMode, Point } from './outpost.ts';
+import { observatoryStage, outpostStage } from './expedition-maps.ts';
+import type { ExpeditionMap } from './expedition-maps.ts';
+import { concealed, encounterRange, encounters, EnemyFlow, openPath } from './encounters.ts';
+import { StoryIntro } from './story.ts';
+import { powerTransfer } from './power-transfer.ts';
 import { makeOutpostRenderer, restartArea } from './render.ts';
-import { cameraView, projectToScreen, projectToWorld } from './camera.ts';
+import { cameraView, maxCameraSpan, playerHitFeedback, projectToScreen, projectToWorld } from './camera.ts';
 import { createIndirectLighting } from './gi.ts';
 import type { LightingOptions } from './gi.ts';
-import type { ActorArt, EnemyBolt, MuzzleLight, Phase, Spark, StageInteraction, Trace, Warning } from './render.ts';
+import type { ActorArt, EnemyBolt, MuzzleLight, Phase, ResidentArt, Spark, StageInteraction, Trace, Warning } from './render.ts';
 import { createOutpostAudio, deviceVolume } from './sound.ts';
 import { piecePuzzle } from './puzzle.ts';
 import type { ChallengeFeedback, InteractionChallenge } from './challenge.ts';
-import { SupportGear, supportKinds, supportSpecs, turretSite } from './support.ts';
+import { flarePoseAt, SupportGear, supportKinds, supportSpecs, turretSite } from './support.ts';
 import type { Emplacement, Flare } from './support.ts';
+import { distanceToLight, flashlightLevel } from './visibility.ts';
 import { activeStatuses, applyStatus, rollCombatStatus, shortenStatuses, statusModifiers, tickStatuses } from './status.ts';
-import type { Statuses } from './status.ts';
+import type { BlockingStatus, Statuses } from './status.ts';
 import { gunArt, heldPose, supportPose } from './weapon-pose.ts';
 import { isHudPointer } from './reticle.ts';
 import { createSpriteShadows } from './shadow.ts';
@@ -50,7 +61,7 @@ type Body = Phaser.Physics.Matter.Image;
 type Enemy = {
   body: Body; kind: EnemyKind; hp: number; aim: number; state: 'chase' | 'windup' | 'dash' | 'recover';
   stateUntil: number; hitUntil: number; attackAt: number; shotUntil?: number; lastArt?: ActorArt;
-  statuses: Statuses; clock: number; medicSlow: number;
+  statuses: Statuses; clock: number; medicSlow: number; reinforcement: boolean; waypoint?: Point; pursuing?: boolean;
 };
 type Ally = { body: Body; kind: ExplorerKind; hp: number; statuses: Statuses; invulnerableUntil: number; aim: number };
 type TrainingDummy = { body: Body; hp: number; statuses: Statuses };
@@ -60,10 +71,12 @@ type Prop = { body: Body; kind: PropKind; hp: number; hitUntil: number };
 type Fallen = Omit<ActorArt, 'kind' | 'fallen'> & { kind: EnemyKind; at: number; knockback: Point };
 type Bolt = EnemyBolt & { source: Enemy; speed: number; left: number };
 type Trigger = { held: boolean; tapped: boolean };
-type Slash = { heading: number; startedAt: number; struck: boolean };
+type Slash = { heading: number; startedAt: number; struck: boolean; direction: 1 | -1 };
 type ChallengeSession = { game: InteractionChallenge; location: Point; reach: number; solve: () => void };
 type Roll = { stage: 'moving'; heading: number; origin: Point; startedAt: number }
   | { stage: 'recovering'; heading: number; startedAt: number };
+type Resident = { body: Body; state: ResidentArt['state']; hiding: boolean; moving: boolean; trail: Point[] };
+type ExpeditionProgress = { time: number; kills: number };
 
 const airFriction = .11;
 const enemyColors = { mite: '#9af2e1', boar: '#c6bcff', scout: '#ffb28a', sentinel: '#c9e786', spore: '#a6e9ff', grub: '#ccd3ff' } as const;
@@ -88,7 +101,8 @@ function enemyPose(enemy: Enemy, hit: number) {
 }
 
 export class OutpostScene extends Phaser.Scene {
-  constructor(private readonly hud: CanvasRenderingContext2D, private readonly onReady: () => void) { super(); }
+  constructor(private readonly hud: CanvasRenderingContext2D, private readonly onReady: (stage: ExpeditionMap) => void,
+    private readonly storyLanguage: 'ko' | 'en' = 'ko') { super(); }
 
   private keyboard!: Keys;
   private renderOutpost!: ReturnType<typeof makeOutpostRenderer>;
@@ -97,6 +111,13 @@ export class OutpostScene extends Phaser.Scene {
   private lighting: LightingOptions = { mode: 'cascades', directStrength: .50, strength: .40, preview: false };
   private shadowMode: ShadowMode = 'auto';
   private player!: Body;
+  private stage: ExpeditionMap = outpostStage;
+  private previousStage?: ExpeditionProgress;
+  private story?: StoryIntro;
+  private showIntro = true;
+  private transitioning = false;
+  private resident?: Resident;
+  private notice?: { text: string; until: number };
   private explorer: ExplorerKind = 'solori';
   private bringAlly = false;
   private ally?: Ally;
@@ -110,6 +131,10 @@ export class OutpostScene extends Phaser.Scene {
   private muzzleLights: MuzzleLight[] = [];
   private props: Prop[] = [];
   private enemies: Enemy[] = [];
+  private enemyFlow!: EnemyFlow;
+  private nextReinforcementsAt = 0;
+  private encounterIndex = 0;
+  private pendingReinforcements: EnemyKind[] = [];
   private securityGate?: ReturnType<Phaser.Physics.Matter.Factory['rectangle']>;
   private traces: Trace[] = [];
   private sparks: Spark[] = [];
@@ -118,7 +143,7 @@ export class OutpostScene extends Phaser.Scene {
   private fallen: Fallen[] = [];
   private bolts: Bolt[] = [];
   private rings: { x: number; y: number; radius: number; life: number }[] = [];
-  private supplies = new Set(caches);
+  private supplies = new Set<Point>();
   private pixelStep = defaultPixelStep;
   private phase: Phase = 'approach';
   private cameraSpan = 1;
@@ -131,6 +156,10 @@ export class OutpostScene extends Phaser.Scene {
   private facing = 0;
   private hp: number = balance.player.health;
   private healthBar?: Phaser.Time.TimerEvent;
+  private lastHit?: { time: number; heading: number; healthFraction: number };
+  private blockedStatus?: { kind: BlockingStatus; time: number };
+  private blockedMovement = false;
+  private readonly reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   private roll?: Roll;
   private rollRequested = false;
   private gaitDistance = 0;
@@ -138,14 +167,15 @@ export class OutpostScene extends Phaser.Scene {
   private guns: Record<Slot, Gun> = { primary: makeGun('pulse'), sidearm: makeGun('scout') };
   private triggers: Record<Slot, Trigger> = { primary: { held: false, tapped: false }, sidearm: { held: false, tapped: false } };
   private selected: Slot = 'primary';
-  private swap?: { to: Slot; startedAt: number };
+  private swap?: WeaponSwap;
   private groundArms: (Point & { gun: Gun })[] = [];
   private support = new SupportGear();
   private turretHold = 0;
   private turretDeploy?: { heading: number; time: number; point: Point };
   private readonly flareBodies = new Map<Flare, Body>();
   private slash?: Slash;
-  private nextSlash = 0;
+  private knifeEquipped = false;
+  private lastSlash?: { at: number; direction: Slash['direction'] };
   private relayPuzzle?: InteractionChallenge;
   private activeChallenge?: ChallengeSession;
   private invulnerableUntil = 0;
@@ -170,8 +200,16 @@ export class OutpostScene extends Phaser.Scene {
     this.load.image('outpost-fallen', fallenUrl);
     this.load.image('outpost-setpieces', setpiecesUrl);
     this.load.image('outpost', outpostUrl);
-    this.load.image('floor-tiles', floorTilesUrl);
-    this.load.image('mural', muralUrl);
+    if (this.stage.id === '1-1') {
+      this.load.image('floor-tiles', floorTilesUrl);
+      this.load.image('mural', muralUrl);
+      this.load.image('comic-1-1', outpostComicUrl);
+    } else {
+      this.load.image('observatory-tiles', observatoryTilesUrl);
+      this.load.image('comic-1-2', observatoryComicUrl);
+      this.load.image('resident', residentUrl);
+      this.load.image('observatory-setpieces', observatorySetpiecesUrl);
+    }
     this.load.image('weapons', weaponsUrl);
     this.load.image('armory', armoryUrl);
     this.load.image('solori-armed', soloriArmedUrl);
@@ -192,16 +230,21 @@ export class OutpostScene extends Phaser.Scene {
       this.activeChallenge?.game.pointerMove(pointer.id, this.pointerPosition(pointer));
     });
     this.input.on('wheel', (pointer: Phaser.Input.Pointer, _targets: unknown[], _dx: number, dy: number) => {
-      if (!dy || !Number.isFinite(dy) || this.activeChallenge || this.mapOpen || this.finished()) return;
+      if (!dy || !Number.isFinite(dy) || this.story || this.transitioning || this.activeChallenge || this.mapOpen || this.finished()) return;
       const event = pointer.event as WheelEvent;
       const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? 120 : 1;
       this.pointerSeen = this.pointerInside = true;
-      this.zoomCamera(Phaser.Math.Clamp(this.cameraSpan + dy * unit / 1000, 1, 1.5));
+      this.zoomCamera(Phaser.Math.Clamp(this.cameraSpan + dy * unit / 1000, 1, maxCameraSpan));
     });
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       this.pointerSeen = this.pointerInside = true;
       this.game.canvas.focus({ preventScroll: true });
       this.audio.unlock();
+      if (this.story) {
+        if (pointer.button === 0 || pointer.wasTouch) this.turnStoryPage();
+        return;
+      }
+      if (this.transitioning) return;
       if (this.finished()) {
         const button = restartArea;
         const point = this.pointerPosition(pointer);
@@ -213,9 +256,9 @@ export class OutpostScene extends Phaser.Scene {
         return;
       }
       if (isHudPointer(this.pointerPosition(pointer))) return;
-      if (this.controlsLocked || this.slash) return;
+      if (this.mapOpen || this.roll) return;
       const slot = mouseSlot(pointer.button);
-      if (slot) {
+      if (slot && !this.denyAction(statusModifiers(this.playerStatuses, this.elapsed).attackBlock)) {
         this.requestSwap(slot);
         this.triggers[slot] = { held: true, tapped: true };
       }
@@ -233,6 +276,12 @@ export class OutpostScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown', (event: KeyboardEvent) => {
       if (isPageControl(event.target)) return;
       this.audio.unlock();
+      if (this.story) {
+        if (!event.repeat && (event.code === 'Enter' || event.code === 'Space' || event.code === 'ArrowRight')) {
+          event.preventDefault(); this.turnStoryPage();
+        }
+        return;
+      }
       if (event.code === 'Tab' || event.code === 'Space' || event.code.startsWith('Arrow')) event.preventDefault();
       if (event.key === 'Alt' && document.activeElement === this.game.canvas) event.preventDefault();
       if (event.code === 'Space' && !event.repeat) this.rollRequested = true;
@@ -244,6 +293,7 @@ export class OutpostScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.game.events.off(Phaser.Core.Events.BLUR, this.clearInput, this);
       this.events.off(Phaser.Scenes.Events.RENDER, this.paint, this);
+      this.renderOutpost?.dispose();
       this.audio.end();
     });
     this.events.off(Phaser.Scenes.Events.DESTROY, this.audio.dispose);
@@ -254,15 +304,19 @@ export class OutpostScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.DESTROY, this.indirectLighting.dispose);
 
     const { gameContext } = this.game.renderer as Phaser.Renderer.Canvas.CanvasRenderer;
+    const stage = this.stage;
+    const { obstacles, gate, crates, crystals, landing, patrols } = stage;
+    const surfaceStage = stage.id === '1-1';
     this.renderOutpost = makeOutpostRenderer(gameContext, this.hud, {
       crew: this.texture('crew'), locomotion: this.texture('solori-locomotion'), verticalSolori: this.texture('solori-vertical'),
-      verticalMonsters: this.texture('monsters-vertical'), outpost: this.texture('outpost'), tiles: this.texture('floor-tiles'),
+      verticalMonsters: this.texture('monsters-vertical'), outpost: this.texture('outpost'), tiles: this.texture(surfaceStage ? 'floor-tiles' : 'observatory-tiles'),
       diagonalSolori: this.texture('solori-diagonal'), enemies: this.texture('outpost-enemies'), fallen: this.texture('outpost-fallen'), setpieces: this.texture('outpost-setpieces'),
       diagonalMonsters: this.texture('monsters-diagonal'), enemyDirections: this.texture('enemy-directions'),
-      mural: this.texture('mural'), gear: this.texture('weapons'), armory: this.texture('armory'), hands: this.texture('explorer-hands'),
+      mural: surfaceStage ? this.texture('mural') : undefined, gear: this.texture('weapons'), armory: this.texture('armory'), hands: this.texture('explorer-hands'),
       kommi: this.texture('kommi'), soloriArmed: this.texture('solori-armed'), kommiArmed: this.texture('kommi-armed'), devices: this.texture('devices'),
-      dummy: this.texture('medical-dummy'),
-    }, this.shadows, this.indirectLighting);
+      dummy: this.texture('medical-dummy'), resident: surfaceStage ? undefined : this.texture('resident'),
+      observatory: surfaceStage ? undefined : this.texture('observatory-setpieces'),
+    }, this.shadows, this.indirectLighting, stage);
     for (const box of obstacles) this.addBarrier(box);
     this.securityGate = this.addBarrier(gate);
     for (const point of crates) this.spawnProp('crate', point);
@@ -272,32 +326,45 @@ export class OutpostScene extends Phaser.Scene {
       const body = this.makeBody({ x: landing.x - 38, y: landing.y + 12 }, balance.player.mass, { type: 'circle', radius: balance.player.radius });
       this.ally = { body, kind: this.explorer === 'solori' ? 'kommi' : 'solori', hp: balance.player.health, statuses: {}, invulnerableUntil: 0, aim: 0 };
     }
-    if (this.useTrainingDummy) {
+    if (this.useTrainingDummy && surfaceStage) {
       const body = this.makeBody({ x: landing.x - 38, y: landing.y - 45 }, 2, { type: 'circle', radius: 10 }).setStatic(true);
       this.trainingDummy = { body, hp: 50, statuses: {} };
       this.resetDummy();
+    }
+    if ('shelter' in stage) {
+      const body = this.makeBody(stage.shelter, .8, { type: 'circle', radius: 8 }).setSensor(true).setStatic(true);
+      this.resident = { body, state: 'waiting', hiding: false, moving: false, trail: [] };
+      this.showNotice('파루미 · 물소리가 갈리는 곳에서 대피실의 주황빛을 찾아요.');
     }
     for (const point of patrols) this.spawn(point.kind, point);
     this.follow(1);
     this.previousCamera = { ...this.cameraPosition };
     this.events.on(Phaser.Scenes.Events.RENDER, this.paint, this);
-    this.onReady();
+    this.story = this.showIntro ? new StoryIntro(stage, this.texture(`comic-${stage.id}`), this.storyLanguage, this.reducedMotion.matches) : undefined;
+    this.game.canvas.style.cursor = this.story ? 'pointer' : '';
+    this.onReady(stage);
   }
 
   private reset() {
     this.indirectLighting.reset();
     this.props = []; this.enemies = []; this.traces = []; this.sparks = []; this.bullets = []; this.spentMetal = [];
-    this.fallen = []; this.bolts = []; this.rings = []; this.supplies = new Set(caches);
+    this.enemyFlow = new EnemyFlow(this.stage);
+    this.nextReinforcementsAt = encounters[this.stage.id].firstAt;
+    this.encounterIndex = 0; this.pendingReinforcements = [];
+    this.fallen = []; this.bolts = []; this.rings = []; this.supplies = new Set(this.stage.caches);
+    this.transitioning = false; this.resident = undefined; this.notice = undefined; this.story = undefined;
     this.ally = undefined; this.trainingDummy = undefined; this.playerStatuses = {}; this.actionTime = 0; this.flashlightOn = true;
     this.medicalBeam = undefined; this.medicalWaver = undefined; this.muzzleLights = [];
     this.flareBodies.clear(); this.turretDeploy = undefined;
     this.phase = 'approach'; this.cameraSpan = 1; this.cameraPosition = { x: 0, y: 0 }; this.previousPositions = new WeakMap();
     this.elapsed = 0; this.accumulator = 0; this.facing = 0; this.hp = balance.player.health;
-    this.healthBar = undefined; this.roll = undefined; this.rollRequested = false; this.gaitDistance = 0; this.walkFrame = undefined;
+    this.healthBar = undefined; this.lastHit = undefined; this.roll = undefined; this.rollRequested = false; this.gaitDistance = 0; this.walkFrame = undefined;
     this.guns = { primary: makeGun('pulse'), sidearm: makeGun('scout') };
     this.selected = 'primary'; this.swap = undefined;
-    this.groundArms = weaponPickups.map(pickup => ({ x: pickup.x, y: pickup.y, gun: makeGun(pickup.weapon) }));
-    this.support = new SupportGear(); this.turretHold = 0; this.slash = undefined; this.nextSlash = 0;
+    this.groundArms = this.stage.weaponPickups.map(pickup => ({ x: pickup.x, y: pickup.y, gun: makeGun(pickup.weapon) }));
+    this.support = new SupportGear(this.stage.walkable);
+    this.turretHold = 0; this.slash = undefined; this.knifeEquipped = false; this.lastSlash = undefined;
+    this.blockedStatus = undefined; this.blockedMovement = false;
     this.relayPuzzle = undefined; this.activeChallenge = undefined;
     this.invulnerableUntil = 0; this.relayTime = 0; this.gateOpenedAt = 0;
     this.wave = 0; this.defeated = 0; this.mapMode = 'off';
@@ -329,15 +396,30 @@ export class OutpostScene extends Phaser.Scene {
     this.explorer = explorer;
     this.bringAlly = withAlly;
     this.useTrainingDummy = withDummy;
+    this.stage = outpostStage; this.previousStage = undefined; this.showIntro = true; this.transitioning = true;
     this.audio.unlock();
     this.scene.restart();
   }
+
+  private turnStoryPage() {
+    if (!this.story?.advance(this.time.now)) return;
+    this.story = undefined;
+    this.showIntro = false;
+    this.game.canvas.style.cursor = '';
+    this.clearInput();
+  }
+
+  private showNotice(text: string) { this.notice = { text, until: this.elapsed + 4.7 }; }
 
   private texture(key: string) {
     return this.textures.get(key).getSourceImage() as HTMLImageElement;
   }
 
   private addBarrier(box: Box) {
+    if (box.polygon) {
+      const { center, vertices } = box.polygon;
+      return this.matter.add.fromVertices(center.x, center.y, [vertices.map(p => ({ ...p }))], { isStatic: true, friction: .025 });
+    }
     return this.matter.add.rectangle(box.x + box.width / 2, box.y + box.height / 2, box.width, box.height, { isStatic: true, friction: .025 });
   }
 
@@ -353,12 +435,11 @@ export class OutpostScene extends Phaser.Scene {
     this.props.push({ body, kind, hp: stats.hp, hitUntil: 0 });
   }
 
-  private spawn(kind: EnemyKind, position: Point) {
+  private spawn(kind: EnemyKind, position: Point, reinforcement = false) {
     const stats = balance[kind];
     const body = this.makeBody(position, stats.mass, { type: 'circle', radius: stats.radius });
     this.enemies.push({ body, kind, hp: stats.health, aim: Math.PI, state: 'chase', stateUntil: 0, hitUntil: 0, attackAt: this.elapsed + .42,
-      statuses: {}, clock: this.elapsed, medicSlow: 0 });
-    this.burst(position, enemyColors[kind], 6);
+      statuses: {}, clock: this.elapsed, medicSlow: 0, reinforcement });
   }
 
   private clearInput() {
@@ -373,9 +454,15 @@ export class OutpostScene extends Phaser.Scene {
     for (const slot of slots) this.triggers[slot] = { held: false, tapped: false };
   }
 
+  private denyAction(kind: BlockingStatus | undefined) {
+    if (!kind) return false;
+    this.blockedStatus = { kind, time: this.elapsed };
+    return true;
+  }
+
   private finished() { return this.phase === 'defeated' || this.phase === 'cleared'; }
 
-  private walls() { return this.securityGate ? [...obstacles, gate] : obstacles; }
+  private walls() { return this.securityGate ? [...this.stage.obstacles, this.stage.gate] : this.stage.obstacles; }
 
   private blockerBoxes(): Box[] { return [...this.walls(), ...this.props.map(prop => boxFor(prop))]; }
 
@@ -402,7 +489,7 @@ export class OutpostScene extends Phaser.Scene {
 
   private follow(weight: number) {
     const target = cameraView({ x: this.player.x - screen.width * this.cameraSpan / 2,
-      y: this.player.y - screen.height * this.cameraSpan / 2 }, this.cameraSpan);
+      y: this.player.y - screen.height * this.cameraSpan / 2 }, this.cameraSpan, this.stage.world);
     this.cameraPosition.x = Phaser.Math.Linear(this.cameraPosition.x, target.x, weight);
     this.cameraPosition.y = Phaser.Math.Linear(this.cameraPosition.y, target.y, weight);
   }
@@ -410,16 +497,22 @@ export class OutpostScene extends Phaser.Scene {
   private zoomCamera(span: number) {
     if (span === this.cameraSpan) return;
     const shift = (this.cameraSpan - span) / 2;
-    const recenter = (point: Point) => cameraView({ x: point.x + screen.width * shift, y: point.y + screen.height * shift }, span);
+    const recenter = (point: Point) => cameraView({ x: point.x + screen.width * shift, y: point.y + screen.height * shift }, span, this.stage.world);
     this.previousCamera = recenter(this.previousCamera);
     this.cameraPosition = recenter(this.cameraPosition);
     this.cameraSpan = span;
   }
 
-  private displayCamera() {
-    const camera = cameraView(this.interpolate(this.previousCamera, this.cameraPosition), this.cameraSpan);
+  private hitFeedback() {
+    const hit = this.lastHit;
+    return hit && playerHitFeedback((this.time.now - hit.time) / 1000, hit.heading, hit.healthFraction, this.reducedMotion.matches);
+  }
+
+  private displayCamera(hit = this.hitFeedback()) {
+    const origin = this.interpolate(this.previousCamera, this.cameraPosition);
+    const camera = cameraView({ x: origin.x + (hit?.offset.x ?? 0), y: origin.y + (hit?.offset.y ?? 0) }, this.cameraSpan, this.stage.world);
     const scaleX = this.scale.width / camera.width, scaleY = this.scale.height / camera.height;
-    return cameraView({ x: Math.round(camera.x * scaleX) / scaleX, y: Math.round(camera.y * scaleY) / scaleY }, this.cameraSpan);
+    return cameraView({ x: Math.round(camera.x * scaleX) / scaleX, y: Math.round(camera.y * scaleY) / scaleY }, this.cameraSpan, this.stage.world);
   }
 
   private interpolate(previous: Point, current: Point) {
@@ -491,9 +584,7 @@ export class OutpostScene extends Phaser.Scene {
     const desired = spec.range * (1 - (1 - next) ** 2.65);
     const step = Phaser.Math.Clamp(desired - traveled, 0, 12);
     const radius = balance.player.radius;
-    const clearance = rayDistance(this.player, dx, dy, step, blockers.map(box => ({
-      x: box.x - radius, y: box.y - radius, width: box.width + radius * 2, height: box.height + radius * 2,
-    })));
+    const clearance = rayDistance(this.player, dx, dy, step, blockers, 'front', radius);
     const speed = clearance / (1 - airFriction);
     this.player.setVelocity(dx * speed, dy * speed);
     if (this.explorer === 'kommi' && this.sparks.length < 300) this.burst(this.player, '#73dbf6', 1);
@@ -515,11 +606,12 @@ export class OutpostScene extends Phaser.Scene {
     const heading = dispersedHeading(convergence, stats.accuracy);
     const { point: start, blocked, target } = this.muzzleClearance(this.player, pose.ground);
     const art = gunArt[gun.weapon];
+    const ballistic = stats.mode === 'ballistic';
     this.muzzleLights.push({ origin: start, point: pose.muzzle, emitter: { x: this.player.x, y: this.player.y },
       heading: this.facing, life: art.duration, duration: art.duration, strength: art.flash, color: art.glow,
-      wide: gun.weapon === 'shotgun', ballistic: stats.mode === 'ballistic' });
+      wide: gun.weapon === 'shotgun', ballistic, gun });
     this.burst(pose.muzzle, stats.color, gun.weapon === 'shotgun' ? 14 : 4);
-    if (stats.mode === 'ballistic') {
+    if (ballistic) {
       for (const spread of stats.spread) {
         if (blocked) this.impactShot(start, heading + spread, stats, target, pose.lift);
         else this.fireBullet(start, heading + spread, { speed: stats.speed, range: stats.range, impact: stats, expiresClean: gun.weapon === 'shotgun' }, pose.lift);
@@ -529,7 +621,7 @@ export class OutpostScene extends Phaser.Scene {
     }
     const collision = blocked ? { travel: 0, target } : this.shotCollision(start, heading, stats.range);
     const hit = collision.travel < stats.range, to = onRay(start, heading, collision.travel);
-    this.traces.push({ from: start, to, lift: pose.lift, life: pulseLightDuration, hit, color: stats.color });
+    this.traces.push({ from: start, to, lift: pose.lift, life: pulseLightDuration, hit, color: stats.color, gun, blocked });
     if (hit) this.impactShot(to, heading, stats, collision.target, pose.lift);
   }
 
@@ -549,12 +641,15 @@ export class OutpostScene extends Phaser.Scene {
     const attack = this.slash;
     if (!attack) return;
     const age = this.actionTime - attack.startedAt;
-    if (age >= knife.duration) { this.slash = undefined; return; }
-    if (attack.struck || age < knife.windup) return;
+    if (age + 1e-7 >= knife.duration + knife.recovery) {
+      this.slash = undefined;
+      return;
+    }
+    if (attack.struck || age + 1e-7 < knife.windup) return;
     attack.struck = true;
     const hits = new Map<Enemy | Prop, { point: Point; heading: number }>();
     for (let i = -4; i <= 4; i++) {
-      const heading = attack.heading + knife.arc * i / 4;
+      const heading = attack.heading + attack.direction * knife.arc * i / 4;
       const { travel, target } = this.shotCollision(this.player, heading, knife.reach);
       if (target && !hits.has(target)) hits.set(target, { point: onRay(this.player, heading, travel), heading });
     }
@@ -675,17 +770,24 @@ export class OutpostScene extends Phaser.Scene {
   }
 
   private requestSwap(to: Slot, force = false) {
-    if (!force && (this.swap?.to ?? this.selected) === to) return;
+    if (!force && (this.swap?.to ?? (this.knifeEquipped ? 'knife' : this.selected)) === to) return;
     this.triggers[to === 'primary' ? 'sidearm' : 'primary'].tapped = false;
-    this.swap = { to, startedAt: this.actionTime };
+    if (this.swap?.from === 'knife') { this.swap.to = to; this.swap.reload = undefined; return; }
+    const startedAt = this.slash ? this.slash.startedAt + knife.duration + knife.recovery : this.actionTime;
+    this.swap = { from: this.knifeEquipped ? 'knife' : this.selected, to, startedAt };
     this.audio.play('swap', undefined, undefined, .56);
   }
 
+  private advanceWeaponSwap() {
+    const swap = this.swap;
+    if (!swap || this.actionTime - swap.startedAt + 1e-7 < swapDuration) return;
+    this.swap = undefined;
+    this.selected = swap.to;
+    this.knifeEquipped = false;
+    if (swap.reload) this.reload(swap.to);
+  }
+
   private updateGuns(canFire: boolean) {
-    if (this.swap && this.actionTime - this.swap.startedAt >= swapDuration) {
-      this.selected = this.swap.to;
-      this.swap = undefined;
-    }
     for (const slot of slots) {
       const gun = this.guns[slot];
       const progress = this.reloadProgress(gun);
@@ -697,7 +799,7 @@ export class OutpostScene extends Phaser.Scene {
         if (progress >= 1) finishReload(gun, weapons[gun.weapon]);
       }
     }
-    if (!canFire || this.swap) { this.medicalBeam = undefined; this.medicalWaver = undefined; return; }
+    if (!canFire || this.swap || this.knifeEquipped) { this.medicalBeam = undefined; this.medicalWaver = undefined; return; }
     const slot = this.selected;
     const gun = this.guns[slot], trigger = this.triggers[slot];
     const firing = trigger.held || trigger.tapped;
@@ -756,7 +858,7 @@ export class OutpostScene extends Phaser.Scene {
     const bob = Math.hypot(this.player.getVelocity().x, this.player.getVelocity().y) > .17 ? Math.sin(this.elapsed * 17) * .85 : 0;
     const pose = heldPose(this.player, this.facing, gun.weapon, 0, 0, 1, bob);
     this.muzzleLights.push({ origin: pose.ground, point: pose.muzzle, emitter: { x: this.player.x, y: this.player.y }, heading: this.facing,
-      life: art.duration, duration: art.duration, strength: art.flash, color: art.glow, wide: false });
+      life: art.duration, duration: art.duration, strength: art.flash, color: art.glow, wide: false, gun });
     this.burst({ x: body.x, y: body.y - 12 }, stats.color, 5);
     this.audio.play('medicalPulse', body, this.player, .65);
   }
@@ -771,12 +873,29 @@ export class OutpostScene extends Phaser.Scene {
   private interact() {
     const option = this.selection();
     if (option?.kind === 'dummy') { this.resetDummy(); this.audio.play('swap'); }
+    if (option?.kind === 'resident' && this.resident) {
+      if (this.resident.state === 'waiting') {
+        this.resident.state = 'sheltered';
+        this.showNotice('주민 · 비상 승강기가 멈췄어요. 동쪽 배전실에서 전력을 돌릴 수 있어요.');
+      } else if (this.resident.state === 'ready') {
+        this.resident.state = 'following';
+        this.showNotice('파루미 · 주황색 비상등을 따라 함께 승강기까지 가요.');
+      }
+      this.audio.play('swap');
+    }
     if (option?.kind === 'relay') {
-      this.relayPuzzle ??= piecePuzzle(this.texture('relay-puzzle'), balance.relay.puzzleSize, '발전기 · 회로 복구');
+      this.relayPuzzle ??= this.stage.id === '1-1' ? piecePuzzle(this.texture('relay-puzzle'), balance.relay.puzzleSize, '발전기 · 회로 복구') : powerTransfer();
       this.activeChallenge = {
         game: this.relayPuzzle, location: option.point, reach: balance.relay.radius + 35,
         solve: () => {
-          this.phase = 'defense';
+          if (this.stage.id === '1-1') this.phase = 'defense';
+          else if (this.resident?.state === 'sheltered' && 'alertReinforcements' in this.stage) {
+            this.resident.state = 'ready';
+            this.openGate();
+            this.showNotice('파루미 · 비상 전력이 들어왔어요. 주민을 데리러 돌아가세요.');
+            this.audio.play('turretDetect', option.point, this.player, .7, .76);
+            this.callReinforcements(this.stage.alertReinforcements);
+          }
           this.audio.play('power');
         },
       };
@@ -807,7 +926,13 @@ export class OutpostScene extends Phaser.Scene {
   private selection(): StageInteraction | undefined {
     if (this.controlsLocked || this.finished()) return;
     const nearby: StageInteraction[] = [];
-    if (this.phase === 'approach' && distance(this.player, relayAccess) < balance.relay.radius) nearby.push({ kind: 'relay', point: relayAccess });
+    const { relayAccess } = this.stage;
+    if (this.phase === 'approach' && (this.stage.id === '1-1' || this.resident?.state === 'sheltered') &&
+      distance(this.player, relayAccess) < balance.relay.radius) nearby.push({ kind: 'relay', point: relayAccess });
+    const resident = this.resident;
+    if (resident && (resident.state === 'waiting' || resident.state === 'ready') && distance(this.player, resident.body) < 37) {
+      nearby.push({ kind: 'resident', point: resident.body });
+    }
     for (const point of this.groundArms) if (distance(this.player, point) < 31) nearby.push({ kind: 'weapon', point });
     for (const point of this.supplies) if (distance(this.player, point) < 31) nearby.push({ kind: 'supply', point });
     if (this.support.turret && distance(this.player, this.support.turret) < 35) nearby.push({ kind: 'turret', point: this.support.turret });
@@ -828,13 +953,12 @@ export class OutpostScene extends Phaser.Scene {
   }
 
   private takeHit(kind: EnemyKind, heading: number, target: Victim = this.player, multiplier = 1, strong = false) {
-    if ('hp' in target) {
-      if (this.support[target.kind] !== target || this.elapsed < target.hitUntil) return;
-      target.hp = Math.max(0, target.hp - balance[kind].damage * multiplier);
-      target.hitUntil = this.elapsed + .32;
-      this.burst({ x: target.x, y: target.y - 15 }, '#ffbc88', target.hp ? 8 : 22);
-      this.audio.play(target.hp ? 'hit' : 'break', target, this.player, deviceVolume);
-      if (!target.hp) { this.support[target.kind] = undefined; this.audio.devicePower(target.kind, false, target, this.player); }
+    if ('kind' in target) {
+      const hit = this.support.hit(target, this.elapsed, balance[kind].damage * multiplier);
+      if (!hit) return;
+      this.burst({ x: target.x, y: target.y - 15 }, '#ffbc88', 8);
+      this.audio.play('hit', target, this.player, deviceVolume);
+      if (hit === 'recalled') this.playDeviceRecall(target);
       return;
     }
     const ally = this.ally?.body === target ? this.ally : undefined;
@@ -846,6 +970,7 @@ export class OutpostScene extends Phaser.Scene {
     if (ally) { ally.hp = hp; ally.invulnerableUntil = this.elapsed + .52; }
     else {
       this.hp = hp;
+      this.lastHit = { time: this.time.now, heading, healthFraction: hp / balance.player.health };
       this.showHealthBar();
       this.invulnerableUntil = this.elapsed + .52;
       if (this.roll?.stage === 'moving') this.recoverRoll(this.roll.heading);
@@ -860,6 +985,8 @@ export class OutpostScene extends Phaser.Scene {
     if (hp < this.hp) { this.hp = hp; this.showHealthBar(); }
     if (!this.hp) { this.complete('defeated'); return; }
     const mods = statusModifiers(this.playerStatuses, this.elapsed);
+    if (mods.attackBlock && slots.some(slot => this.triggers[slot].held || this.triggers[slot].tapped)) this.denyAction(mods.attackBlock);
+    if (mods.supportBlock && this.turretDeploy && this.keyboard.Q.isDown) this.denyAction(mods.supportBlock);
     if (mods.stunned) {
       this.closeChallenge(); this.swap = undefined; this.turretDeploy = undefined; this.turretHold = 0;
       for (const gun of Object.values(this.guns)) gun.reloadAt = undefined;
@@ -891,10 +1018,10 @@ export class OutpostScene extends Phaser.Scene {
     for (const target of options) {
       if (!target) continue;
       const from = enemy.body, reach = distance(from, target);
-      const heading = Math.atan2(target.y - from.y, target.x - from.x);
-      const sight = rayDistance(from, Math.cos(heading), Math.sin(heading), reach, blockers) >= reach;
-      const device = 'hp' in target;
-      if (device && (!sight || reach > aggro)) continue;
+      if (reach > aggro) continue;
+      const sight = openPath(from, target, blockers);
+      const device = 'kind' in target;
+      if (device && !sight) continue;
       const score = reach + (device ? 70 : 0) + (sight ? 0 : 88);
       if (score < limit) { best = target; limit = score; }
     }
@@ -914,13 +1041,19 @@ export class OutpostScene extends Phaser.Scene {
     }
     if (effects.stunned) { this.steer(body, enemy.aim, 0, .76); return; }
     const time = enemy.clock;
-    const aggroRange = this.phase === 'approach' ? balance.approachAggro : balance.defenseAggro;
-    const target = this.enemyTarget(enemy, blockers, aggroRange);
+    const aggroRange = this.aggroRange();
+    const pursuitRange = aggroRange + (enemy.pursuing ? encounterRange.pursuitBuffer : 0);
+    const target = this.enemyTarget(enemy, blockers, pursuitRange);
     const separation = distance(target, body);
-    if (separation > aggroRange && enemy.state === 'chase') return;
-    const range = ('hp' in target ? supportSpecs[target.kind].radius : balance.player.radius) + stats.radius;
+    if (separation > pursuitRange && enemy.state === 'chase') {
+      enemy.pursuing = false;
+      enemy.waypoint = undefined;
+      return;
+    }
+    if (separation <= aggroRange) enemy.pursuing = true;
+    const range = ('kind' in target ? supportSpecs[target.kind].radius : balance.player.radius) + stats.radius;
     const heading = Math.atan2(target.y - body.y, target.x - body.x);
-    const sight = rayDistance(body, Math.cos(heading), Math.sin(heading), separation, blockers) >= separation;
+    const sight = openPath(body, target, blockers);
     const attack = kind === 'mite' ? undefined : balance.attacks[kind];
     if (enemy.state === 'windup' && attack && time >= enemy.stateUntil) {
       if (attack.style === 'dash') {
@@ -977,12 +1110,17 @@ export class OutpostScene extends Phaser.Scene {
       this.takeHit(kind, heading, target, effects.outgoing);
       enemy.attackAt = time + .72;
     }
-    if (this.elapsed < enemy.hitUntil || separation > aggroRange || (!sight && this.phase === 'approach')) return;
+    if (this.elapsed < enemy.hitUntil || separation > pursuitRange) return;
     const retreat = attack?.style === 'shot' && sight && separation < attack.keepDistance;
     if (attack?.style === 'shot' && sight && !retreat && separation < attack.range) return;
+    if (sight && openPath(body, target, blockers, stats.radius * .6)) enemy.waypoint = undefined;
+    else if (!enemy.waypoint || distance(body, enemy.waypoint) < 6 || !openPath(body, enemy.waypoint, blockers, stats.radius * .45)) {
+      enemy.waypoint = this.enemyFlow.waypoint(body, blockers, stats.radius);
+    }
+    const direction = enemy.waypoint && !retreat ? Math.atan2(enemy.waypoint.y - body.y, enemy.waypoint.x - body.x) : heading;
     const steeringAngles = [0, .67, -.67, 1.26, -1.26];
     for (const turn of steeringAngles) {
-      const angle = heading + (retreat ? Math.PI : 0) + turn;
+      const angle = direction + (retreat ? Math.PI : 0) + turn;
       if (rayDistance(body, Math.cos(angle), Math.sin(angle), stats.radius + 11, blockers) < stats.radius + 9) continue;
       enemy.aim = retreat ? heading : angle; this.steer(body, angle, stats.speed * effects.speed * slowing, .18); break;
     }
@@ -997,7 +1135,7 @@ export class OutpostScene extends Phaser.Scene {
       let struck: Victim | undefined, nearest = wall;
       for (const target of targets) {
         if (!target) continue;
-        const radius = ('hp' in target ? supportSpecs[target.kind].radius : balance.player.radius) + 2;
+        const radius = ('kind' in target ? supportSpecs[target.kind].radius : balance.player.radius) + 2;
         const offset = { x: target.x - bolt.x, y: target.y - bolt.y };
         const projected = offset.x * dx + offset.y * dy;
         const normal = offset.x * dy - offset.y * dx;
@@ -1027,23 +1165,117 @@ export class OutpostScene extends Phaser.Scene {
     this.audio.play(phase === 'cleared' ? 'win' : 'loss');
   }
 
+  private openGate() {
+    if (this.securityGate) this.matter.world.remove(this.securityGate);
+    this.securityGate = undefined; this.phase = 'evacuate'; this.gateOpenedAt = this.elapsed; this.audio.play('gate');
+  }
+
+  private descend() {
+    this.previousStage = { time: this.elapsed, kills: this.defeated };
+    this.stage = observatoryStage;
+    this.showIntro = this.transitioning = true;
+    this.scene.restart();
+  }
+
   private updateRelay() {
+    const { relayAccess, lift } = this.stage;
     if (this.phase === 'defense') {
       if (distance(this.player, relayAccess) <= balance.relay.defenseRadius) this.relayTime += timestep;
       const wave = waves[this.wave];
       if (wave && this.relayTime >= wave.at) {
-        for (const position of wave.spawns) this.spawn(position.kind, position);
+        this.callReinforcements(wave.kinds);
         this.wave++;
       }
-      if (this.relayTime >= balance.relay.duration) {
-        if (this.securityGate) this.matter.world.remove(this.securityGate);
-        this.securityGate = undefined; this.phase = 'evacuate'; this.gateOpenedAt = this.elapsed; this.audio.play('gate');
-      }
+      if (this.relayTime >= balance.relay.duration) this.openGate();
     }
-    if (this.phase === 'evacuate' && distance(this.player, lift) < 23) this.complete('cleared');
+    if (this.phase !== 'evacuate' || distance(this.player, lift) >= 23) return;
+    if (this.stage.id === '1-1') this.descend();
+    else if (this.resident?.state === 'following' && distance(this.resident.body, lift) < 37) {
+      this.complete('cleared');
+    }
+  }
+
+  private aggroRange() { return this.phase === 'approach' ? encounterRange.approach : encounterRange.alert; }
+
+  private callReinforcements(kinds: readonly EnemyKind[]) {
+    this.pendingReinforcements.push(...kinds);
+    this.nextReinforcementsAt = this.elapsed;
+  }
+
+  private reinforce(blockers: Box[]) {
+    const walls = this.walls();
+    this.enemyFlow.update(this.player, !!this.securityGate, walls);
+    if (this.elapsed < this.nextReinforcementsAt) return;
+    const table = encounters[this.stage.id];
+    const camera = this.displayCamera();
+    const lampReach = rayDistance(this.player, Math.cos(this.facing), Math.sin(this.facing), 8, blockers);
+    const lamp = onRay(this.player, this.facing, Math.max(0, lampReach - .15));
+    const flares = this.support.flares.map(flare => flarePoseAt(flare, this.elapsed).base);
+    const lit = (point: Point) =>
+      this.flashlightOn && flashlightLevel(lamp, this.facing, point) > .02 && openPath(lamp, point, blockers) ||
+      flares.some(flare => distance(flare, point) < supportSpecs.flare.radius && openPath(flare, point, blockers)) ||
+      this.traces.some(trace => distanceToLight(point, trace.from, trace.to) < 19 && openPath(trace.from, point, blockers));
+    const hidden = (point: Point) => concealed(point, camera, this.player, blockers, lit);
+
+    this.enemies = this.enemies.filter(enemy => {
+      if (!enemy.reinforcement || distance(enemy.body, this.player) < encounterRange.retire || !hidden(enemy.body) ||
+        this.resident?.state === 'following' && distance(enemy.body, this.resident.body) < encounterRange.approach) return true;
+      if (this.medicalBeam?.target === enemy) this.medicalBeam = undefined;
+      enemy.body.destroy();
+      return false;
+    });
+    const limit = Math.min(table.cap - this.enemies.length, table.packSize);
+    let count = 0;
+    for (; count < limit; count++) {
+      const pending = this.pendingReinforcements[0];
+      const kind = pending ?? table.roster[this.encounterIndex % table.roster.length];
+      const radius = balance[kind].radius;
+      const site = this.enemyFlow.spawnPoint(this.player, encounterRange.safe, this.aggroRange(), point =>
+        (!this.ally || distance(point, this.ally.body) > 80) &&
+        (!this.resident || distance(point, this.resident.body) > 104) &&
+        this.enemies.every(enemy => distance(point, enemy.body) > radius + balance[enemy.kind].radius + 14) &&
+        blockers.every(box => blockerClearance(point, box) > radius + 2) && hidden(point));
+      if (!site) break;
+      this.spawn(kind, site, true);
+      if (pending) this.pendingReinforcements.shift();
+      else this.encounterIndex++;
+    }
+    const interval = this.phase === 'approach' ? table.interval : table.alertInterval;
+    this.nextReinforcementsAt = this.elapsed + (count < limit ? .65 : interval);
+  }
+
+  private advanceResident(blockers: Box[]) {
+    const resident = this.resident;
+    if (resident?.state !== 'following') return;
+    const { body, trail } = resident;
+    const next = { x: this.player.x, y: this.player.y };
+    if (!trail.length || distance(trail[trail.length - 1], next) > 13) trail.push(next);
+    const openLine = (point: Point) => {
+      const span = distance(body, point);
+      const direction = Math.atan2(point.y - body.y, point.x - body.x);
+      return rayDistance(body, Math.cos(direction), Math.sin(direction), span, blockers) >= span;
+    };
+    resident.hiding = this.enemies.some(enemy => distance(body, enemy.body) < 67 && openLine(enemy.body));
+    resident.moving = false;
+    this.previousPositions.set(body, { x: body.x, y: body.y });
+    if (resident.hiding) return;
+    if (distance(body, next) < 16 && openLine(next)) { trail.length = 0; return; }
+    let index = trail.length - 1;
+    while (index >= 0 && (distance(body, trail[index]) > 110 || !openLine(trail[index]))) index--;
+    if (index < 0) return;
+    if (index) trail.splice(0, index);
+    const target = trail[0];
+    const span = distance(body, target);
+    if (span < 3) { trail.shift(); return; }
+    const heading = Math.atan2(target.y - body.y, target.x - body.x);
+    const step = onRay(body, heading, Math.min(span, 2.9));
+    if (!this.stage.walkable(step)) return;
+    body.setPosition(step.x, step.y);
+    resident.moving = true;
   }
 
   private simulate() {
+    if (this.story || this.transitioning) return;
     this.elapsed += timestep;
     const mods = this.playerActionStep();
     if (!mods) return;
@@ -1053,17 +1285,23 @@ export class OutpostScene extends Phaser.Scene {
     if (!this.activeChallenge && !this.slash) this.facing = Math.atan2(cursor.y - (this.player.y - 12), cursor.x - this.player.x);
     if (this.activeChallenge && distance(this.player, this.activeChallenge.location) > this.activeChallenge.reach) this.closeChallenge();
     this.updateRelay();
-    if (this.finished()) return;
+    if (this.finished() || this.transitioning) return;
+    this.advanceWeaponSwap();
+    this.advanceSlash();
     const x = Number(key.D.isDown || key.RIGHT.isDown) - Number(key.A.isDown || key.LEFT.isDown);
     const y = Number(key.S.isDown || key.DOWN.isDown) - Number(key.W.isDown || key.UP.isDown);
-    if (this.rollRequested && mods.roll && !this.controlsLocked && !this.slash && !this.turretDeploy && (x || y)) this.beginRoll(x, y);
+    const moving = !!(x || y);
+    const movementBlocked = mods.stunned && !this.mapOpen && moving;
+    if (movementBlocked && !this.blockedMovement) this.denyAction('stun');
+    this.blockedMovement = movementBlocked;
+    if (this.rollRequested && !this.mapOpen && !this.roll && !this.activeChallenge && !this.slash && !this.turretDeploy && moving &&
+      !this.denyAction(mods.attackBlock)) this.beginRoll(x, y);
     this.rollRequested = false;
     if (key.E.isDown && this.selection()?.kind === 'turret') {
       this.turretHold += actionStep;
       if (this.turretHold + 1e-7 >= supportSpecs.turret.pickup) {
-        const turret = this.support.turret!;
-        this.support.turret = undefined; this.turretHold = 0;
-        this.audio.devicePower('turret', false, turret, this.player);
+        this.playDeviceRecall(this.support.recall('turret'));
+        this.turretHold = 0;
       }
     } else this.turretHold = 0;
     if (this.turretDeploy) {
@@ -1076,9 +1314,11 @@ export class OutpostScene extends Phaser.Scene {
         }
       }
     }
-    const speed = this.controlsLocked || this.turretHold > 0 || this.turretDeploy || (!x && !y) ? 0 : balance.player.speed * mods.speed * (this.slash ? .64 : 1);
+    const speed = this.controlsLocked || this.turretHold > 0 || this.turretDeploy || this.slash || (!x && !y) ? 0 :
+      balance.player.speed * mods.speed;
     const rolling = this.advanceRoll(this.roll?.stage === 'moving' ? this.blockerBoxes() : [], actionStep);
-    if (!rolling) this.steer(this.player, Math.atan2(y, x), speed, this.elapsed + .32 < this.invulnerableUntil ? .075 : .24);
+    const steering = this.elapsed + .32 < this.invulnerableUntil ? .075 : this.slash ? 1 : .24;
+    if (!rolling) this.steer(this.player, Math.atan2(y, x), speed, steering);
 
     this.traces = this.traces.filter(trace => (trace.life -= timestep) > 0);
     this.muzzleLights = this.muzzleLights.filter(flash => (flash.life -= timestep) > 0);
@@ -1086,11 +1326,10 @@ export class OutpostScene extends Phaser.Scene {
       spark.x += spark.vx * timestep; spark.y += spark.vy * timestep;
       return (spark.life -= timestep) > 0;
     });
-    this.advanceSlash();
     this.updateGuns(mods.attack && !this.controlsLocked && !rolling && !this.slash && this.turretHold === 0);
     this.updateBallistics();
     const blockers = this.blockerBoxes();
-    const activeDrone = this.support.drone;
+    this.reinforce(blockers);
     this.support.update(this.elapsed, timestep, this.player, this.enemies.map(enemy => enemy.body), blockers, (kind, unit, heading, shot) => {
       const pose = supportPose(unit, unit.heading, kind, this.elapsed, unit.firedAt);
       const { point, blocked, target } = this.muzzleClearance(unit, pose.ground);
@@ -1102,8 +1341,8 @@ export class OutpostScene extends Phaser.Scene {
       this.dropMetal(onRay(unit, heading + Math.PI / 2, 6), heading + 1.05, 'case', deviceVolume);
       this.burst(pose.muzzle, shot.impact.color, 3);
       this.audio.play('scout', unit, this.player, deviceVolume * (kind === 'turret' ? .58 : .42), kind === 'turret' ? .93 : 1.24);
-    }, unit => this.audio.play('turretDetect', unit, this.player, deviceVolume * (unit.kind === 'turret' ? 1 : .64)));
-    if (activeDrone && !this.support.drone) this.audio.devicePower('drone', false, activeDrone, this.player);
+    }, unit => this.audio.play('turretDetect', unit, this.player, deviceVolume * (unit.kind === 'turret' ? 1 : .64)),
+    unit => this.playDeviceRecall(unit));
     this.updateFlareBodies();
     const { turret, drone } = this.support;
     this.audio.syncDevices(turret && this.elapsed >= turret.readyAt ? turret : undefined,
@@ -1123,6 +1362,7 @@ export class OutpostScene extends Phaser.Scene {
     for (const { body } of this.enemies) this.previousPositions.set(body, { x: body.x, y: body.y });
     for (const { body } of this.props) this.previousPositions.set(body, { x: body.x, y: body.y });
     this.matter.world.step(timestep * 1000);
+    this.advanceResident(blockers);
     const step = distance(this.player, before);
     if (!rolling && speed && step > .18) {
       this.gaitDistance += step;
@@ -1152,7 +1392,14 @@ export class OutpostScene extends Phaser.Scene {
   }
 
   private paint() {
-    const camera = this.displayCamera();
+    if (this.transitioning) return;
+    if (this.story) {
+      const { gameContext } = this.game.renderer as Phaser.Renderer.Canvas.CanvasRenderer;
+      this.story.draw(gameContext, this.hud, this.time.now);
+      return;
+    }
+    const hit = this.hitFeedback();
+    const camera = this.displayCamera(hit);
     const props = this.props.map(prop => {
       const point = this.visualPosition(prop.body);
       return { ...point, kind: prop.kind, bounds: boxFor(prop, point),
@@ -1204,24 +1451,32 @@ export class OutpostScene extends Phaser.Scene {
       statuses: activeStatuses(ally.statuses, this.elapsed) } : undefined;
     const training = this.trainingDummy;
     const dummy = training ? { x: training.body.x, y: training.body.y, hp: training.hp, statuses: activeStatuses(training.statuses, this.elapsed) } : undefined;
+    const resident = this.resident;
     const beam = this.medicalBeam;
     const turretDeploy = this.turretDeploy;
     this.renderOutpost({
       player: { ...this.visualPosition(this.player), kind: this.explorer, aim: this.facing, hit: Math.max(0, this.invulnerableUntil - this.elapsed - .26),
         stride: Math.hypot(velocity.x, velocity.y), pose: recoil > .4 ? 3 : undefined, statuses: activeStatuses(this.playerStatuses, this.elapsed) },
       actors, props, ally: allyArt, dummy,
+      resident: resident ? { ...this.visualPosition(resident.body), state: resident.state, hiding: resident.hiding, moving: resident.moving } : undefined,
+      notice: this.notice && this.elapsed < this.notice.until ? this.notice.text : undefined,
       blockers, warnings, aim: this.screenAim(camera), mapMode: this.mapMode, flashlightOn: this.flashlightOn,
-      phase: this.phase, hp: this.hp, showHealth: !!this.healthBar, roll: rollPose, walkFrame: this.walkFrame,
-      selected: this.selected, guns: this.guns, groundArms: this.groundArms, pointerInside: this.pointerInside,
-      swapping: this.swap ? { to: this.swap.to, progress: Math.min(1, Math.max(0, (this.actionTime - this.swap.startedAt) / swapDuration)) } : undefined,
-      slash: this.slash ? { heading: this.slash.heading, progress: Math.min(1, (this.actionTime - this.slash.startedAt) / knife.duration) } : undefined,
+      phase: this.phase, hp: this.hp, hitTint: hit?.tint ?? 0, showHealth: !!this.healthBar, roll: rollPose, walkFrame: this.walkFrame,
+      blockedStatus: this.blockedStatus, reducedMotion: this.reducedMotion.matches,
+      selected: this.selected, guns: this.guns, groundArms: this.groundArms, pointerInside: this.pointerInside, knifeEquipped: this.knifeEquipped,
+      swapping: this.swap ? { from: this.swap.from, to: this.swap.to,
+        progress: Math.min(1, Math.max(0, (this.actionTime - this.swap.startedAt) / swapDuration)) } : undefined,
+      slash: this.slash ? { heading: this.slash.heading, direction: this.slash.direction,
+        progress: Math.min(1, (this.actionTime - this.slash.startedAt) / knife.duration),
+        settle: Math.max(0, (this.actionTime - this.slash.startedAt - knife.duration) / knife.recovery) } : undefined,
       reload: this.reloadProgress(held),
       gateTravel: this.gateOpenedAt ? Phaser.Math.Clamp((this.elapsed - this.gateOpenedAt) / .36, 0, 1) : 0,
       charge: Math.min(1, this.relayTime / balance.relay.duration),
-      time: this.elapsed, defeated: this.defeated, sparks: this.sparks, traces: this.traces, selection: this.selection(),
+      time: this.elapsed, sparks: this.sparks, traces: this.traces, selection: this.selection(),
+      missionTime: (this.previousStage?.time ?? 0) + this.elapsed, missionKills: (this.previousStage?.kills ?? 0) + this.defeated,
       bullets: this.bullets, spentMetal: this.spentMetal, bolts: this.bolts, rings: this.rings,
       supplies: this.supplies, challenge: this.activeChallenge?.game, support: this.support, turretHold: this.turretHold / supportSpecs.turret.pickup,
-      turretDeploy: turretDeploy ? { ...turretSite(this.player, turretDeploy.heading, blockers, turretDeploy.point),
+      turretDeploy: turretDeploy ? { ...turretSite(this.player, turretDeploy.heading, blockers, turretDeploy.point, this.stage.walkable),
         heading: turretDeploy.heading, progress: turretDeploy.time / supportSpecs.turret.deploy } : undefined,
       medicalBeam: beam ? { point: this.visualPosition(beam.target === 'self' ? this.player : beam.target.body), enemy: beam.enemy, self: beam.target === 'self' } : undefined,
       muzzleLights: this.muzzleLights, actionTime: this.actionTime, lighting: this.lighting, shadowMode: this.shadowMode,
@@ -1229,16 +1484,21 @@ export class OutpostScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number) {
+    if (this.story || this.transitioning) return;
     const justDown = Phaser.Input.Keyboard.JustDown;
     if (isPageControl(document.activeElement)) this.clearInput();
     if (this.finished()) {
-      if (this.restartRequested || justDown(this.keyboard.ENTER)) this.scene.restart();
+      if (this.restartRequested || justDown(this.keyboard.ENTER)) {
+        if (this.phase === 'cleared') this.startExpedition(this.explorer, this.bringAlly, this.useTrainingDummy);
+        else { this.transitioning = true; this.scene.restart(); }
+      }
       return;
     }
     const key = this.keyboard;
     const close = justDown(key.ESC), map = justDown(key.TAB), interact = justDown(key.E), reload = justDown(key.R);
-    const useSupport = justDown(key.Q), swing = justDown(key.ALT);
-    if (justDown(key.F)) this.flashlightOn = !this.flashlightOn;
+    const useSupport = justDown(key.Q), swing = justDown(key.ALT), toggleLight = justDown(key.F);
+    const mods = statusModifiers(this.playerStatuses, this.elapsed);
+    if (toggleLight && !mods.stunned) this.flashlightOn = !this.flashlightOn;
     const choice = [key.ONE, key.TWO, key.THREE].map(justDown).findIndex(pressed => pressed);
     if (this.activeChallenge) {
       if (close) this.closeChallenge();
@@ -1247,24 +1507,30 @@ export class OutpostScene extends Phaser.Scene {
         this.mapMode = this.mapMode === 'off' ? 'panel' : this.mapMode === 'panel' ? 'overlay' : 'off';
         if (this.mapOpen) this.stopFiring();
       }
-      if (!this.controlsLocked) {
+      if (!this.mapOpen && !this.roll && mods.stunned) {
+        if (useSupport || swing || reload || interact || toggleLight) this.denyAction('stun');
+      } else if (!this.controlsLocked) {
         if (interact) this.interact();
         if (!this.activeChallenge) {
           if (choice >= 0) this.support.selected = supportKinds[choice];
-          const mods = statusModifiers(this.playerStatuses, this.elapsed);
-          if (useSupport && mods.support) {
-            if (this.support.selected === 'turret' && !this.support.turret) {
-              this.turretDeploy = { heading: this.facing, time: 0, point: turretSite(this.player, this.facing, this.blockerBoxes()).point };
+          if (useSupport && !this.denyAction(mods.supportBlock)) {
+            if (this.support.selected === 'turret' && !this.support.turret && this.support.chargeRatio('turret')) {
+              this.turretDeploy = { heading: this.facing, time: 0,
+                point: turretSite(this.player, this.facing, this.blockerBoxes(), undefined, this.stage.walkable).point };
               this.player.setVelocity(0, 0);
             } else this.deploySupport();
           }
-          if (swing && mods.attack && !this.slash && !this.swap && this.actionTime >= this.nextSlash) this.swingKnife();
-          if (reload && !this.swap && !this.slash) this.reload(this.selected);
+          if (swing && !this.denyAction(mods.attackBlock) && !this.slash) this.swingKnife();
+          if (reload) {
+            if (this.knifeEquipped) this.requestSwap(this.swap?.to ?? this.selected);
+            if (this.swap) this.swap.reload = true;
+            else this.reload(this.selected);
+          }
         }
       }
     }
     this.accumulator += Math.min(.05, delta / 1000);
-    while (this.accumulator >= timestep && !this.finished()) {
+    while (this.accumulator >= timestep && !this.finished() && !this.transitioning) {
       this.simulate();
       this.accumulator -= timestep;
     }
@@ -1284,11 +1550,18 @@ export class OutpostScene extends Phaser.Scene {
     }
   }
 
+  private playDeviceRecall(unit?: Emplacement) {
+    if (unit) this.audio.devicePower(unit.kind, false, unit, this.player);
+  }
+
   private swingKnife() {
     const aim = this.aimPoint();
     this.facing = Math.atan2(aim.y - this.player.y, aim.x - this.player.x);
-    this.slash = { heading: this.facing, startedAt: this.actionTime, struck: false };
-    this.nextSlash = this.actionTime + knife.cooldown;
+    this.swap = undefined;
+    this.knifeEquipped = true;
+    const direction = knifeSwingDirection(this.lastSlash, this.elapsed);
+    this.lastSlash = { at: this.elapsed, direction };
+    this.slash = { heading: this.facing, startedAt: this.actionTime, struck: false, direction };
     this.stopFiring();
     this.audio.play('knifeSwing');
   }

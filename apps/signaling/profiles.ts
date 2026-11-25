@@ -2,13 +2,14 @@ import { DurableObject } from 'cloudflare:workers';
 import { avatarLevel, defaultAvatar, levelFromPlayTime, profileGames, profileIdPattern, readFriendUpdate, readName, readProfilePreferences, readReport } from '../../packages/protocol/profile.ts';
 import type { AvatarLayers, FriendAction, GameStats, MatchReport, OutcomeReport, OwnProfile, PresenceMode, ProfileGame, ProfilePreferences, ProfileSummary, PublicProfile, TouchEffect } from '../../packages/protocol/profile.ts';
 import type { RoomInvite } from '../../packages/protocol/rooms.ts';
+import type { CatalogGameId } from '../../packages/protocol/games.ts';
 import type { Env } from './bindings.ts';
 import { readBody } from './http.ts';
 import { badgeCatalog, reachedBadges } from '../../packages/protocol/badges.ts';
 import type { BadgeMetric, EarnedBadge } from '../../packages/protocol/badges.ts';
 
 const cookieName = 'noriverse_profile';
-type Identity = Partial<AvatarLayers> & { id: string; secret: string; name: string; favorites?: ProfileGame[]; friends?: string[]; touchEffect?: TouchEffect; presence?: PresenceMode };
+type Identity = Partial<AvatarLayers> & { id: string; secret: string; name: string; favorites?: CatalogGameId[]; friends?: string[]; touchEffect?: TouchEffect; presence?: PresenceMode };
 const avatarLayers = (identity: Identity): AvatarLayers => ({ avatar: identity.avatar ?? defaultAvatar, avatarBackground: identity.avatarBackground });
 const presenceLease = 25_000;
 const friendActions = ['request', 'accept', 'decline', 'remove', 'cancel'] as const satisfies readonly FriendAction[];

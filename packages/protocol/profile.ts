@@ -1,5 +1,5 @@
-import { isGameId } from './games.ts';
-import type { GameId } from './games.ts';
+import { isCatalogGameId, isGameId } from './games.ts';
+import type { CatalogGameId, GameId } from './games.ts';
 import type { EarnedBadge } from './badges.ts';
 import { explorerIds } from './explorers.ts';
 
@@ -58,7 +58,7 @@ export interface GameStats { seconds: number; wins: number; losses: number; draw
 export interface PublicProfile extends AvatarLayers {
   id: string;
   name: string;
-  favorites: ProfileGame[];
+  favorites: CatalogGameId[];
   touchEffect?: TouchEffect;
   level: number;
   xp: number;
@@ -85,7 +85,7 @@ export type ProfilePreferences =
   | AvatarLayers
   | { touchEffect: TouchEffect }
   | { presence: PresenceMode }
-  | { favorite: { game: ProfileGame; selected: boolean } };
+  | { favorite: { game: CatalogGameId; selected: boolean } };
 
 export function readProfilePreferences(value: unknown): ProfilePreferences | undefined {
   if (!value || typeof value !== 'object') return;
@@ -100,7 +100,7 @@ export function readProfilePreferences(value: unknown): ProfilePreferences | und
   if ('presence' in value && (value.presence === 'online' || value.presence === 'offline')) return { presence: value.presence };
   if (!('favorite' in value) || !value.favorite || typeof value.favorite !== 'object') return;
   const favorite = value.favorite as { game?: unknown; selected?: unknown };
-  if (isGameId(favorite.game) && typeof favorite.selected === 'boolean') {
+  if (isCatalogGameId(favorite.game) && typeof favorite.selected === 'boolean') {
     return { favorite: { game: favorite.game, selected: favorite.selected } };
   }
 }

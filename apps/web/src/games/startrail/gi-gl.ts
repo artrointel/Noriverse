@@ -1,12 +1,7 @@
 import { balance } from './outpost.ts';
+import { fullscreenTriangle, linkWebGL2Program } from './webgl2-program.ts';
 
 const { albedoFloor, wallResponse, gain } = balance.indirect;
-
-const vertex = `#version 300 es
-void main() {
-  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
-  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
-}`;
 
 const seed = `#version 300 es
 precision highp float;
@@ -246,33 +241,8 @@ export function createRadianceRenderer() {
   };
 }
 
-type Program = ReturnType<typeof makeProgram>;
+type Program = ReturnType<typeof linkWebGL2Program>;
 type Target = { framebuffer: WebGLFramebuffer; texture: WebGLTexture; width: number; height: number };
-
-function makeProgram(gl: WebGL2RenderingContext, fragment: string) {
-  const program = gl.createProgram();
-  if (!program) throw new Error('WebGL program allocation failed');
-  for (const [kind, source] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragment]] as const) {
-    const shader = gl.createShader(kind);
-    if (!shader) { gl.deleteProgram(program); throw new Error('WebGL shader allocation failed'); }
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      const reason = gl.getShaderInfoLog(shader);
-      gl.deleteShader(shader); gl.deleteProgram(program);
-      throw new Error(reason ?? 'WebGL shader compilation failed');
-    }
-    gl.attachShader(program, shader);
-    gl.deleteShader(shader);
-  }
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) { gl.deleteProgram(program); throw new Error('WebGL program link failed'); }
-  const uniforms = new Map<string, WebGLUniformLocation | null>();
-  return { program, uniform(name: string) {
-    if (!uniforms.has(name)) uniforms.set(name, gl.getUniformLocation(program, name));
-    return uniforms.get(name) ?? null;
-  } };
-}
 
 function initialize(gl: WebGL2RenderingContext) {
   const textures: WebGLTexture[] = [], buffers: WebGLFramebuffer[] = [], programs: Program[] = [];
@@ -307,7 +277,7 @@ function initialize(gl: WebGL2RenderingContext) {
     const timer = gl.getExtension('EXT_disjoint_timer_query_webgl2') as { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null;
     const halfFloat = !!gl.getExtension('EXT_color_buffer_float');
     const { width, height } = indirectSize;
-    for (const pass of [seed, cascade, average, resolve]) programs.push(makeProgram(gl, pass));
+    for (const pass of [seed, cascade, average, resolve]) programs.push(linkWebGL2Program(gl, fullscreenTriangle, pass));
     const inputs = [texture(gl.LINEAR), texture(gl.LINEAR), texture(gl.NEAREST)];
     const seedTarget = target(width, height);
     const layers = [[4, 4, 8, .65, 9], [8, 8, 32, 9, 31], [16, 16, 128, 31, 86]].map(([spacing, tiles, count, near, far]) => {

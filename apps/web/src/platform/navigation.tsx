@@ -2,22 +2,19 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ComponentPropsWithoutRef } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { isProfileGame, profileIdPattern } from '../../../../packages/protocol/profile.ts';
+import { profileIdPattern } from '../../../../packages/protocol/profile.ts';
 import { isExplorerId } from '../../../../packages/protocol/explorers.ts';
 import type { ExplorerId } from '../../../../packages/protocol/explorers.ts';
 import { isRoomGame } from '../../../../packages/protocol/rooms.ts';
 import type { RoomActivity } from '../../../../packages/protocol/rooms.ts';
-import type { GameId } from '../../../../packages/protocol/games.ts';
+import { isCatalogGameId } from '../../../../packages/protocol/games.ts';
+import type { CatalogGameId, GameId } from '../../../../packages/protocol/games.ts';
+import { routeHref, usesHashRoutes } from './route-href.ts';
+export { routeHref } from './route-href.ts';
 
 export type Navigate = (destination: string, replace?: boolean) => void;
-const pages = import.meta.env.VITE_GITHUB_PAGES === 'true';
-
-export function routeHref(destination: string) {
-  return pages ? import.meta.env.BASE_URL + '#' + destination : destination;
-}
-
 function readLocation(url = new URL(location.href)) {
-  if (!pages) return url;
+  if (!usesHashRoutes) return url;
   return new URL(url.hash.startsWith('#/') ? url.hash.slice(1) : '/' + url.search, url.origin);
 }
 
@@ -42,9 +39,9 @@ export function readRoute(url: URL) {
   if (section === 'characters' && !step && isExplorerId(id)) return { page: 'explorer', characterId: id } as const;
   if (section === 'profiles' && id && !step && profileIdPattern.test(id)) return { page: 'publicProfile', profileId: id } as const;
   if (section === 'games' && !id) return { page: 'games' } as const;
-  if (section === 'games' && isProfileGame(id) && !extra) {
+  if (section === 'games' && isCatalogGameId(id) && !extra) {
     if (!step) return { page: 'detail', id } as const;
-    if (step === 'setup' || step === 'play') return { page: step, id, online: online && isRoomGame(id) } as const;
+    if ((step === 'setup' || step === 'play') && isRoomGame(id)) return { page: step, id, online } as const;
   }
   return { page: 'missing' } as const;
 }
@@ -65,8 +62,11 @@ export function roomActivityForRoute(route: ReturnType<typeof readRoute>): RoomA
 
 type GameMode = 'local' | 'online';
 export type { GameMode };
-export const gamePath = (id: GameId, step?: 'setup' | 'play', mode: GameMode = 'local') =>
-  '/games/' + id + (step ? '/' + step : '') + (mode === 'local' ? '' : '?mode=' + mode);
+export function gamePath(id: CatalogGameId): string;
+export function gamePath(id: GameId, step: 'setup' | 'play', mode?: GameMode): string;
+export function gamePath(id: CatalogGameId, step?: 'setup' | 'play', mode: GameMode = 'local') {
+  return '/games/' + id + (step ? '/' + step : '') + (mode === 'local' ? '' : '?mode=' + mode);
+}
 export const explorerPath = (id?: ExplorerId) => id ? '/characters/' + id : '/characters';
 
 export function useNavigation() {
@@ -102,10 +102,10 @@ export function useNavigation() {
       setEntry({ url: readLocation(), previous: readPrevious() });
     }
     window.addEventListener('popstate', restore);
-    if (pages) window.addEventListener('hashchange', restore);
+    if (usesHashRoutes) window.addEventListener('hashchange', restore);
     return () => {
       window.removeEventListener('popstate', restore);
-      if (pages) window.removeEventListener('hashchange', restore);
+      if (usesHashRoutes) window.removeEventListener('hashchange', restore);
     };
   }, []);
 

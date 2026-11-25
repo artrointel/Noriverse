@@ -1,5 +1,8 @@
+import { buildTerrainGeometry, insideTerrain } from './terrain.ts';
+import type { WallPolygon } from './terrain.ts';
+
 export type Point = { x: number; y: number };
-export type Box = Point & { width: number; height: number };
+export type Box = Point & { width: number; height: number; polygon?: WallPolygon };
 export type EnemyKind = 'mite' | 'boar' | 'scout' | 'sentinel' | 'spore' | 'grub';
 export type ExplorerKind = 'solori' | 'kommi';
 export const explorerNames = { solori: '솔오리', kommi: '꼬미' } as const;
@@ -56,10 +59,10 @@ export const patrols = [
   { ...grid(33.05, 11.05), kind: 'boar' },
 ] satisfies (Point & { kind: EnemyKind })[];
 export const waves = [
-  { at: .6, spawns: [{ ...grid(15.5, 15.35), kind: 'mite' }, { ...grid(21.7, 16.1), kind: 'spore' }] },
-  { at: 4.5, spawns: [{ ...grid(22.8, 14.75), kind: 'scout' }, { ...grid(17, 12.8), kind: 'grub' }] },
-  { at: 9, spawns: [{ ...grid(16, 15.5), kind: 'boar' }, { ...grid(21.5, 13), kind: 'mite' }] },
-] satisfies { at: number; spawns: (Point & { kind: EnemyKind })[] }[];
+  { at: .6, kinds: ['mite', 'spore'] },
+  { at: 4.5, kinds: ['scout', 'grub'] },
+  { at: 9, kinds: ['boar', 'mite'] },
+] satisfies { at: number; kinds: EnemyKind[] }[];
 
 const floorAreas = [
   [1, 6, 21, 25], [7, 13, 22, 23], [13, 16, 20, 24], [17, 21, 22, 23], [22, 26, 22, 25],
@@ -72,41 +75,30 @@ export const floor = Array.from({ length: rows }, (_, row) => Array.from({ lengt
   floorAreas.some(([left, right, top, bottom]) => col >= left && col <= right && row >= top && row <= bottom),
 ));
 
-type MapEdge = { from: Point; to: Point; face: Point };
-export const mapWallEdges: MapEdge[] = [];
-for (const [y, row] of floor.entries()) for (const [x, open] of row.entries()) {
-  if (!open) continue;
-  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-    if (floor[y + dy]?.[x + dx]) continue;
-    const base = grid(x + (dx > 0 ? 1 : 0), y + (dy > 0 ? 1 : 0));
-    for (let part = 0; part < 4; part++) {
-      const size = tileSize / 4, start = part * size;
-      const from = { x: base.x + Math.abs(dy) * start, y: base.y + Math.abs(dx) * start };
-      const to = { x: from.x + Math.abs(dy) * size, y: from.y + Math.abs(dx) * size };
-      mapWallEdges.push({ from, to, face: { x: (from.x + to.x) / 2 + dx * 4, y: (from.y + to.y) / 2 + dy * 4 } });
-    }
-  }
-}
+const wallBevels = [
+  { ...grid(1, 26), cut: 60 }, { ...grid(7, 26), cut: 53 }, { ...grid(3, 8), cut: 58 },
+  { ...grid(14, 4), cut: 60 }, { ...grid(22, 26), cut: 58 }, { ...grid(35, 14), cut: 56 },
+];
+export const { outlines: terrainOutlines, walls: cliffs, edges: mapWallEdges } = buildTerrainGeometry(floor, tileSize, wallBevels);
+export const walkable = (point: Point) => insideTerrain(point, terrainOutlines);
 
-export const cliffs: Box[] = [];
-// Only the cells that border a walkable tile need visible geometry and collision.
-for (let row = 0; row < rows; row++) {
-  for (let col = 0; col < columns;) {
-    const isEdge = (x: number) => x < columns && !floor[row][x] &&
-      [row - 1, row, row + 1].some(y => [x - 1, x, x + 1].some(cx => floor[y]?.[cx]));
-    if (!isEdge(col)) { col++; continue; }
-    const first = col++;
-    while (isEdge(col)) col++;
-    cliffs.push({ ...grid(first, row), width: (col - first) * tileSize, height: tileSize });
-  }
-}
+export const tileDetails = [
+  { ...grid(2.45, 22.35), kind: 'fracture', angle: -.2 }, { ...grid(5.53, 21.44), kind: 'shards', angle: .4 },
+  { ...grid(6.32, 24.53), kind: 'shards', angle: -.7 }, { ...grid(11.43, 22.30), kind: 'fracture', angle: .8 },
+  { ...grid(4.62, 8.77), kind: 'shards', angle: .23 }, { ...grid(9.56, 17.2), kind: 'fracture', angle: 1.2 },
+  { ...grid(16.55, 4.8), kind: 'grate', angle: 0 }, { ...grid(18.42, 6.72), kind: 'plate', angle: Math.PI / 2 },
+  { ...grid(15.2, 13.24), kind: 'plate', angle: 0 }, { ...grid(22.5, 16.45), kind: 'grate', angle: Math.PI / 2 },
+  { ...grid(23.56, 24.6), kind: 'plate', angle: -.13 }, { ...grid(25.55, 22.45), kind: 'grate', angle: 0 },
+  { ...grid(27.72, 11.48), kind: 'fracture', angle: -.25 }, { ...grid(33.54, 13.3), kind: 'grate', angle: 0 },
+] as const;
 
 export const relayBody = { x: relay.x - 18, y: relay.y - 14, width: 36, height: 24 };
 export const obstacles = [...cliffs, relayBody];
 
-const rollDuration = .30 / .70;
+const rollDuration = .30 / .70 / .70;
 export const balance = {
   player: { mass: 1, radius: 11, speed: 2.65, health: 100 },
+  hitFeedback: { duration: .24, shake: [1.3, 4], tint: [.16, .27] },
   roll: { range: 74, duration: rollDuration, recovery: .43 },
   cometDash: { range: 86, duration: rollDuration, recovery: .43 },
   mite: { mass: .6, radius: 9, speed: 1.35, health: 2, damage: 7, impulse: 1.9 },
@@ -120,8 +112,6 @@ export const balance = {
     crystal: { hp: 3, width: 22, height: 14, mass: 2, anchored: true, color: '#86ebff' },
   },
   relay: { radius: 31, puzzleSize: 4, defenseRadius: 135, duration: 13 },
-  approachAggro: 154,
-  defenseAggro: 255,
   attacks: {
     boar: { style: 'dash', range: 125, windup: .78, duration: .43, recovery: 1.1, speed: 5.6 },
     grub: { style: 'dash', range: 87, windup: .48, duration: .32, recovery: .95, speed: 4.8 },
@@ -130,7 +120,7 @@ export const balance = {
     spore: { style: 'burst', range: 42, windup: .55, recovery: 1.15, radius: 52 },
   },
   fallen: { collapse: .37, duration: 1.25 },
-  beam: { range: 223, halfAngle: .87, unlitEnemyOpacity: .10 },
+  beam: { range: 267.6, halfAngle: .696, intensity: .7, unlitEnemyOpacity: .10 },
   turretBeam: { range: 188, halfAngle: .13, amount: .57, elevation: 24 },
   indirect: { inputExposure: .45, albedoFloor: .50, gain: 5.4, wallResponse: .84,
     flashRadiusScale: 3.8, wallDepth: 12, flashRefreshMs: 55 },
@@ -148,19 +138,47 @@ export function onRay(origin: Point, heading: number, length: number): Point {
   return { x: origin.x + Math.cos(heading) * length, y: origin.y + Math.sin(heading) * length };
 }
 
-export function rayDistance(origin: Point, dx: number, dy: number, limit: number, boxes: readonly Box[], edge: 'front' | 'back' = 'front') {
+export function rayDistance(origin: Point, dx: number, dy: number, limit: number, boxes: readonly Box[],
+  edge: 'front' | 'back' = 'front', padding = 0) {
   const ix = 1 / (dx || 1e-10);
   const iy = 1 / (dy || 1e-10);
   let nearest = limit, depth = limit;
   for (const box of boxes) {
-    const x1 = (box.x - origin.x) * ix, x2 = (box.x + box.width - origin.x) * ix;
-    const y1 = (box.y - origin.y) * iy, y2 = (box.y + box.height - origin.y) * iy;
-    const entry = Math.max(Math.min(x1, x2), Math.min(y1, y2));
-    const exit = Math.min(Math.max(x1, x2), Math.max(y1, y2));
+    const margin = box.polygon ? padding * 2 : padding;
+    const x1 = (box.x - origin.x - margin) * ix, x2 = (box.x + box.width - origin.x + margin) * ix;
+    const y1 = (box.y - origin.y - margin) * iy, y2 = (box.y + box.height - origin.y + margin) * iy;
+    let entry = Math.max(Math.min(x1, x2), Math.min(y1, y2));
+    let exit = Math.min(Math.max(x1, x2), Math.max(y1, y2));
+    if (exit < Math.max(0, entry) || entry >= nearest) continue;
+    if (box.polygon) {
+      for (const plane of box.polygon.planes) {
+        const limit = plane.limit + padding - plane.x * origin.x - plane.y * origin.y;
+        const rate = plane.x * dx + plane.y * dy;
+        if (rate > 1e-10) exit = Math.min(exit, limit / rate);
+        else if (rate < -1e-10) entry = Math.max(entry, limit / rate);
+        else if (limit < 0) { exit = -Infinity; break; }
+      }
+    }
     if (entry <= exit && entry >= 0 && entry < nearest) {
       nearest = entry;
       depth = Math.min(exit, limit);
     }
   }
   return edge === 'back' ? depth : nearest;
+}
+
+export function blockerClearance(point: Point, box: Box) {
+  const outside = Math.hypot(Math.max(box.x - point.x, point.x - box.x - box.width, 0),
+    Math.max(box.y - point.y, point.y - box.y - box.height, 0));
+  const polygon = box.polygon;
+  if (!polygon) return outside;
+  if (polygon.planes.every(plane => plane.x * point.x + plane.y * point.y <= plane.limit)) return 0;
+  let clearance = Infinity;
+  for (const [i, from] of polygon.vertices.entries()) {
+    const to = polygon.vertices[(i + 1) % polygon.vertices.length];
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const t = Math.min(1, Math.max(0, ((point.x - from.x) * dx + (point.y - from.y) * dy) / (dx * dx + dy * dy)));
+    clearance = Math.min(clearance, Math.hypot(point.x - from.x - dx * t, point.y - from.y - dy * t));
+  }
+  return clearance;
 }

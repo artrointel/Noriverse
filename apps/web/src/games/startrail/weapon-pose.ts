@@ -2,7 +2,7 @@ import type { Weapon } from './gear.ts';
 import type { Point } from './outpost.ts';
 
 export const gunArt = {
-  pulse: { size: 36, tip: 52 / 128, tipY: -14 / 128, grip: [29, 85], support: [81, 72], kick: 2.5, lift: .9, duration: .11, flash: .42, glow: '111,232,255' },
+  pulse: { size: 36, tip: 55 / 128, tipY: -13 / 128, grip: [29, 85], support: [81, 72], kick: 2.5, lift: .9, duration: .11, flash: .42, glow: '111,232,255' },
   eagle: { size: 29, tip: 54 / 128, tipY: -21 / 128, grip: [32, 88], support: [49, 72], kick: 5, lift: 1.9, duration: .16, flash: .72, glow: '255,213,148' },
   scout: { size: 28, tip: 52 / 128, tipY: -15 / 128, grip: [31, 86], support: [56, 75], kick: 3, lift: 1.25, duration: .10, flash: .57, glow: '255,198,142' },
   ak: { size: 39, tip: 54 / 128, tipY: -9 / 128, grip: [46, 83], support: [87, 72], kick: 3.75, lift: .9, duration: .10, flash: .74, glow: '255,207,135' },

@@ -1,24 +1,26 @@
 import { dispersedHeading, finishReload, refillMagazine, startReload } from './gear.ts';
 import type { BulletSpec, Magazine } from './gear.ts';
-import { distance, floor, onRay, rayDistance, tileSize } from './outpost.ts';
+import { blockerClearance, distance, onRay, rayDistance, walkable } from './outpost.ts';
 import type { Box, Point } from './outpost.ts';
 
 const machineGun = { damage: 1, impulse: 1.45, color: '#ffdfa5' };
 const droneGun = { damage: 1, impulse: .8, color: '#9cf7df' };
 export const supportSpecs = {
-  turret: { name: '포탑', range: 172, accuracy: .92, health: 54, radius: 11, boot: .48, speed: 850, impact: machineGun, interval: .235, capacity: 20, magazines: 4, reload: 1.15, pickup: 1, deploy: 3, turnSpeed: 9, scanSpeed: .62 },
-  drone: { name: '드론', range: 108, accuracy: .87, health: 34, radius: 9, boot: .46, speed: 720, impact: droneGun, interval: .34, capacity: 12, magazines: 4, reload: .86,
-    duration: 24, recharge: 38, leash: 132, speedPerSecond: 220 },
+  turret: { name: '포탑', range: 172, accuracy: .92, radius: 11, boot: .48, speed: 850, impact: machineGun, interval: .235, capacity: 20, magazines: 4, reload: 1.15,
+    duration: 48, recharge: 60, secondsPerDamage: .9, pickup: 1, deploy: 3, turnSpeed: 9, scanSpeed: .62 },
+  drone: { name: '드론', range: 108, accuracy: .87, radius: 9, boot: .46, speed: 720, impact: droneGun, interval: .34, capacity: 12, magazines: 4, reload: .86,
+    duration: 24, recharge: 38, secondsPerDamage: .7, leash: 132, speedPerSecond: 220 },
   flare: { name: '조명탄', capacity: 12, duration: 180, radius: 115 },
 } as const;
 
-export const supportKinds = ['turret', 'drone', 'flare'] as const;
+const devices = ['turret', 'drone'] as const;
+export const supportKinds = [...devices, 'flare'] as const;
 export const targetAlertSeconds = .48;
 export type SupportKind = typeof supportKinds[number];
-export type Device = 'turret' | 'drone';
+export type Device = typeof devices[number];
 type ShootTarget = Point & { active?: boolean };
 export type Emplacement = Point & {
-  kind: Device; hp: number; hitUntil: number; readyAt: number; heading: number; firedAt: number;
+  kind: Device; hitUntil: number; readyAt: number; heading: number; firedAt: number;
   acquired?: ShootTarget; alert?: { until: number; target: Point };
 };
 export type Flare = { from: Point; to: Point; fromAt: number; litAt: number; ground?: Point & { rotation: number } };
@@ -40,10 +42,10 @@ function clearPath(from: Point, to: Point, blockers: readonly Box[], buffer = 0)
   return onRay(from, heading, clear < length ? Math.max(0, clear - buffer) : clear);
 }
 
-function canLand(point: Point, blockers: readonly Box[], radius: number) {
-  return floor[Math.floor(point.y / tileSize)]?.[Math.floor(point.x / tileSize)] &&
-    blockers.every(box => Math.hypot(Math.max(box.x - point.x, point.x - box.x - box.width, 0),
-      Math.max(box.y - point.y, point.y - box.y - box.height, 0)) >= radius);
+function canLand(point: Point, blockers: readonly Box[], radius: number, onFloor: typeof walkable) {
+  return onFloor(point) && blockers.every(box =>
+    box.x - radius > point.x || box.y - radius > point.y || box.x + box.width + radius < point.x ||
+    box.y + box.height + radius < point.y || blockerClearance(point, box) >= radius);
 }
 
 function nearest(from: Point, targets: ShootTarget[], range: number, blockers: readonly Box[]) {
@@ -58,52 +60,71 @@ function nearest(from: Point, targets: ShootTarget[], range: number, blockers: r
   return best;
 }
 
-export function turretSite(player: Point, heading: number, blockers: readonly Box[], point = onRay(player, heading, 28)) {
-  return { point, valid: !!canLand(point, blockers, 9) && distance(clearPath(player, point, blockers), point) < .01 };
+export function turretSite(player: Point, heading: number, blockers: readonly Box[], point = onRay(player, heading, 28), onFloor = walkable) {
+  return { point, valid: canLand(point, blockers, 9, onFloor) && distance(clearPath(player, point, blockers), point) < .01 };
 }
 
 function deployDevice(kind: Device, point: Point, heading: number, time: number): Emplacement {
   const spec = supportSpecs[kind];
-  return { x: point.x, y: point.y, kind, hp: spec.health, heading, readyAt: time + spec.boot, firedAt: -Infinity, hitUntil: 0 };
+  return { x: point.x, y: point.y, kind, heading, readyAt: time + spec.boot, firedAt: -Infinity, hitUntil: 0 };
 }
 
 export class SupportGear {
   selected: SupportKind = 'turret';
   turret?: Emplacement;
   drone?: Emplacement;
-  battery = supportSpecs.drone.duration as number;
+  private readonly charge: Record<Device, number> = { turret: 0, drone: 0 };
   flares: Flare[] = [];
   stock = supportSpecs.flare.capacity as number;
   readonly turretAmmo: Magazine = { ammo: 0, spare: 0 };
   readonly droneAmmo: Magazine = { ammo: 0, spare: 0 };
   private trail: Point[] = [];
+  private readonly onFloor: typeof walkable;
 
-  constructor() { this.refill(); }
+  constructor(onFloor = walkable) { this.onFloor = onFloor; this.refill(); }
 
   refill() {
     refillMagazine(this.turretAmmo, supportSpecs.turret);
     refillMagazine(this.droneAmmo, supportSpecs.drone);
-    this.battery = supportSpecs.drone.duration;
+    for (const kind of devices) this.charge[kind] = supportSpecs[kind].duration;
     this.stock = supportSpecs.flare.capacity;
+  }
+
+  chargeRatio(kind: Device) { return this.charge[kind] / supportSpecs[kind].duration; }
+
+  recall(kind: Device) {
+    const unit = this[kind];
+    this[kind] = undefined;
+    return unit;
+  }
+
+  hit(unit: Emplacement, time: number, damage: number) {
+    if (this[unit.kind] !== unit || time < unit.hitUntil) return;
+    const kind = unit.kind;
+    this.charge[kind] = Math.max(0, this.charge[kind] - damage * supportSpecs[kind].secondsPerDamage);
+    unit.hitUntil = time + .32;
+    if (this.charge[kind] > 0) return 'hit';
+    this.recall(kind);
+    return 'recalled';
   }
 
   use(player: Point, aim: Point, heading: number, blockers: readonly Box[], time: number, planned?: Point) {
     if (this.selected === 'turret') {
-      const site = turretSite(player, heading, blockers, planned);
-      if (this.turret || !site.valid) return false;
+      const site = turretSite(player, heading, blockers, planned, this.onFloor);
+      if (this.turret || !this.charge.turret || !site.valid) return false;
       this.turret = deployDevice('turret', site.point, heading, time);
       return true;
     }
     if (this.selected === 'drone') {
-      if (this.drone) { this.drone = undefined; return true; }
-      if (this.battery <= 0) return false;
+      if (this.drone) { this.recall('drone'); return true; }
+      if (!this.charge.drone) return false;
       this.drone = deployDevice('drone', player, heading, time);
       this.trail = [{ x: player.x, y: player.y }];
       return true;
     }
     if (this.stock <= 0) return false;
     const to = clearPath(player, aim, blockers, 7);
-    if (!canLand(to, blockers, 3)) return false;
+    if (!canLand(to, blockers, 3, this.onFloor)) return false;
     this.flares.push({ from: { x: player.x, y: player.y }, to, fromAt: time,
       litAt: time + Math.min(.68, .21 + distance(player, to) / 510) });
     this.stock--;
@@ -112,20 +133,25 @@ export class SupportGear {
 
   update(time: number, dt: number, player: Point, targets: ShootTarget[], blockers: readonly Box[],
     fire: (kind: Device, origin: Emplacement, heading: number, shot: BulletSpec) => void,
-    detect?: (unit: Emplacement) => void) {
-    const deployDrone = supportSpecs.drone;
-    if (this.drone) {
-      this.battery = Math.max(0, this.battery - dt);
-      if (this.battery === 0) this.drone = undefined;
-    } else this.battery = Math.min(deployDrone.duration, this.battery + dt * deployDrone.duration / deployDrone.recharge);
-
+    detect?: (unit: Emplacement) => void, expire?: (unit: Emplacement) => void) {
     this.flares = this.flares.filter(flare => time < flare.litAt + supportSpecs.flare.duration);
-    for (const kind of ['turret', 'drone'] as const) {
+    for (const kind of devices) {
       const magazine = kind === 'turret' ? this.turretAmmo : this.droneAmmo;
       const spec = supportSpecs[kind];
       if (magazine.reloadAt !== undefined && time - magazine.reloadAt >= spec.reload) finishReload(magazine, spec);
       const unit = this[kind];
-      if (!unit || time < unit.readyAt) continue;
+      if (!unit) {
+        this.charge[kind] = Math.min(spec.duration, this.charge[kind] + dt * spec.duration / spec.recharge);
+        continue;
+      }
+      this.charge[kind] = Math.max(0, this.charge[kind] - dt);
+      if (this.charge[kind] <= 1e-7) {
+        this.charge[kind] = 0;
+        this.recall(kind);
+        expire?.(unit);
+        continue;
+      }
+      if (time < unit.readyAt) continue;
       if (kind === 'drone') this.fly(unit, player, targets, blockers, time, dt);
       const current = unit.acquired;
       const target = current && current.active !== false && targets.includes(current) && distance(unit, current) < spec.range &&
@@ -168,14 +194,14 @@ export class SupportGear {
     const enemy = distance(unit, player) < leash ? nearest(unit, withinReach, leash, blockers) : undefined;
     let goal = enemy ? onRay(enemy, Math.atan2(unit.y - enemy.y, unit.x - enemy.x), 46)
       : onRay(player, time * 1.7, 26);
-    if (!canLand(goal, blockers, 6) || distance(clearPath(unit, goal, blockers), goal) > .01) {
+    if (!canLand(goal, blockers, 6, this.onFloor) || distance(clearPath(unit, goal, blockers), goal) > .01) {
       goal = this.trail.find(point => distance(clearPath(unit, point, blockers), point) < .01) ?? player;
     }
     const heading = Math.atan2(goal.y - unit.y, goal.x - unit.x);
     const length = Math.min(distance(unit, goal), speedPerSecond * dt);
     for (const turn of [0, .75, -.75, 1.45, -1.45]) {
       const next = onRay(unit, heading + turn, length);
-      if (!canLand(next, blockers, 5)) continue;
+      if (!canLand(next, blockers, 5, this.onFloor)) continue;
       unit.x = next.x;
       unit.y = next.y;
       if (!enemy) unit.heading = heading + turn;

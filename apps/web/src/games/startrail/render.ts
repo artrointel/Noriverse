@@ -1,16 +1,16 @@
-import { balance, cables, distance, explorerNames, floor, gate, gateCenter, isMetalFloor, landmarks, landing, lift, mapWallEdges, onRay, pulseLightDuration,
-  rayDistance, relay, relayAccess, relayBody, screen, tileSize, world } from './outpost.ts';
+import { balance, distance, explorerNames, onRay, pulseLightDuration, rayDistance, screen, tileSize } from './outpost.ts';
 import type { Box, EnemyKind, ExplorerKind, MapMode, Point } from './outpost.ts';
-import { knife, slots, weapons } from './gear.ts';
-import type { Bullet, Gun, Slot, SpentMetal, Weapon } from './gear.ts';
-import { distanceToLight, flashlightLevel, makeVisibility, peripheralLight, surface, visibleSurface } from './visibility.ts';
+import type { ExpeditionMap } from './expedition-maps.ts';
+import { knife, outOfAmmo, slots, weapons } from './gear.ts';
+import type { Bullet, Gun, Slot, SpentMetal, Weapon, WeaponSwap } from './gear.ts';
+import { distanceToLight, flashlightLevel, makeVisibility, paintLightFan, peripheralLight, surface, visibleSurface } from './visibility.ts';
 import type { FlashLight } from './visibility.ts';
 import { flareFalloff, flarePoseAt, supportKinds, supportSpecs, targetAlertSeconds } from './support.ts';
 import type { SupportGear } from './support.ts';
 import type { InteractionChallenge } from './challenge.ts';
-import { drawStatuses } from './status-art.ts';
+import { drawBlockedStatus, drawStatuses } from './status-art.ts';
 import { statusSpecs } from './status.ts';
-import type { StatusEffect } from './status.ts';
+import type { BlockingStatus, StatusEffect } from './status.ts';
 import { gunArt, heldPose, projectBarrelPoint, supportPose, turretArt, turretBaseCenter, yawProjection } from './weapon-pose.ts';
 import type { BarrelProjection } from './weapon-pose.ts';
 import { drawGamePointer, isHudPointer } from './reticle.ts';
@@ -18,29 +18,36 @@ import { spriteCellSize } from './shadow.ts';
 import type { ShadowLight, ShadowMode, SpriteShadows } from './shadow.ts';
 import { enemyGroundRatio, explorerGroundRatio, fixtureGroundRatio } from './shadow-art.ts';
 import { makePixelPostProcess } from './pixel-post.ts';
+import { bakeTileNormals, createTerrainRelief, drawTileDetail, terrainTextureScale } from './terrain-material.ts';
 import { projectToScreen } from './camera.ts';
 import type { IndirectLighting, LightingOptions } from './gi.ts';
 
 export type Phase = 'approach' | 'defense' | 'evacuate' | 'cleared' | 'defeated';
 export type ActorArt = Point & { kind: ExplorerKind | EnemyKind; aim: number; stride: number; pose?: number; hit: number; fallen?: number; poseTime?: number;
   statuses?: StatusEffect[]; medicSlow?: boolean };
-export type Trace = { from: Point; to: Point; life: number; hit: boolean; color: string; lift: number };
+export type Trace = { from: Point; to: Point; life: number; hit: boolean; color: string; lift: number; gun: Gun; blocked: boolean };
 export type MuzzleLight = { origin: Point; point: Point; emitter: Point; heading: number; life: number; duration: number;
-  strength: number; color: string; wide: boolean; ballistic?: boolean };
+  strength: number; color: string; wide: boolean; ballistic?: boolean; gun?: Gun };
 export type Spark = Point & { vx: number; vy: number; life: number; color: string };
 export type Warning = { from: Point; fill: number; color: string } & ({ to: Point; wide: boolean } | { radius: number });
 export type EnemyBolt = Point & { heading: number; color: string; lift: number };
 export type PropArt = Point & { kind: 'crate' | 'crystal'; bounds: Box; health: number; hit: number };
 type GroundGun = Point & { gun: Gun };
-export type StageInteraction = { kind: 'relay' | 'supply' | 'turret' | 'dummy'; point: Point } | { kind: 'weapon'; point: GroundGun };
+export type StageInteraction = { kind: 'relay' | 'supply' | 'turret' | 'dummy' | 'resident'; point: Point } | { kind: 'weapon'; point: GroundGun };
+export type ResidentArt = Point & { state: 'waiting' | 'sheltered' | 'ready' | 'following'; hiding: boolean; moving: boolean };
 export type Frame = {
   player: ActorArt & { kind: ExplorerKind }; actors: ActorArt[]; props: PropArt[]; blockers: Box[]; phase: Phase;
   ally?: ActorArt & { kind: ExplorerKind; hp: number };
   dummy?: Point & { hp: number; statuses: StatusEffect[] };
-  hp: number; showHealth: boolean; roll?: { heading: number; frame: number }; walkFrame?: number;
-  selected: Slot; guns: Record<Slot, Gun>; groundArms: GroundGun[]; reload?: number;
-  swapping?: { progress: number; to: Slot }; slash?: { heading: number; progress: number };
-  charge: number; gateTravel: number; time: number; actionTime: number; defeated: number;
+  resident?: ResidentArt;
+  notice?: string;
+  hp: number; hitTint: number; showHealth: boolean; roll?: { heading: number; frame: number }; walkFrame?: number;
+  blockedStatus?: { kind: BlockingStatus; time: number }; reducedMotion: boolean;
+  selected: Slot; guns: Record<Slot, Gun>; groundArms: GroundGun[]; reload?: number; knifeEquipped: boolean;
+  swapping?: Pick<WeaponSwap, 'from' | 'to'> & { progress: number };
+  slash?: { heading: number; progress: number; settle: number; direction: 1 | -1 };
+  charge: number; gateTravel: number; time: number; actionTime: number;
+  missionTime: number; missionKills: number;
   aim: Point; pointerInside: boolean; mapMode: MapMode; flashlightOn: boolean; traces: Trace[]; sparks: Spark[]; warnings: Warning[];
   selection?: StageInteraction; bullets: Bullet[]; spentMetal: SpentMetal[];
   bolts: EnemyBolt[]; rings: (Point & { radius: number; life: number })[];
@@ -59,8 +66,9 @@ type ActorAtlases = {
   kommi: HTMLImageElement; soloriArmed: HTMLImageElement; kommiArmed: HTMLImageElement;
 };
 type OutpostAtlases = ActorAtlases & {
-  outpost: HTMLImageElement; tiles: HTMLImageElement; mural: HTMLImageElement; gear: HTMLImageElement; setpieces: HTMLImageElement;
+  outpost: HTMLImageElement; tiles: HTMLImageElement; mural?: HTMLImageElement; gear: HTMLImageElement; setpieces: HTMLImageElement;
   armory: HTMLImageElement; hands: HTMLImageElement; devices: HTMLImageElement; dummy: HTMLImageElement;
+  resident?: HTMLImageElement; observatory?: HTMLImageElement;
 };
 
 const { width, height } = screen;
@@ -204,43 +212,71 @@ function polyline(ctx: CanvasRenderingContext2D, path: Point[]) {
   for (const point of path.slice(1)) ctx.lineTo(point.x, point.y);
 }
 
-function buildTerrain(mural: HTMLImageElement, tiles: HTMLImageElement) {
-  const density = 2;
+function terrainPath({ terrainOutlines }: ExpeditionMap) {
+  const path = new Path2D();
+  for (const outline of terrainOutlines) {
+    path.moveTo(outline[0].x, outline[0].y);
+    for (const point of outline.slice(1)) path.lineTo(point.x, point.y);
+    path.closePath();
+  }
+  return path;
+}
+
+function buildTerrain(stage: ExpeditionMap, mural: HTMLImageElement | undefined, tiles: HTMLImageElement, contour: Path2D) {
+  const { world, floor, cables, tileDetails, atlasColumns } = stage;
+  const density = terrainTextureScale;
   const land = surface(world.width * density, world.height * density);
   land.scale(density, density);
-  land.drawImage(mural, 0, 0, world.width, world.height);
+  if (mural) land.drawImage(mural, 0, 0, world.width, world.height);
   const detail = surface(world.width * density, world.height * density);
   detail.scale(density, density);
-  const tileSource = tiles.naturalHeight;
+  detail.clip(contour, 'evenodd');
+  const normals = surface(detail.canvas.width, detail.canvas.height, true);
+  normals.scale(density, density);
+  normals.clip(contour, 'evenodd');
+  const heights = surface(detail.canvas.width, detail.canvas.height, true);
+  heights.scale(density, density);
+  heights.save(); heights.clip(contour, 'evenodd');
+  const tileNormals = bakeTileNormals(tiles, atlasColumns);
+  const tileSource = tiles.naturalWidth / atlasColumns;
+  function drawTile(ctx: CanvasRenderingContext2D, source: CanvasImageSource, tile: ReturnType<typeof stage.material>, x: number, y: number) {
+    ctx.save(); ctx.translate((x + .5) * tileSize, (y + .5) * tileSize); ctx.scale(tile.xSign, tile.ySign);
+    ctx.drawImage(source, tile.cell % atlasColumns * tileSource, Math.floor(tile.cell / atlasColumns) * tileSource,
+      tileSource, tileSource, -tileSize / 2, -tileSize / 2, tileSize, tileSize);
+    ctx.restore();
+  }
+  if ('outsideMaterial' in stage && stage.outsideMaterial) {
+    const outsideMaterial = stage.outsideMaterial;
+    floor.forEach((row, y) => row.forEach((_, x) => drawTile(land, tiles, outsideMaterial(x, y), x, y)));
+    land.fillStyle = '#06122458'; land.fillRect(0, 0, world.width, world.height);
+  }
   floor.forEach((row, y) => row.forEach((open, x) => {
-    if (!open) return;
-    const dx = x * tileSize, dy = y * tileSize;
-    const interior = isMetalFloor(x, y);
-    detail.save();
-    detail.translate(dx + tileSize / 2, dy + tileSize / 2);
-    if (!interior) detail.scale(x % 2 ? -1 : 1, y % 2 ? -1 : 1);
-    detail.drawImage(tiles, interior ? tileSource : 0, 0, tileSource, tileSource, -tileSize / 2, -tileSize / 2, tileSize, tileSize);
-    detail.restore();
+    if (!open && ![-1, 0, 1].some(dy => [-1, 0, 1].some(dx => floor[y + dy]?.[x + dx]))) return;
+    const tile = stage.material(x, y);
+    drawTile(detail, tiles, tile, x, y); drawTile(normals, tileNormals, tile, x, y);
   }));
+  tileNormals.width = 0;
   detail.globalCompositeOperation = 'destination-out';
-  floor.forEach((row, y) => row.forEach((open, x) => {
-    if (!open) return;
-    const dx = x * tileSize, dy = y * tileSize;
-    const edges = [
-      [floor[y]?.[x - 1], dx, dy, 1, 0], [floor[y]?.[x + 1], dx + tileSize, dy, -1, 0],
-      [floor[y - 1]?.[x], dx, dy, 0, 1], [floor[y + 1]?.[x], dx, dy + tileSize, 0, -1],
-    ] as const;
-    for (const [adjacent, startX, startY, vx, vy] of edges) {
-      if (adjacent) continue;
-      const feather = 21;
-      const fade = detail.createLinearGradient(startX, startY, startX + vx * feather, startY + vy * feather);
-      fade.addColorStop(0, '#000'); fade.addColorStop(1, '#0000');
-      detail.fillStyle = fade; detail.fillRect(dx, dy, tileSize, tileSize);
-    }
-  }));
-  land.globalAlpha = .48; land.drawImage(detail.canvas, 0, 0, world.width, world.height); land.globalAlpha = 1;
+  detail.lineJoin = 'round';
+  for (const [width, alpha] of [[42, .13], [30, .22], [20, .34], [10, .58]]) {
+    detail.lineWidth = width; detail.strokeStyle = `rgba(0,0,0,${alpha})`; detail.stroke(contour);
+  }
+  land.globalAlpha = stage.id === '1-2' ? .92 : .48;
+  land.drawImage(detail.canvas, 0, 0, world.width, world.height); land.globalAlpha = 1;
   detail.canvas.width = 0;
   land.lineJoin = 'round';
+  land.save();
+  land.clip(contour, 'evenodd');
+  for (const [width, color] of [[22, '#13213743'], [11, '#111c2a68'], [4.6, '#658698bb'], [1.5, '#a1bacd75']] as const) {
+    land.lineWidth = width; land.strokeStyle = color; land.stroke(contour);
+  }
+  for (const feature of tileDetails) drawTileDetail(land, heights, feature);
+  land.restore();
+  heights.restore();
+  heights.lineJoin = 'round';
+  for (const [width, color] of [[15, '#727272c0'], [9, '#8f8f8fe0'], [4, '#b2b2b2']] as const) {
+    heights.lineWidth = width; heights.strokeStyle = color; heights.stroke(contour);
+  }
   for (const [index, cable] of cables.entries()) {
     for (const [lineWidth, color] of [[7, '#131e2f'], [4, '#244350'], [1, index < 2 ? '#609e9a' : '#806c51']] as const) {
       polyline(land, cable); land.lineWidth = lineWidth; land.strokeStyle = color; land.stroke();
@@ -257,7 +293,10 @@ function buildTerrain(mural: HTMLImageElement, tiles: HTMLImageElement) {
       }
     }
   }
-  return land.canvas;
+  const paintRelief = createTerrainRelief(normals, heights, stage.material);
+  normals.canvas.width = 0;
+  heights.canvas.width = 0;
+  return { color: land.canvas, paintRelief };
 }
 
 function actorPose(atlases: ActorAtlases, actor: ActorArt, time: number, animation?: { walk?: number; roll?: Frame['roll']; armed?: boolean }) {
@@ -381,30 +420,35 @@ function drawHealth(ctx: CanvasRenderingContext2D, player: Point, hp: number) {
 
 function gunPose(atlases: OutpostAtlases, frame: Frame) {
   const { player, reload, swapping, slash } = frame;
-  const gun = frame.guns[swapping && swapping.progress >= .5 ? swapping.to : frame.selected];
+  const item = swapping ? (swapping.progress < .5 ? swapping.from : swapping.to) : frame.knifeEquipped ? 'knife' : frame.selected;
+  const blade = !!slash || item === 'knife';
+  const gun = frame.guns[item === 'knife' ? frame.selected : item];
   const stats = weapons[gun.weapon];
-  const lean = slash || reload === undefined ? 0 : Math.sin(reload * Math.PI);
+  const lean = blade || reload === undefined ? 0 : Math.sin(reload * Math.PI);
   const bob = player.stride > .17 ? Math.sin(frame.time * 17) * .85 : 0;
   const drawn = swapping ? Math.abs(1 - swapping.progress * 2) : 1;
-  const swing = slash ? -knife.arc * 1.35 + (1 - (1 - slash.progress) ** 2) * knife.arc * 2.8 : 0;
-  const [atlas, row, cell] = slash ? [atlases.armory, ...knife.cell] as const : inventoryArt(atlases, gun.weapon);
-  const size = slash ? 28 : gunArt[gun.weapon].size;
+  const swingProgress = slash?.progress ?? (swapping?.from === 'knife' ? 1 : .5);
+  const swing = (slash?.direction ?? 1) *
+    (-knife.arc * 1.35 + (1 - (1 - swingProgress) ** 2) * knife.arc * 2.8) * (1 - (slash?.settle ?? 0));
+  const [atlas, row, cell] = blade ? [atlases.armory, ...knife.cell] as const : inventoryArt(atlases, gun.weapon);
+  const size = blade ? 28 : gunArt[gun.weapon].size;
   const age = frame.actionTime - gun.firedAt;
-  const pose = heldPose(player, player.aim, gun.weapon, slash ? Infinity : age, lean, drawn, bob);
-  const projection = slash ? { ...yawProjection(player.aim + swing), depthPerPixel: 0 } : pose;
-  const center = slash ? size * .29 + 3 : pose.center;
-  return { atlas, row, cell, size, pose, projection, drawn, stats, center, weapon: gun.weapon };
+  const heading = slash?.heading ?? player.aim;
+  const pose = heldPose(player, heading, gun.weapon, blade ? Infinity : age, lean, drawn, bob);
+  const projection = blade ? { ...yawProjection(heading + swing), depthPerPixel: 0 } : pose;
+  const center = blade ? size * .29 + 3 : pose.center;
+  return { atlas, row, cell, size, pose, projection, drawn, stats, center, gun, blade };
 }
 
 function drawGun(ctx: CanvasRenderingContext2D, frame: Frame, art: ReturnType<typeof gunPose>) {
-  const { reload, slash } = frame;
-  const { atlas, row, cell, size, pose, projection, drawn, stats, center } = art;
+  const { reload } = frame;
+  const { atlas, row, cell, size, pose, projection, drawn, stats, center, blade } = art;
   ctx.save();
   ctx.globalAlpha = drawn;
   ctx.translate(pose.mount.x, pose.mount.y);
   ctx.rotate(projection.angle); ctx.scale(1, pose.side);
   projectedGun(ctx, atlas, row, cell, center, size, projection);
-  if (!slash && stats.mode === 'ballistic' && pose.recoil > .35) {
+  if (!blade && stats.mode === 'ballistic' && pose.recoil > .35) {
     ctx.globalAlpha *= Math.min(1, pose.recoil * 1.15);
     const receiver = pose.center - size * .15 - pose.recoil * 1.65;
     const point = projectBarrelPoint(pose, receiver, -2);
@@ -412,7 +456,7 @@ function drawGun(ctx: CanvasRenderingContext2D, frame: Frame, art: ReturnType<ty
     ctx.fillStyle = stats.color; ctx.fillRect(point.x + .7, point.y + .6, Math.max(1, size * .065) * pose.scale, .9);
     ctx.globalAlpha = drawn;
   }
-  if (!slash && reload !== undefined && reload > .17 && reload < .78) {
+  if (!blade && reload !== undefined && reload > .17 && reload < .78) {
     const eject = (reload - .17) / .37;
     const outgoing = eject < 1;
     const travel = outgoing ? Math.min(1, eject * 1.3) : Math.max(0, 1 - (reload - .54) / .24);
@@ -423,11 +467,15 @@ function drawGun(ctx: CanvasRenderingContext2D, frame: Frame, art: ReturnType<ty
     ctx.fillStyle = outgoing ? '#8c9ca4' : stats.color; ctx.fillRect(-1, 0, 2, 5);
   }
   ctx.restore();
+  if (!blade && drawn > 0) {
+    const flash = frame.muzzleLights.find(light => light.gun === art.gun);
+    if (flash) drawMuzzleFlash(ctx, flash, art);
+  }
 }
 
 function drawArmedPlayer(ctx: CanvasRenderingContext2D, frame: Frame, body: ActorPose, weapon: ReturnType<typeof gunPose>, hands: HTMLImageElement) {
-  const { player, slash } = frame;
-  const { size, pose, projection, center } = weapon;
+  const { player } = frame;
+  const { size, pose, projection, center, blade } = weapon;
   const bodyPoint = actorCenter(player, body);
   const cuffs = cuffPixels[player.kind][body.row as 0 | 1 | 2 | 3 | 4].map(([x, y]) => ({
     x: bodyPoint.x + (x - PAD / 2) * body.size / PAD * (body.flip ? -1 : 1),
@@ -437,11 +485,11 @@ function drawArmedPlayer(ctx: CanvasRenderingContext2D, frame: Frame, body: Acto
     const local = projectBarrelPoint(projection, center + (x - PAD / 2) * size / PAD, (y - PAD / 2) * size / PAD * pose.side);
     return onRay(onRay(pose.mount, projection.angle, local.x), projection.angle + Math.PI / 2, local.y);
   };
-  const main = gripPoint(slash ? [28, 64] : gunArt[weapon.weapon].grip);
-  const other = gripPoint(slash ? [4, 67] : gunArt[weapon.weapon].support);
+  const main = gripPoint(blade ? [28, 64] : gunArt[weapon.gun.weapon].grip);
+  const other = gripPoint(blade ? [4, 67] : gunArt[weapon.gun.weapon].support);
   const switchHands = distance(cuffs[1], main) + distance(cuffs[0], other) < distance(cuffs[0], main) + distance(cuffs[1], other);
   const wrist = cuffs[switchHands ? 1 : 0], farWrist = cuffs[switchHands ? 0 : 1];
-  const support = slash ? onRay(farWrist, Math.PI / 2, 3.4) : other;
+  const support = blade ? onRay(farWrist, Math.PI / 2, 3.4) : other;
   const handCell = (player.kind === 'kommi' ? 1 : 0) * PAD;
 
   function arm(from: Point, to: Point, thickness: number) {
@@ -462,16 +510,17 @@ function drawArmedPlayer(ctx: CanvasRenderingContext2D, frame: Frame, body: Acto
 
 function drawSlash(ctx: CanvasRenderingContext2D, frame: Frame) {
   if (!frame.slash) return;
-  const { heading, progress } = frame.slash;
+  const { heading, progress, direction } = frame.slash;
   const trail = progress - knife.windup / knife.duration;
   if (trail < 0 || trail > .56) return;
   const { x, y } = frame.player;
   const radius = 32 + Math.min(1, trail * 3) * 10;
-  const angle = heading - knife.arc + Math.min(1, trail * 3.6) * knife.arc * 2;
+  const start = heading - direction * knife.arc;
+  const angle = start + direction * Math.min(1, trail * 3.6) * knife.arc * 2;
   ctx.save();
   ctx.globalAlpha = (1 - trail / .56) * .8;
   for (let i = 0; i < 3; i++) {
-    ctx.beginPath(); ctx.arc(x, y - 5, radius - i * 3, heading - knife.arc, angle);
+    ctx.beginPath(); ctx.arc(x, y - 5, radius - i * 3, start, angle, direction < 0);
     ctx.strokeStyle = i === 0 ? '#e3fff9' : '#61eedd';
     ctx.lineWidth = i === 0 ? 2 : 1;
     ctx.stroke();
@@ -505,24 +554,27 @@ function drawPropHealth(ctx: CanvasRenderingContext2D, prop: PropArt, camera: Bo
   ctx.fillStyle = prop.kind === 'crate' ? '#eeb584' : '#acecfa'; ctx.fillRect(x - 10, y + 8, Math.round(20 * prop.health), 2);
 }
 
-function drawMap(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box, wasSeen: (point: Point) => boolean) {
+function drawMap(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box, wasSeen: (point: Point) => boolean, contour: Path2D, stage: ExpeditionMap) {
+  const { floor, world, mapWallEdges, gate, gateCenter, landing, relay, lift } = stage;
   const overlay = frame.mapMode === 'overlay';
   ctx.save();
   if (overlay) ctx.globalAlpha = .20;
   else {
     ctx.fillStyle = '#020b1dad'; ctx.fillRect(0, 0, width, height);
     panel(ctx, 95, 23, 290, 225);
-    text(ctx, '지표 중계소 · 지형도', 109, 39, 13);
+    text(ctx, `${stage.title} · 지형도`, 109, 39, 13);
   }
   const scale = overlay ? .205 : Math.min(260 / world.width, 177 / world.height);
   const anchor = projectToScreen(frame.player, camera);
   const x = overlay ? anchor.x - frame.player.x * scale : (width - world.width * scale) / 2;
   const y = overlay ? anchor.y - frame.player.y * scale : 55;
+  ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale); ctx.clip(contour, 'evenodd');
+  ctx.fillStyle = overlay ? '#96dbf3' : '#254b62';
   floor.forEach((row, r) => row.forEach((open, c) => {
     if (!open || !wasSeen({ x: (c + .5) * tileSize, y: (r + .5) * tileSize })) return;
-    ctx.fillStyle = overlay ? '#96dbf3' : '#254b62';
-    ctx.fillRect(x + c * tileSize * scale, y + r * tileSize * scale, tileSize * scale, tileSize * scale);
+    ctx.fillRect(c * tileSize - 6, r * tileSize - 6, tileSize + 12, tileSize + 12);
   }));
+  ctx.restore();
   const project = (point: Point) => ({ x: x + point.x * scale, y: y + point.y * scale });
   ctx.strokeStyle = overlay ? '#ffe4b4' : '#eac395';
   ctx.lineWidth = overlay ? 1.45 : 1.1;
@@ -548,7 +600,8 @@ function drawMap(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box, wasSe
   }
   const markers: [Point, string, string][] = [[frame.player, explorerNames[frame.player.kind], '#ffb46b']];
   if (frame.ally && frame.ally.hp > 0) markers.push([frame.ally, explorerNames[frame.ally.kind], '#9ef3c4']);
-  markers.push([landing, '착륙대', ICE], [relay, '발전기', AMBER], [lift, '승강기', ICE]);
+  markers.push([landing, stage.id === '1-1' ? '착륙대' : '지하 정류장', ICE], [relay, stage.id === '1-1' ? '발전기' : '배전실', AMBER], [lift, '승강기', ICE]);
+  if (frame.resident) markers.push([frame.resident, '구조 대상', '#ffd3f3']);
   for (const point of frame.supplies) markers.push([point, '보급품', '#9ef3c4']);
   const labels: Box[] = [];
   ctx.font = `8px ${FONT}`;
@@ -575,10 +628,11 @@ function drawMap(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box, wasSe
   ctx.restore();
 }
 
-function drawHud(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box, atlases: OutpostAtlases, wasSeen: (point: Point) => boolean) {
+function drawHud(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box, atlases: OutpostAtlases,
+  wasSeen: (point: Point) => boolean, contour: Path2D, stage: ExpeditionMap) {
   const powered = frame.phase === 'evacuate' || frame.phase === 'cleared';
   panel(ctx, 9, 9, 132, 23);
-  text(ctx, '1-1', 17, 20, 12, ICE); text(ctx, '지표 중계소', 43, 20, 14);
+  text(ctx, stage.id, 17, 20, 12, ICE); text(ctx, stage.title, 43, 20, 14);
   const lamp = frame.flashlightOn ? '#a1eced' : '#7895a3';
   panel(ctx, 145, 9, 40, 23, frame.flashlightOn ? '#53868e' : '#31586a');
   text(ctx, 'F', 151, 20.5, 10, lamp);
@@ -596,8 +650,11 @@ function drawHud(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box, atlas
   }
 
   panel(ctx, 312, 9, 159, frame.phase === 'defense' ? 47 : 38);
-  text(ctx, '복구 임무', 324, 19, 9, '#9ab9ca');
-  const goal = powered ? '지하 관측소행 승강기로 이동' : frame.phase === 'defense' ? '전력 복구 중 · 발전기 방어' : '중앙 발전기의 회로 복구';
+  text(ctx, stage.id === '1-1' ? '복구 임무' : '구조 임무', 324, 19, 9, '#9ab9ca');
+  const goal = stage.id === '1-1' ? powered ? '지하 관측소행 승강기로 이동' : frame.phase === 'defense' ? '전력 복구 중 · 발전기 방어' : '중앙 발전기의 회로 복구'
+    : frame.resident?.state === 'following' ? frame.resident.hiding ? '주민이 기다리는 동안 길 확보' : '주민과 비상 승강기로 이동'
+      : frame.resident?.state === 'ready' ? '대피실로 돌아가 주민 데리기'
+        : frame.resident?.state === 'sheltered' ? '배전실에서 비상 전력 전환' : '대피실에서 구조 신호 확인';
   text(ctx, goal, 324, 33, 12, powered ? '#92ecc9' : '#f4fbfb');
   if (frame.phase === 'defense') {
     ctx.fillStyle = '#263f51'; ctx.fillRect(324, 46, 135, 3);
@@ -611,16 +668,24 @@ function drawHud(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box, atlas
     panel(ctx, x, y, 68, 33, selected ? '#8ee4c9' : '#31586a');
     sprite(ctx, atlases.armory, 1, i, x + 14, y + 14, 19);
     text(ctx, `${i + 1} ${spec.name}`, x + 26, y + 10, 8, selected ? '#c4f8e8' : '#e5f1f6');
-    const status = kind === 'flare' ? `×${frame.support.stock}` : kind === 'drone' ?
-      `${Math.ceil(frame.support.battery / supportSpecs.drone.duration * 100)}%` :
-      frame.turretDeploy ? `설치 ${Math.floor(frame.turretDeploy.progress * 100)}%` :
-      frame.support.turret ? '설치됨' : `${frame.support.turretAmmo.ammo} · ${frame.support.turretAmmo.spare}`;
-    text(ctx, status, x + 26, y + 22, 8, '#a5c7d4');
+    if (kind === 'flare') text(ctx, `×${frame.support.stock}`, x + 26, y + 22, 8, '#a5c7d4');
+    else {
+      const deploying = kind === 'turret' ? frame.turretDeploy : undefined;
+      const ratio = deploying?.progress ?? frame.support.chargeRatio(kind);
+      text(ctx, deploying ? `설치 ${Math.floor(ratio * 100)}%` : `${Math.ceil(ratio * 100)}%`, x + 26, y + 20, 8, '#a5c7d4');
+      if (kind === 'turret' && !deploying) {
+        const { ammo, spare } = frame.support.turretAmmo;
+        text(ctx, `${ammo}·${spare}`, x + 62, y + 20, 7, '#a5c7d4', 'right');
+      }
+      ctx.fillStyle = '#253e50'; ctx.fillRect(x + 26, y + 27, 36, 2);
+      ctx.fillStyle = ratio < .2 ? '#efb975' : '#8ee4c9'; ctx.fillRect(x + 26, y + 27, 36 * ratio, 2);
+    }
   }
   for (const [index, slot] of slots.entries()) {
     const gun = frame.guns[slot], stats = weapons[gun.weapon];
     const x = 227 + index * 125, y = height - 43;
-    panel(ctx, x, y, 119, 33, (frame.swapping?.to ?? frame.selected) === slot ? stats.color : '#31586a');
+    const active = frame.swapping?.to ?? (frame.knifeEquipped ? undefined : frame.selected);
+    panel(ctx, x, y, 119, 33, active === slot ? stats.color : '#31586a');
     const [atlas, row, cell] = inventoryArt(atlases, gun.weapon);
     sprite(ctx, atlas, row, cell, x + 15, y + 14, 21);
     text(ctx, index === 0 ? '좌' : '우', x + 15, y + 27, 7, '#a5bbc6', 'center');
@@ -642,15 +707,23 @@ function drawHud(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box, atlas
     }
   }
 
-  if (frame.mapMode !== 'off') drawMap(ctx, frame, camera, wasSeen);
+  if (frame.notice && frame.mapMode === 'off' && !frame.challenge && frame.phase !== 'cleared' && frame.phase !== 'defeated') {
+    panel(ctx, 68, 194, 344, 23, '#6f898c'); text(ctx, frame.notice, 240, 206, 10, '#e8f9f6', 'center');
+  }
+  if (frame.mapMode !== 'off') drawMap(ctx, frame, camera, wasSeen, contour, stage);
   if (frame.phase !== 'cleared' && frame.phase !== 'defeated') return;
   ctx.fillStyle = '#01091cc9'; ctx.fillRect(0, 0, width, height);
   panel(ctx, 112, 65, 256, 134, frame.phase === 'cleared' ? '#95dfcc' : '#be766f');
-  text(ctx, '별길 탐사대  /  1-1', 240, 85, 11, ICE, 'center');
-  text(ctx, frame.phase === 'cleared' ? '중계소 탈환 완료!' : '탐사 종료', 240, 106, 23, '#ffffff', 'center');
-  text(ctx, `${Math.floor(frame.time)}초  ·  퇴치 ${frame.defeated}마리`, 240, 134, 12, '#b8d6e2', 'center');
+  text(ctx, `별길 탐사대  /  ${stage.id}`, 240, 85, 11, ICE, 'center');
+  text(ctx, frame.phase === 'cleared' ? '구조 성공 · 첫 항로 복구' : '탐사 종료', 240, 106, 22, '#ffffff', 'center');
+  text(ctx, `${Math.floor(frame.missionTime)}초  ·  퇴치 ${frame.missionKills}마리`, 240, 134, 12, '#b8d6e2', 'center');
+  if (frame.phase === 'cleared') {
+    ctx.strokeStyle = '#88f4d2'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(204, 152); ctx.quadraticCurveTo(240, 133, 276, 152); ctx.stroke();
+    for (const x of [204, 276]) { ctx.fillStyle = '#c2f8e1'; ctx.beginPath(); ctx.arc(x, 152, 3.5, 0, Math.PI * 2); ctx.fill(); }
+  }
   const { x, y, width: w, height: h } = restartArea;
-  panel(ctx, x, y, w, h, '#7bd2dd'); text(ctx, '다시 탐사   ↵', x + w / 2, y + h / 2, 13, ICE, 'center');
+  panel(ctx, x, y, w, h, '#7bd2dd'); text(ctx, frame.phase === 'defeated' && stage.id === '1-2' ? '정류장부터 재시도   ↵' : '다시 탐사   ↵', x + w / 2, y + h / 2, 12, ICE, 'center');
 }
 
 function drawBallistics(ctx: CanvasRenderingContext2D, frame: Frame) {
@@ -729,11 +802,10 @@ function drawSupport(ctx: CanvasRenderingContext2D, frame: Frame, atlases: Outpo
       }
     }
     ctx.restore();
-    if (unit.hp < supportSpecs[kind].health) {
-      const y = unit.y + 6;
-      ctx.fillStyle = '#111d2e'; ctx.fillRect(unit.x - 12, y, 24, 4);
-      ctx.fillStyle = '#efb975'; ctx.fillRect(unit.x - 11, y + 1, 22 * unit.hp / supportSpecs[kind].health, 2);
-    }
+    const charge = frame.support.chargeRatio(kind);
+    const y = unit.y + 6;
+    ctx.fillStyle = '#111d2e'; ctx.fillRect(unit.x - 12, y, 24, 4);
+    ctx.fillStyle = charge < .2 ? '#efb975' : '#8ee4c9'; ctx.fillRect(unit.x - 11, y + 1, 22 * charge, 2);
   }
   for (const flare of frame.support.flares) {
     const { base: point, lift, rotation, airborne } = flarePoseAt(flare, frame.time);
@@ -789,34 +861,40 @@ function drawTurretBarrel(ctx: CanvasRenderingContext2D, atlas: CanvasImageSourc
 
 const ballisticMuzzle = { reachScale: 2, intensityScale: 1.5 };
 
-function drawMuzzleFlash(ctx: CanvasRenderingContext2D, flash: MuzzleLight) {
+function drawMuzzleFlash(ctx: CanvasRenderingContext2D, flash: MuzzleLight, held?: ReturnType<typeof gunPose>) {
   const fade = flash.life / flash.duration;
+  const pulse = held?.gun.weapon === 'pulse';
+  const point = held?.pose.muzzle ?? flash.point;
+  const projection = held?.pose ?? yawProjection(flash.heading);
   ctx.save();
-  ctx.translate(flash.point.x, flash.point.y);
-  const yaw = yawProjection(flash.heading);
-  ctx.rotate(yaw.angle); ctx.scale(yaw.scale, 1);
+  ctx.translate(point.x, point.y);
+  ctx.rotate(projection.angle); ctx.scale(projection.scale, 1);
+  ctx.globalAlpha *= held?.drawn ?? 1;
   const reach = (flash.wide ? 23 : 16) * (1.11 - fade * .11);
   const spread = flash.wide ? 5.5 : 3;
-  const glowRadius = reach * (flash.ballistic ? ballisticMuzzle.reachScale : 1);
-  const glowStrength = fade * flash.strength * 1.6 * (flash.ballistic ? ballisticMuzzle.intensityScale : 1);
-  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowRadius);
-  glow.addColorStop(0, `rgba(${flash.color},${Math.min(1, glowStrength)})`);
-  glow.addColorStop(1, `rgba(${flash.color},0)`);
-  ctx.fillStyle = glow; ctx.fillRect(-glowRadius, -glowRadius, glowRadius * 2, glowRadius * 2);
-  ctx.globalAlpha = Math.min(1, fade * 1.65);
+  const glowReach = reach * (flash.ballistic ? ballisticMuzzle.reachScale : 1);
+  const glowAmount = Math.min(1, fade * flash.strength * 1.6 * (flash.ballistic ? ballisticMuzzle.intensityScale : 1));
+  if (held && (flash.ballistic || pulse)) {
+    paintLightFan(ctx, glowReach, spread * 3, flash.color, glowAmount);
+  } else {
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, glowReach);
+    glow.addColorStop(0, `rgba(${flash.color},${glowAmount})`);
+    glow.addColorStop(1, `rgba(${flash.color},0)`);
+    ctx.fillStyle = glow; ctx.fillRect(-glowReach, -glowReach, glowReach * 2, glowReach * 2);
+  }
+  ctx.globalAlpha *= Math.min(1, fade * 1.65);
   ctx.beginPath(); ctx.moveTo(-2, 0); ctx.lineTo(4, -spread); ctx.lineTo(6, -spread * .35);
   ctx.lineTo(reach, -1); ctx.lineTo(7, 1); ctx.lineTo(4, spread); ctx.closePath();
   ctx.fillStyle = `rgba(${flash.color},.88)`; ctx.fill();
-  ctx.fillStyle = '#fff3d5'; ctx.fillRect(-1, -1, 6, 2);
+  ctx.fillStyle = pulse ? '#e1fbff' : '#fff3d5'; ctx.fillRect(-1, -1, 6, 2);
   ctx.restore();
 }
 
-function drawMedicalBeam(ctx: CanvasRenderingContext2D, frame: Frame) {
+function drawMedicalBeam(ctx: CanvasRenderingContext2D, frame: Frame, held: ReturnType<typeof gunPose> | undefined) {
   const beam = frame.medicalBeam;
-  if (!beam) return;
+  if (!beam || held?.gun.weapon !== 'medical' || held.blade) return;
   const { player, time } = frame;
-  const bob = player.stride > .17 ? Math.sin(time * 17) * .85 : 0;
-  const source = heldPose(player, player.aim, 'medical', Infinity, 0, 1, bob).muzzle;
+  const source = held.pose.muzzle;
   const target = { x: beam.point.x, y: beam.point.y - (beam.self ? 17 : 13) };
   const heading = Math.atan2(target.y - source.y, target.x - source.x) - Math.PI / 2;
   const sway = Math.min(27, distance(source, target) * .36) * (.72 + Math.sin(time * 8) * .24);
@@ -836,26 +914,47 @@ function drawMedicalBeam(ctx: CanvasRenderingContext2D, frame: Frame) {
   ctx.restore();
 }
 
-function drawPulseTraces(ctx: CanvasRenderingContext2D, traces: readonly Trace[]) {
+function drawPulseTraces(ctx: CanvasRenderingContext2D, traces: readonly Trace[], held: ReturnType<typeof gunPose> | undefined) {
   ctx.save();
   for (const trace of traces) {
     ctx.globalAlpha = Math.min(1, trace.life / pulseLightDuration);
-    const start = { x: trace.from.x, y: trace.from.y - trace.lift }, end = { x: trace.to.x, y: trace.to.y - trace.lift };
-    polyline(ctx, [start, end]); ctx.lineWidth = 5.5; ctx.strokeStyle = `${trace.color}70`; ctx.stroke();
-    ctx.lineWidth = 1; ctx.strokeStyle = trace.color; ctx.stroke();
+    const start = held?.gun === trace.gun && !held.blade ? held.pose.muzzle : { x: trace.from.x, y: trace.from.y - trace.lift };
+    const end = { x: trace.to.x, y: trace.to.y - trace.lift };
+    if (!trace.blocked && (end.x - start.x) * (trace.to.x - trace.from.x) + (end.y - start.y) * (trace.to.y - trace.from.y) > 0) {
+      polyline(ctx, [start, end]); ctx.lineWidth = 5.5; ctx.strokeStyle = `${trace.color}70`; ctx.stroke();
+      ctx.lineWidth = 1; ctx.strokeStyle = trace.color; ctx.stroke();
+    }
     if (trace.hit) { ctx.fillStyle = '#fff4c8'; ctx.fillRect(end.x - 2, end.y - 2, 4, 4); }
   }
   ctx.restore();
 }
 
-function drawOverlay(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box) {
+function drawNoAmmo(ctx: CanvasRenderingContext2D, point: Point, hasInteraction: boolean) {
+  ctx.save();
+  ctx.translate(Math.round(point.x), Math.round(point.y) - (hasInteraction ? 56 : 38));
+  ctx.beginPath(); ctx.roundRect(-10, -7, 20, 14, 4);
+  ctx.fillStyle = '#111b2dee'; ctx.fill();
+  ctx.strokeStyle = '#ffae8b'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = '#ffe0a1';
+  ctx.beginPath(); ctx.moveTo(-6, -2); ctx.lineTo(2, -2); ctx.lineTo(6, 0); ctx.lineTo(2, 2);
+  ctx.lineTo(-6, 2); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#122039'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-3, -2); ctx.lineTo(-3, 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-5, 5); ctx.lineTo(5, -5);
+  ctx.strokeStyle = '#142032'; ctx.lineWidth = 3.1; ctx.stroke();
+  ctx.strokeStyle = '#ff977f'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.restore();
+}
+
+function drawOverlay(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box, held: ReturnType<typeof gunPose> | undefined, stage: ExpeditionMap) {
+  const { relay, gateCenter } = stage;
   const playerOnScreen = projectToScreen(frame.player, camera);
   if (!frame.challenge && frame.mapMode !== 'panel' && frame.phase !== 'cleared' && frame.phase !== 'defeated') {
     const selection = frame.selection;
     if (selection?.kind === 'relay') {
       const { x, y: anchorY } = projectToScreen(relay, camera);
       const y = anchorY - 43;
-      panel(ctx, x - 52, y - 9, 104, 18, '#ad9c75'); text(ctx, 'E  회로 퍼즐 열기', x, y, 10, AMBER, 'center');
+      panel(ctx, x - 52, y - 9, 104, 18, '#ad9c75'); text(ctx, stage.id === '1-1' ? 'E  회로 퍼즐 열기' : 'E  비상 전력 전환', x, y, 10, AMBER, 'center');
     }
     if (selection?.kind === 'weapon') {
       const { x, y: anchorY } = projectToScreen(selection.point, camera);
@@ -863,11 +962,12 @@ function drawOverlay(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box) {
       if (frame.showHealth && Math.abs(y - playerOnScreen.y - 13) < 13) y = playerOnScreen.y + 35;
       panel(ctx, x - 65, y - 9, 130, 18, '#ad9c75'); text(ctx, `E  교체 · ${weapons[selection.point.gun.weapon].name}`, x, y, 10, AMBER, 'center');
     }
-    if (selection?.kind === 'supply' || selection?.kind === 'turret' || selection?.kind === 'dummy') {
+    if (selection?.kind === 'supply' || selection?.kind === 'turret' || selection?.kind === 'dummy' || selection?.kind === 'resident') {
       const { x, y: anchorY } = projectToScreen(selection.point, camera);
       const y = anchorY - 40;
       panel(ctx, x - 54, y - 9, 108, 18, '#75bfaa');
-      const label = selection.kind === 'turret' ? 'E 길게 · 포탑 회수' : selection.kind === 'dummy' ? 'E · 치료 대상 초기화' : 'E  체력·장비 보급';
+      const label = selection.kind === 'turret' ? 'E 길게 · 포탑 회수' : selection.kind === 'dummy' ? 'E · 치료 대상 초기화'
+        : selection.kind === 'resident' ? frame.resident?.state === 'ready' ? 'E · 함께 이동' : 'E · 주민과 대화' : 'E  체력·장비 보급';
       text(ctx, label, x, y, 10, '#adf5d1', 'center');
       if (selection.kind === 'turret' && frame.turretHold) {
         ctx.fillStyle = '#9eeac9'; ctx.fillRect(x - 49, y + 6, 98 * frame.turretHold, 2);
@@ -876,14 +976,32 @@ function drawOverlay(ctx: CanvasRenderingContext2D, frame: Frame, camera: Box) {
     if (frame.gateTravel === 0 && distance(frame.player, gateCenter) < 72) {
       const { x, y: anchorY } = projectToScreen(gateCenter, camera);
       const y = anchorY - 24;
-      panel(ctx, x - 55, y - 9, 110, 18, '#ad9c75'); text(ctx, '발전기 전력 필요', x, y, 10, AMBER, 'center');
+      panel(ctx, x - 55, y - 9, 110, 18, '#ad9c75'); text(ctx, stage.id === '1-1' ? '발전기 전력 필요' : '비상 전력 필요', x, y, 10, AMBER, 'center');
+    }
+  }
+  if (!frame.challenge && frame.mapMode !== 'panel' && frame.phase !== 'cleared' && frame.phase !== 'defeated') {
+    const hasInteraction = !!frame.selection && frame.selection.kind !== 'weapon';
+    const empty = !!held && !held.blade && !frame.swapping && outOfAmmo(held.gun);
+    if (empty) drawNoAmmo(ctx, playerOnScreen, hasInteraction);
+    if (frame.blockedStatus) {
+      const { kind, time } = frame.blockedStatus;
+      const rise = (hasInteraction ? 62 : 40) + (empty ? 19 : 0);
+      drawBlockedStatus(ctx, { x: playerOnScreen.x, y: playerOnScreen.y - rise }, kind, frame.time - time, frame.reducedMotion);
     }
   }
   if (frame.showHealth) drawHealth(ctx, playerOnScreen, frame.hp);
-  if (frame.player.hit > 0) { ctx.strokeStyle = '#fa8d7c90'; ctx.lineWidth = 3; ctx.strokeRect(1, 1, width - 2, height - 2); }
 }
 
 function drawDanger(ctx: CanvasRenderingContext2D, frame: Frame) {
+  if (frame.hitTint > 0) {
+    ctx.save(); ctx.scale(width, height);
+    const flash = ctx.createRadialGradient(.5, .5, 0, .5, .5, .58);
+    for (const [stop, weight] of [[0, .20], [.30, .29], [.56, .60], [.79, 1.14], [1, 1.75]]) {
+      flash.addColorStop(stop, `rgba(235,32,47,${frame.hitTint * weight})`);
+    }
+    ctx.fillStyle = flash; ctx.fillRect(0, 0, 1, 1);
+    ctx.restore();
+  }
   if (!frame.hp || frame.hp > balance.player.health * .32 || frame.phase === 'cleared') return;
   const urgency = 1 - frame.hp / (balance.player.health * .34);
   const pulse = (.5 + .5 * Math.sin(frame.time * (5.4 + urgency * 2))) ** 3;
@@ -895,9 +1013,11 @@ function drawDanger(ctx: CanvasRenderingContext2D, frame: Frame) {
   ctx.fillStyle = gradient; ctx.fillRect(0, 0, width, height);
 }
 
-export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: CanvasRenderingContext2D, atlases: OutpostAtlases, shadows: SpriteShadows, gi: IndirectLighting) {
+export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: CanvasRenderingContext2D, atlases: OutpostAtlases, shadows: SpriteShadows, gi: IndirectLighting, stage: ExpeditionMap) {
   const { outpost, mural, tiles, setpieces } = atlases;
-  const terrain = buildTerrain(mural, tiles);
+  const { world, gate, gateCenter, landing, relay, relayAccess, relayBody, lift, landmarks } = stage;
+  const contour = terrainPath(stage);
+  const { color: terrain, paintRelief } = buildTerrain(stage, mural, tiles, contour);
   const terrainScale = terrain.width / world.width;
   const floorFeatures: Array<Point & {
     source: HTMLImageElement; cell: readonly [number, number]; size: number; flat: boolean; groundRatio?: number;
@@ -912,6 +1032,22 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
   ];
   const relaySprite = { x: relay.x, y: relay.y - 26 };
   const liftSprite = { x: lift.x + 5, y: lift.y - 44 };
+  const entryShaft = stage.id === '1-2' ? { x: landing.x, y: landing.y - 54 } : undefined;
+  const shelter = 'shelter' in stage ? { x: stage.shelter.x, y: stage.shelter.y - 37 } : undefined;
+  const panelAtlas = atlases.observatory ?? setpieces;
+  const emergencyLights: Point[] = [];
+  if ('emergencyRoute' in stage) {
+    const route = stage.emergencyRoute;
+    for (let i = 1; i < route.length; i++) {
+      const a = route[i - 1], b = route[i];
+      const direction = Math.atan2(b.y - a.y, b.x - a.x);
+      const spacing = 45;
+      for (let at = 20; at < distance(a, b); at += spacing) {
+        const light = onRay(a, direction, at);
+        if (stage.walkable(light)) emergencyLights.push(light);
+      }
+    }
+  }
   function ground(ctx: CanvasRenderingContext2D, camera: Box) {
     const { x, y, width, height } = camera;
     ctx.drawImage(terrain, x * terrainScale, y * terrainScale, width * terrainScale, height * terrainScale, 0, 0, width, height);
@@ -924,9 +1060,9 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
       sprite(ctx, source, ...cell, x, y, size);
     }
   }
-  const sight = makeVisibility((ctx, camera) => { floorArt(ctx, camera); ground(ctx, camera); });
+  const sight = makeVisibility((ctx, camera) => { floorArt(ctx, camera); ground(ctx, camera); }, paintRelief, world);
   const outline = makeOutliner();
-  const fixtures = [landing, ...landmarks, relayAccess, lift];
+  const fixtures = [landing, ...landmarks, relayAccess, lift, ...('shelter' in stage ? [stage.shelter] : [])];
   const post = makePixelPostProcess(output);
 
   const paint = (frame: Frame, camera: Box, pixelStep: number) => {
@@ -986,8 +1122,12 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
     const pulseLit = (point: Point, ownBody?: Box) => pulses.some(pulse =>
       pulse.amount > .07 && distanceToLight(point, pulse.from, pulse.to) < pulse.radius * .84 &&
       visibleSurface(pulse.from, point, frame.blockers, ownBody, Infinity));
+    const lampAt = (point: Point, ownBody?: Box) => {
+      const amount = frame.flashlightOn ? flashlightLevel(lamp, frame.player.aim, point) : 0;
+      return amount > 0 && visibleSurface(lamp, point, frame.blockers, ownBody, balance.beam.range) ? amount : 0;
+    };
     const visible = (point: Point, ownBody?: Box) => visibleSurface(frame.player, point, frame.blockers, ownBody) ||
-      flareIntensity(point, ownBody) > 0 || pulseLit(point, ownBody);
+      lampAt(point, ownBody) > .02 || flareIntensity(point, ownBody) > 0 || pulseLit(point, ownBody);
     const flashAt = (point: Point, ownBody?: Box) => flashes.reduce((most, flash) => {
       const amount = flash.amount * (flash.intensityScale ?? 1) * (1 - distanceToLight(point, flash.from, flash.to) / flash.radius);
       if (amount <= most) return most;
@@ -995,7 +1135,7 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
         (point.y - flash.from.y) * (flash.to.y - flash.from.y) < 0) return most;
       return flash.emitter && !visibleSurface(flash.emitter, point, frame.blockers, ownBody, Infinity) ? most : amount;
     }, 0);
-    const lit = (point: Point, ownBody?: Box) => Math.max(frame.flashlightOn ? flashlightLevel(lamp, frame.player.aim, point) : 0,
+    const lit = (point: Point, ownBody?: Box) => Math.max(lampAt(point, ownBody),
       flareIntensity(point, ownBody), flashAt(point, ownBody));
     const { directStrength } = frame.lighting;
     const sideLight = (point: Point, ownBody?: Box) => {
@@ -1013,6 +1153,7 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
       return { actor, pose: actorPose(atlases, actor, frame.time), alpha: opacity + (1 - opacity) * Math.min(1, lit(actor) / .19) };
     });
     const ally = frame.ally && visible(frame.ally) ? frame.ally : undefined;
+    const resident = frame.resident && visible(frame.resident) ? frame.resident : undefined;
     const dummy = frame.dummy && visible(frame.dummy) ? frame.dummy : undefined;
     const allyPose = ally && actorPose(atlases, ally, frame.time);
     const held = !frame.roll && !frame.challenge && !frame.player.statuses?.some(effect => effect.kind === 'stun') ?
@@ -1020,15 +1161,21 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
     const playerPose = actorPose(atlases, frame.player, frame.time, { walk: frame.walkFrame, roll: frame.roll, armed: !!held });
     const visibleSupplies = [...frame.supplies].filter(point => visible(point)).map(cache => ({ cache, x: cache.x, y: cache.y - 14 }));
     const liftVisible = visible(lift);
+    const entryVisible = entryShaft && visible(entryShaft);
+    const shelterVisible = shelter && visible(shelter);
     const lights: ShadowLight[] = [...fixtures.map(origin => ({
       origin, range: origin === landing ? 98 : origin === relayAccess || origin === lift ? 83 : 59,
       elevation: origin === landing ? 84 : 62,
-      amount: origin === landing || powered ? .38 : frame.phase === 'defense' && origin === relayAccess ? .23 + Math.sin(frame.time * 9) * .09 : .17,
-      color: origin === landing ? '157,219,253' : powered ? '163,245,233' : origin === relayAccess ? '247,164,111' : '120,198,221',
+      amount: origin === landing || (powered && stage.id === '1-1') || ('shelter' in stage && origin === stage.shelter) ? .38 :
+        frame.phase === 'defense' && origin === relayAccess ? .23 + Math.sin(frame.time * 9) * .09 : powered ? .07 : .17,
+      stationary: frame.phase !== 'defense' || origin !== relayAccess,
+      color: 'shelter' in stage && origin === stage.shelter ? '255,190,109' : origin === landing ? '157,219,253' :
+        powered && stage.id === '1-1' ? '163,245,233' : origin === relayAccess ? '247,164,111' : '120,198,221',
     })), ...flares.map(flare => ({
       origin: flare.base, range: supportSpecs.flare.radius, amount: flare.airborne ? .73 : .83, elevation: 15 + flare.lift,
       color: '255,241,158', reveals: true,
     })),
+    ...(powered ? emergencyLights.map(origin => ({ origin, amount: .22, range: 45, elevation: 7, color: '255,169,74', stationary: true })) : []),
     ...(turret && frame.time >= turret.readyAt ? [{ origin: turret, ...balance.turretBeam,
       color: '190,226,249', heading: turret.heading }] : []),
     ...(drone && frame.time >= drone.readyAt ? [{ origin: drone, range: 49, amount: .38,
@@ -1036,7 +1183,7 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
       .filter(({ origin, range }) => origin.x >= camera.x - range && origin.x <= camera.x + camera.width + range &&
         origin.y >= camera.y - range && origin.y <= camera.y + camera.height + range);
     const castingLights = [...lights];
-    if (frame.flashlightOn) castingLights.push({ origin: lamp, range: balance.beam.range, amount: .96, elevation: 33,
+    if (frame.flashlightOn) castingLights.push({ origin: lamp, range: balance.beam.range, amount: .96 * balance.beam.intensity, elevation: 33,
       color: '248,239,214', heading: frame.player.aim, halfAngle: balance.beam.halfAngle });
     for (const flash of flashes) {
       if (flash.spread) castingLights.push({ origin: flash.from, range: distance(flash.from, flash.to), amount: flash.amount * (flash.intensityScale ?? 1),
@@ -1054,9 +1201,12 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
       shadows.rectangle({ x: gateCenter.x, y: gate.y + panelLength / 2 }, gate.width + 4, panelLength, gateShadow);
       shadows.rectangle({ x: gateCenter.x, y: gate.y + gate.height - panelLength / 2 }, gate.width + 4, panelLength, gateShadow);
     }
-    if (relayVisible) shadows.sprite(setpieces, relaySprite, 77, [0, 0], { blocker: relayBody, groundRatio: fixtureGroundRatio.relay });
+    if (relayVisible) shadows.sprite(panelAtlas, relaySprite, 77, [0, 0], { blocker: relayBody, groundRatio: fixtureGroundRatio.relay });
     if (liftVisible) shadows.sprite(setpieces, liftSprite, 88, [0, powered ? 2 : 1],
       { opacity: .6, groundRatio: powered ? fixtureGroundRatio.liftOpen : fixtureGroundRatio.liftClosed });
+    if (entryVisible) shadows.sprite(setpieces, entryShaft, 88, [0, 2], { opacity: .56, groundRatio: fixtureGroundRatio.liftOpen });
+    if (shelterVisible && atlases.observatory) shadows.sprite(atlases.observatory, shelter, 72, [0, 1], { groundRatio: .27 });
+    if (resident && atlases.resident) shadows.sprite(atlases.resident, { x: resident.x, y: resident.y - 12 }, 43, [0, 0], { groundRatio: .19 });
     for (const cache of visibleSupplies) shadows.sprite(setpieces, cache, 44, [1, 0], { groundRatio: fixtureGroundRatio.supplies });
     drawActorShadow(shadows, frame.player, playerPose);
     if (held) {
@@ -1137,7 +1287,7 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
     ctx.globalAlpha = 1;
     drawBallistics(ctx, frame);
     drawSlash(ctx, frame);
-    drawMedicalBeam(ctx, frame);
+    drawMedicalBeam(ctx, frame, held);
     for (const bolt of frame.bolts) {
       const head = { x: bolt.x, y: bolt.y - bolt.lift };
       const rear = onRay(head, bolt.heading + Math.PI, 8);
@@ -1149,16 +1299,23 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
       ctx.globalAlpha = ring.life / .4; ctx.strokeStyle = '#b9eeff'; ctx.lineWidth = 4; ctx.stroke();
     }
     ctx.restore();
-    const indirectMask = sight.coverUnseen(ctx, frame.player, camera, frame.blockers, lights, pulses, pixelStep, !!indirect);
+    const indirectMask = sight.coverUnseen(ctx, frame.player, camera, frame.blockers, lights, pulses, pixelStep, !!indirect,
+      frame.flashlightOn ? { origin: lamp, heading: frame.player.aim } : undefined);
 
     // Test visibility at each foot or footprint. A raised sprite cannot be cut by its ground shadow.
     ctx.save(); ctx.translate(-camera.x, -camera.y);
-    drawPulseTraces(ctx, frame.traces);
+    drawPulseTraces(ctx, frame.traces, held);
+    if (powered) for (const light of emergencyLights) {
+      if (!visible(light)) continue;
+      ctx.fillStyle = '#ffc17b'; ctx.fillRect(light.x - 4, light.y - 1, 8, 2);
+    }
     for (const { cache, x, y } of visibleSupplies) {
       if (frame.selection?.kind === 'supply' && frame.selection.point === cache) outline(ctx, setpieces, 1, 0, x, y, 44);
       else sprite(ctx, setpieces, 1, 0, x, y, 44);
     }
     if (liftVisible) sprite(ctx, setpieces, 0, powered ? 2 : 1, liftSprite.x, liftSprite.y, 88);
+    if (entryVisible) sprite(ctx, setpieces, 0, 2, entryShaft.x, entryShaft.y, 88);
+    if (shelterVisible && atlases.observatory) sprite(ctx, atlases.observatory, 0, 1, shelter.x, shelter.y, 72);
     for (const { pickup, center: { x, y }, art: [atlas, row, cell] } of visiblePickups) {
       ctx.filter = `brightness(${sideLight(pickup)})`;
       if (frame.selection?.kind === 'weapon' && frame.selection.point === pickup) outline(ctx, atlas, row, cell, x, y, 32);
@@ -1167,8 +1324,8 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
     }
     if (relayVisible) {
       ctx.filter = `brightness(${(.87 + lit(relay, relayBody) * .19 * directStrength) * Math.max(.68, sideLight(relay, relayBody))})`;
-      if (frame.selection?.kind === 'relay') outline(ctx, setpieces, 0, 0, relaySprite.x, relaySprite.y, 77);
-      else sprite(ctx, setpieces, 0, 0, relaySprite.x, relaySprite.y, 77);
+      if (frame.selection?.kind === 'relay') outline(ctx, panelAtlas, 0, 0, relaySprite.x, relaySprite.y, 77);
+      else sprite(ctx, panelAtlas, 0, 0, relaySprite.x, relaySprite.y, 77);
       ctx.filter = 'none';
       ctx.fillStyle = powered ? '#b8ffe8' : frame.phase === 'defense' ? AMBER : '#709cb0';
       ctx.fillRect(Math.round(relay.x - 8), Math.round(relay.y - 34), Math.round(6 + frame.charge * 10), 3);
@@ -1177,6 +1334,15 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
       const { x, y } = dummy;
       ctx.drawImage(atlases.dummy, x - 21, y - 35, 42, 42);
       drawStatuses(ctx, dummy, frame.time, dummy.statuses);
+    }
+    if (resident && atlases.resident) {
+      const bob = resident.moving ? Math.abs(Math.sin(frame.time * 20)) * 3 : Math.sin(frame.time * 3) * .65;
+      const y = resident.y - 12 - bob;
+      if (frame.selection?.kind === 'resident') outline(ctx, atlases.resident, 0, 0, resident.x, y, 43);
+      else sprite(ctx, atlases.resident, 0, 0, resident.x, y, 43);
+      if (resident.hiding) {
+        ctx.fillStyle = '#f6c9eb'; ctx.font = `12px ${FONT}`; ctx.textAlign = 'center'; ctx.fillText('…', resident.x, y - 22);
+      }
     }
     const objects = [...visibleActors.map(data => ({ y: data.actor.y, ...data })), ...visibleProps.map(prop => ({ y: prop.y, prop }))];
     if (ally && allyPose) objects.push({ actor: ally, pose: allyPose, alpha: ally.hp > 0 ? 1 : .36, y: ally.y });
@@ -1199,7 +1365,7 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
     drawActor(ctx, frame.player, playerPose);
     if (held && !gunBehind) drawArmedPlayer(ctx, frame, playerPose, held, atlases.hands);
     drawStatuses(ctx, frame.player, frame.time, frame.player.statuses ?? []);
-    for (const flash of frame.muzzleLights) if (visible(flash.emitter)) drawMuzzleFlash(ctx, flash);
+    for (const flash of frame.muzzleLights) if (!flash.gun && visible(flash.emitter)) drawMuzzleFlash(ctx, flash);
     ctx.restore();
 
     if (indirect && indirectMask) {
@@ -1216,8 +1382,8 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
     for (const prop of visibleProps) drawPropHealth(hud, prop, camera);
     if (ally && ally.hp > 0 && ally.hp < balance.player.health) drawHealth(hud, projectToScreen(ally, camera), ally.hp);
     if (dummy) drawHealth(hud, projectToScreen(dummy, camera), dummy.hp);
-    drawOverlay(hud, frame, camera);
-    drawHud(hud, frame, camera, atlases, sight.wasSeen);
+    drawOverlay(hud, frame, camera, held, stage);
+    drawHud(hud, frame, camera, atlases, sight.wasSeen, contour, stage);
     if (frame.challenge) {
       frame.challenge.draw(hud, frame.time);
       text(hud, '체력', 334, 50, 8, '#acd0d5');
@@ -1229,5 +1395,6 @@ export function makeOutpostRenderer(output: CanvasRenderingContext2D, hud: Canva
       drawGamePointer(hud, frame.aim, ui ? undefined : gun.weapon, frame.actionTime - gun.firedAt);
     }
   };
-  return Object.assign(paint, { enemyMuzzle: (point: Point, kind: RangedEnemy, heading: number) => enemyMuzzle(atlases, point, kind, heading) });
+  return Object.assign(paint, { dispose: paintRelief.dispose,
+    enemyMuzzle: (point: Point, kind: RangedEnemy, heading: number) => enemyMuzzle(atlases, point, kind, heading) });
 }
