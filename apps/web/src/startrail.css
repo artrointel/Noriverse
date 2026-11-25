@@ -29,14 +29,33 @@ a { color: #b5e4e1; text-decoration: none; border-bottom: 1px solid #5b878c; }
 a:hover { color: #efffff; }
 #stage { aspect-ratio: 16 / 9; position: relative; width: calc(min(100%, 100dvh * 1.7778) * var(--view-scale, 1)); margin-inline: auto; background: #071321; outline: 1px solid #355367; box-shadow: 0 16px 60px #030812a8; }
 #game-shell[data-auto='true'] #stage { width: min(calc(100% - 32px), max(280px, calc((100dvh - 132px) * 1.7778))); }
-#stage canvas { display: block; position: absolute; inset: 0 auto auto 0; cursor: crosshair; }
+#stage canvas { display: block; position: absolute; inset: 0 auto auto 0; cursor: none; }
 #stage canvas:not(#stage-hud) { image-rendering: pixelated; }
 #stage-hud { z-index: 1; pointer-events: none; image-rendering: auto; }
 footer { margin-top: 11px; flex-wrap: wrap; color: #a2bdcc; font-size: clamp(.75rem, 1.8vw, .9rem); }
-.view-options, .view-group { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.view-options, .view-group, .expedition-options { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
 .view-options { gap: 12px; }
+.lighting-options { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.lighting-options select { border: 1px solid #355367; border-radius: 5px; color: #d9eff4; background: #102234; font: inherit; padding: 3px 6px; }
+.lighting-options input { accent-color: #8ad9d0; }
+.lighting-options input[type='range'] { width: 78px; }
+.shadow-options { flex: 1 1 100%; }
+#lighting-backend { color: #d7c496; font-size: .8em; }
+.frame-telemetry { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.frame-telemetry output { color: #c1d8e2; font-variant-numeric: tabular-nums; }
+.expedition-options { justify-content: flex-end; color: #c1d8e2; font-size: .87rem; }
+.expedition-options .ally-option { display: flex; align-items: center; gap: 2px; }
+.expedition-options input { accent-color: #8ad9d0; }
+.expedition-options a { margin-left: 8px; }
 .view-options input { width: 86px; accent-color: #8ad9d0; }
-.view-options button { padding: 3px 8px; border-radius: 5px; border: 1px solid #355367; color: #c5d8e3; background: #102234; font: inherit; cursor: pointer; }
+.view-options button, .expedition-options :is(button, select) { padding: 3px 8px; border-radius: 5px; border: 1px solid #355367; color: #c5d8e3; background: #102234; font: inherit; cursor: pointer; }
+#launch { color: #b8f1de; border-color: #538e83; }
+#launch:disabled { opacity: .4; cursor: default; }
+@media (max-width: 560px) {
+  header { flex-wrap: wrap; }
+  .expedition-options { justify-content: flex-start; }
+  #game-shell[data-auto='true'] #stage { width: min(calc(100% - 32px), max(280px, calc((100dvh - 157px) * 1.7778))); }
+}
 .view-options button[aria-pressed='true'] { color: #a6f0dc; border-color: #5c9d92; }
 .view-options output { font-variant-numeric: tabular-nums; }
 #view-size { min-width: 92px; }

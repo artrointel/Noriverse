@@ -9,19 +9,34 @@
     <main>
       <header>
         <div><p>Noriverse / 얼음 아래의 구조 신호</p><h1>별길 탐사대</h1></div>
-        <a href="../">놀이버스 홈 ↗</a>
+        <div class="expedition-options" aria-label="탐사대 설정">
+          <label for="explorer">대원</label>
+          <select id="explorer">
+            <option value="solori">솔오리</option>
+            <option value="kommi">꼬미</option>
+          </select>
+          <label class="ally-option"><input id="expedition-ally" type="checkbox"> 동행 대원</label>
+          <label class="ally-option"><input id="training-dummy" type="checkbox"> 치료 연습</label>
+          <button id="launch" type="button" disabled>새 탐사</button>
+          <a href="../">놀이버스 홈 ↗</a>
+        </div>
       </header>
       <section id="game-shell" data-auto="true" aria-label="별길 탐사대 지표 중계소">
         <div id="stage" aria-label="별길 탐사대 1-1 지표 중계소 게임 화면">
           <canvas id="stage-hud" aria-hidden="true"></canvas>
         </div>
         <footer>
-          <span>Space 구르기 · 좌클릭 주무기 · 우클릭 부무기 · R 재장전</span>
+          <span>WASD 이동 · 휠 카메라 확대·축소 · Space 구르기 · E 상호작용 · F 손전등 · Alt 나이프 · R 재장전 · 1–3 장비 선택 · Q 사용(포탑 길게) · Tab 지도</span>
           <div class="view-options">
             <div class="view-group">
               <label for="pixel-size">픽셀 크기</label>
-              <input id="pixel-size" type="range" min="1" max="5" step="1" value="1">
-              <output id="pixel-value" for="pixel-size">1 px</output>
+              <input id="pixel-size" type="range" min="1" max="5" step="1" value="2">
+              <output id="pixel-value" for="pixel-size">2 px</output>
+            </div>
+            <div class="view-group">
+              <label for="volume">볼륨</label>
+              <input id="volume" type="range" min="0" max="100" step="1" value="100">
+              <output id="volume-value" for="volume">100%</output>
             </div>
             <div class="view-group">
               <label for="view-scale">웹뷰 해상도</label>
@@ -31,6 +46,42 @@
             </div>
             <button id="sound" type="button" aria-pressed="false">음소거</button>
             <button id="fullscreen" type="button" aria-pressed="false">전체 화면</button>
+          </div>
+          <div class="lighting-options" aria-label="조명 테스트">
+            <div class="view-group">
+              <label for="lighting-mode">조명</label>
+              <select id="lighting-mode" aria-describedby="lighting-backend">
+                <option value="cascades">Radiance Cascades</option>
+                <option value="local">근거리 레이 GI</option>
+                <option value="diffusion">벽 차폐 확산 GI</option>
+                <option value="direct">직접 조명만</option>
+              </select>
+              <span id="lighting-backend" hidden>WebGL2 대체 · 벽 차폐 확산</span>
+            </div>
+            <div class="view-group">
+              <label for="direct-light-strength">직접광</label>
+              <input id="direct-light-strength" type="range" min="0" max="100" step="5" value="50">
+              <output id="direct-light-value" for="direct-light-strength">50%</output>
+            </div>
+            <div class="view-group">
+              <label for="lighting-strength">간접광</label>
+              <input id="lighting-strength" type="range" min="0" max="100" step="5" value="40">
+              <output id="lighting-value" for="lighting-strength">40%</output>
+            </div>
+            <label class="view-group lighting-preview"><input id="lighting-preview" type="checkbox"> 간접광만 보기</label>
+            <div class="frame-telemetry" aria-label="프레임 계측">
+              <output id="frame-rate">— FPS</output>
+              <output id="cpu-time" title="게임 메인 스레드 시간과 실제 프레임 간격 대비 비율">CPU —</output>
+              <output id="gpu-time" title="간접광 한 번의 GPU 시간과 계측 구간의 프레임 예산 점유율">GPU GI —</output>
+            </div>
+            <div class="view-group shadow-options">
+              <label for="shadow-type">그림자 타입</label>
+              <select id="shadow-type">
+                <option value="auto">물체별 자동</option>
+                <option value="basic">모두 기본</option>
+                <option value="rotated">모두 회전 투영</option>
+              </select>
+            </div>
           </div>
         </footer>
       </section>

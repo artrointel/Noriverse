@@ -1,10 +1,14 @@
 export type Point = { x: number; y: number };
 export type Box = Point & { width: number; height: number };
 export type EnemyKind = 'mite' | 'boar' | 'scout' | 'sentinel' | 'spore' | 'grub';
+export type ExplorerKind = 'solori' | 'kommi';
+export const explorerNames = { solori: '솔오리', kommi: '꼬미' } as const;
 export type MapMode = 'off' | 'panel' | 'overlay';
 
 export const screen = { width: 480, height: 270 };
+export const defaultPixelStep = 2;
 export const maxPixelStep = 5;
+export const pulseLightDuration = .15;
 export const tileSize = 48;
 const columns = 36;
 const rows = 28;
@@ -15,7 +19,12 @@ function grid(x: number, y: number): Point {
 }
 
 export const landing = grid(3.6, 23);
-export const weaponPickup = grid(4.7, 23.65);
+export const weaponPickups = [
+  { ...grid(4.7, 23.65), weapon: 'eagle' },
+  { ...grid(14.95, 21.78), weapon: 'ak' },
+  { ...grid(24.42, 24.35), weapon: 'shotgun' },
+  { ...grid(5.78, 23.8), weapon: 'medical' },
+] as const;
 export const relay = grid(18.5, 14);
 export const relayAccess = grid(18.5, 14.65);
 export const lift = grid(33.8, 12);
@@ -63,6 +72,22 @@ export const floor = Array.from({ length: rows }, (_, row) => Array.from({ lengt
   floorAreas.some(([left, right, top, bottom]) => col >= left && col <= right && row >= top && row <= bottom),
 ));
 
+type MapEdge = { from: Point; to: Point; face: Point };
+export const mapWallEdges: MapEdge[] = [];
+for (const [y, row] of floor.entries()) for (const [x, open] of row.entries()) {
+  if (!open) continue;
+  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+    if (floor[y + dy]?.[x + dx]) continue;
+    const base = grid(x + (dx > 0 ? 1 : 0), y + (dy > 0 ? 1 : 0));
+    for (let part = 0; part < 4; part++) {
+      const size = tileSize / 4, start = part * size;
+      const from = { x: base.x + Math.abs(dy) * start, y: base.y + Math.abs(dx) * start };
+      const to = { x: from.x + Math.abs(dy) * size, y: from.y + Math.abs(dx) * size };
+      mapWallEdges.push({ from, to, face: { x: (from.x + to.x) / 2 + dx * 4, y: (from.y + to.y) / 2 + dy * 4 } });
+    }
+  }
+}
+
 export const cliffs: Box[] = [];
 // Only the cells that border a walkable tile need visible geometry and collision.
 for (let row = 0; row < rows; row++) {
@@ -79,9 +104,11 @@ for (let row = 0; row < rows; row++) {
 export const relayBody = { x: relay.x - 18, y: relay.y - 14, width: 36, height: 24 };
 export const obstacles = [...cliffs, relayBody];
 
+const rollDuration = .30 / .70;
 export const balance = {
   player: { mass: 1, radius: 11, speed: 2.65, health: 100 },
-  roll: { range: 74, duration: .30, recovery: .43 },
+  roll: { range: 74, duration: rollDuration, recovery: .43 },
+  cometDash: { range: 86, duration: rollDuration, recovery: .43 },
   mite: { mass: .6, radius: 9, speed: 1.35, health: 2, damage: 7, impulse: 1.9 },
   boar: { mass: 2.5, radius: 16, speed: .82, health: 5, damage: 18, impulse: 4.6 },
   scout: { mass: .92, radius: 10, speed: 1.22, health: 3, damage: 10, impulse: 2.25 },
@@ -92,18 +119,21 @@ export const balance = {
     crate: { hp: 4, width: 30, height: 30, mass: 1.65, anchored: false, color: '#adcad3' },
     crystal: { hp: 3, width: 22, height: 14, mass: 2, anchored: true, color: '#86ebff' },
   },
-  relay: { radius: 31, activation: .55, defenseRadius: 135, duration: 13 },
+  relay: { radius: 31, puzzleSize: 4, defenseRadius: 135, duration: 13 },
   approachAggro: 154,
   defenseAggro: 255,
   attacks: {
     boar: { style: 'dash', range: 125, windup: .78, duration: .43, recovery: 1.1, speed: 5.6 },
     grub: { style: 'dash', range: 87, windup: .48, duration: .32, recovery: .95, speed: 4.8 },
-    scout: { style: 'shot', range: 146, windup: .62, recovery: 1.48, keepDistance: 78, speed: 245, spread: [0] },
-    sentinel: { style: 'shot', range: 175, windup: 1.05, recovery: 1.85, keepDistance: 110, speed: 205, spread: [-.12, 0, .12] },
+    scout: { style: 'shot', accuracy: .86, range: 146, windup: .62, recovery: 1.48, keepDistance: 78, speed: 245, spread: [0] },
+    sentinel: { style: 'shot', accuracy: .94, range: 175, windup: 1.05, recovery: 1.85, keepDistance: 110, speed: 205, spread: [-.12, 0, .12] },
     spore: { style: 'burst', range: 42, windup: .55, recovery: 1.15, radius: 52 },
   },
   fallen: { collapse: .37, duration: 1.25 },
   beam: { range: 223, halfAngle: .87, unlitEnemyOpacity: .10 },
+  turretBeam: { range: 188, halfAngle: .13, amount: .57, elevation: 24 },
+  indirect: { inputExposure: .45, albedoFloor: .50, gain: 5.4, wallResponse: .84,
+    flashRadiusScale: 3.8, wallDepth: 12, flashRefreshMs: 55 },
   sight: {
     range: 197, feather: 30, wallSurface: 16, visibleLight: .70, rememberedLight: .50,
     peripheralFadeStart: .18, peripheralFadeAngle: .42, peripheralDarkness: .64,
