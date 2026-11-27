@@ -3,7 +3,9 @@ import type { WallPolygon } from './terrain.ts';
 
 export type Point = { x: number; y: number };
 export type Box = Point & { width: number; height: number; polygon?: WallPolygon };
-export type EnemyKind = 'mite' | 'boar' | 'scout' | 'sentinel' | 'spore' | 'grub';
+export const swarmKinds = ['starTick', 'coralHopper', 'rimeSkitter'] as const;
+export type SwarmKind = typeof swarmKinds[number];
+export type EnemyKind = 'mite' | 'boar' | 'scout' | 'sentinel' | 'spore' | 'grub' | SwarmKind;
 export type ExplorerKind = 'solori' | 'kommi';
 export const explorerNames = { solori: '솔오리', kommi: '꼬미' } as const;
 export type MapMode = 'off' | 'panel' | 'overlay';
@@ -40,7 +42,7 @@ export const crystals = [grid(1.45, 21.5), grid(2.5, 25.3), grid(8.4, 21.3), gri
 const guide = [landing, grid(14.7, 23), grid(14.7, 16.1), grid(18.5, 16.1), relayAccess];
 export const cables = [guide, [relay, grid(22.5, 14.8), grid(26.5, 14.8), grid(26.5, 12), gateCenter, lift],
   [grid(14.7, 23), grid(23.8, 23)], [grid(8.8, 23), grid(8.8, 9.8), grid(4, 9.8)]];
-export const caches = [grid(4.1, 9.5), grid(25.15, 23.75)];
+export const caches = [grid(4.1, 9.5), grid(14.45, 17.2), grid(25.15, 23.75)];
 export const landmarks = [
   { ...grid(6.15, 22), frame: 5 }, { ...grid(6.25, 8.55), frame: 4 }, { ...grid(12.3, 14.45), frame: 5 },
   { ...grid(17, 12.5), frame: 4 }, { ...grid(21.5, 16.5), frame: 5 }, { ...grid(16, 4.55), frame: 4 },
@@ -59,9 +61,9 @@ export const patrols = [
   { ...grid(33.05, 11.05), kind: 'boar' },
 ] satisfies (Point & { kind: EnemyKind })[];
 export const waves = [
-  { at: .6, kinds: ['mite', 'spore'] },
-  { at: 4.5, kinds: ['scout', 'grub'] },
-  { at: 9, kinds: ['boar', 'mite'] },
+  { at: .6, kinds: ['starTick', 'starTick', 'coralHopper'] },
+  { at: 4.5, kinds: ['scout', 'rimeSkitter'] },
+  { at: 9, kinds: ['boar', 'starTick', 'mite'] },
 ] satisfies { at: number; kinds: EnemyKind[] }[];
 
 const floorAreas = [
@@ -101,12 +103,15 @@ export const balance = {
   hitFeedback: { duration: .24, shake: [1.3, 4], tint: [.16, .27] },
   roll: { range: 74, duration: rollDuration, recovery: .43 },
   cometDash: { range: 86, duration: rollDuration, recovery: .43 },
-  mite: { mass: .6, radius: 9, speed: 1.35, health: 2, damage: 7, impulse: 1.9 },
-  boar: { mass: 2.5, radius: 16, speed: .82, health: 5, damage: 18, impulse: 4.6 },
-  scout: { mass: .92, radius: 10, speed: 1.22, health: 3, damage: 10, impulse: 2.25 },
-  sentinel: { mass: 1.95, radius: 14, speed: .75, health: 7, damage: 14, impulse: 3.2 },
-  spore: { mass: .45, radius: 9, speed: 1.58, health: 2, damage: 10, impulse: 2 },
-  grub: { mass: 1.35, radius: 12, speed: 1.02, health: 4, damage: 13, impulse: 3.3 },
+  mite: { mass: .6, radius: 9, speed: 1.95, health: 2, damage: 6, impulse: 1.9 },
+  boar: { mass: 2.5, radius: 16, speed: 1.24, health: 5, damage: 16, impulse: 4.6 },
+  scout: { mass: .92, radius: 10, speed: 1.69, health: 3, damage: 9, impulse: 2.25 },
+  sentinel: { mass: 1.95, radius: 14, speed: 1.13, health: 6, damage: 12, impulse: 3.2 },
+  spore: { mass: .45, radius: 9, speed: 2.02, health: 2, damage: 9, impulse: 2 },
+  grub: { mass: 1.35, radius: 12, speed: 1.55, health: 4, damage: 11, impulse: 3.3 },
+  starTick: { mass: .36, radius: 7, speed: 2.53, health: 1, damage: 4, impulse: 1.4 },
+  coralHopper: { mass: .43, radius: 8, speed: 2.85, health: 1, damage: 5, impulse: 1.7 },
+  rimeSkitter: { mass: .48, radius: 8, speed: 2.68, health: 2, damage: 5, impulse: 1.6 },
   props: {
     crate: { hp: 4, width: 30, height: 30, mass: 1.65, anchored: false, color: '#adcad3' },
     crystal: { hp: 3, width: 22, height: 14, mass: 2, anchored: true, color: '#86ebff' },

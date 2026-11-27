@@ -9,6 +9,9 @@ export type IndirectField = { image: HTMLCanvasElement; view: Box };
 
 export function createIndirectLighting() {
   const { width, height } = indirectSize;
+  const materialScale = .25;
+  let terrainSource: HTMLCanvasElement | undefined;
+  let materialBase: CanvasRenderingContext2D | undefined;
   let material: CanvasRenderingContext2D | undefined;
   let walls: CanvasRenderingContext2D | undefined;
   let gpu: ReturnType<typeof createRadianceRenderer> | null;
@@ -23,7 +26,7 @@ export function createIndirectLighting() {
   let mode: IndirectMode = 'direct';
 
   return {
-    capture(world: HTMLCanvasElement, camera: Box, blockers: readonly Box[], nextMode: IndirectMode,
+    capture(terrain: HTMLCanvasElement, camera: Box, terrainScale: number, blockers: readonly Box[], nextMode: IndirectMode,
       flashes: readonly object[] = [], flashlightOn = true) {
       if (mode !== nextMode) { gpu?.resetTiming(); field = undefined; mode = nextMode; }
       if (mode === 'direct') { backend = 'direct'; return false; }
@@ -32,16 +35,25 @@ export function createIndirectLighting() {
       const refreshInterval = Math.min(refreshLimit, Math.max(1000 / 30, cost * 2.5));
       const lightsChanged = flashlightOn !== previousFlashlight || flashes.length !== previousFlashes.length ||
         flashes.some((flash, i) => flash !== previousFlashes[i]);
+      const age = performance.now() - refreshedAt;
+      const moved = field && Math.abs(camera.x - field.view.x) + Math.abs(camera.y - field.view.y) > 28;
       recalculate = !field || lightsChanged || blockers.length !== lastBlockerCount || Math.abs(camera.width - field.view.width) > 20 ||
-        Math.abs(camera.x - field.view.x) + Math.abs(camera.y - field.view.y) > 28 || performance.now() - refreshedAt >= refreshInterval;
+        moved && age >= 1000 / 30 || age >= refreshInterval;
       if (!recalculate) return false;
       previousFlashes = flashes;
       previousFlashlight = flashlightOn;
       lastBlockerCount = blockers.length;
-      material ??= surface(width, height);
-      walls ??= surface(width, height);
+      if (terrain !== terrainSource || !materialBase) {
+        materialBase = surface(Math.ceil(terrain.width / terrainScale * materialScale), Math.ceil(terrain.height / terrainScale * materialScale), true);
+        materialBase.imageSmoothingEnabled = true;
+        materialBase.drawImage(terrain, 0, 0, materialBase.canvas.width, materialBase.canvas.height);
+        terrainSource = terrain;
+      }
+      material ??= surface(width, height, true);
+      walls ??= surface(width, height, true);
       material.imageSmoothingEnabled = true;
-      material.drawImage(world, 0, 0, width, height);
+      material.drawImage(materialBase.canvas, camera.x * materialScale, camera.y * materialScale, camera.width * materialScale,
+        camera.height * materialScale, 0, 0, width, height);
       walls.clearRect(0, 0, width, height);
       walls.fillStyle = '#fff';
       const sx = width / camera.width, sy = height / camera.height;
@@ -79,7 +91,7 @@ export function createIndirectLighting() {
         cpuMs = cpuMs * .7 + elapsed * .3;
       }
       // Cache in world coordinates so intervening game frames can move the camera without repainting the light field.
-      cache ??= surface(width, height);
+      cache ??= surface(width, height, backend === 'cpu');
       cache.imageSmoothingEnabled = true;
       cache.drawImage(image, 0, 0, width, height);
       refreshedAt = performance.now();
@@ -89,7 +101,7 @@ export function createIndirectLighting() {
       const timing = backend === 'gpu' ? gpu?.timing() : undefined;
       return { backend, fallback: backend === 'cpu' && mode !== 'diffusion', gpuSupported: !!timing?.supported, gpuMs: timing?.ms, gpuUpdates };
     },
-    reset() { field = undefined; previousFlashes = []; },
+    reset() { field = undefined; previousFlashes = []; terrainSource = undefined; materialBase = undefined; },
     dispose() { gpu?.dispose(); },
   };
 }
@@ -98,7 +110,7 @@ export type IndirectLighting = ReturnType<typeof createIndirectLighting>;
 
 function makeDiffusion() {
   const width = 80, height = 45, count = width * height;
-  const capture = surface(width, height, true), output = surface(width, height);
+  const capture = surface(width, height, true), output = surface(width, height, true);
   const emission = new Float32Array(count * 3), energy = new Float32Array(count * 3), other = new Float32Array(count * 3);
   const occupied = new Uint8Array(count);
   const image = output.createImageData(width, height);

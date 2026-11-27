@@ -17,7 +17,7 @@ function encodeNormal(data: Uint8ClampedArray, i: number, nx: number, ny: number
   data[i + 2] = z * 255;
 }
 
-export function bakeTileNormals(tiles: HTMLImageElement, atlasColumns = 2) {
+export function bakeTileNormals(tiles: HTMLImageElement, atlasColumns = 2, metalCells = atlasColumns === 2 ? [1] : [2, 3, 6, 7]) {
   const { naturalWidth: width, naturalHeight: height } = tiles;
   const side = width / atlasColumns;
   const atlas = surface(width, height, true);
@@ -30,7 +30,7 @@ export function bakeTileNormals(tiles: HTMLImageElement, atlasColumns = 2) {
     const luma = normals.data[i] * .2126 + normals.data[i + 1] * .7152 + normals.data[i + 2] * .0722;
     const u = x % side, v = y % side;
     const material = Math.floor(y / side) * atlasColumns + Math.floor(x / side);
-    const metal = atlasColumns === 2 ? material === 1 : material === 2 || material === 3 || material === 6 || material === 7;
+    const metal = metalCells.includes(material);
     const seam = Math.min(u, v, side - u - 1, side - v - 1) < span;
     heights[y * width + x] = 126 + (luma - 80) * (metal ? .42 : .8) - (metal && seam ? 23 : 0);
   }
@@ -47,6 +47,40 @@ export function bakeTileNormals(tiles: HTMLImageElement, atlasColumns = 2) {
   }
   atlas.putImageData(normals, 0, 0);
   return atlas.canvas;
+}
+
+export function blendTileBoundaries(image: ImageData, floor: readonly (readonly boolean[])[], open: boolean) {
+  const { width, data } = image;
+  const size = tileSize * terrainTextureScale;
+  const span = 7 * terrainTextureScale;
+  const weights = Array.from({ length: span }, (_, i) => {
+    const t = 1 - (i + .5) / span;
+    return .5 * t * t * (3 - 2 * t);
+  });
+  function mix(a: number, b: number, amount: number) {
+    if (!data[a + 3] || !data[b + 3]) return;
+    for (let c = 0; c < 3; c++) {
+      const x = data[a + c], y = data[b + c];
+      data[a + c] = x + (y - x) * amount;
+      data[b + c] = y + (x - y) * amount;
+    }
+  }
+  for (let row = 0; row < floor.length; row++) for (let column = 1; column < floor[row].length; column++) {
+    if (floor[row][column - 1] !== open || floor[row][column] !== open) continue;
+    const seam = column * size;
+    for (let y = row * size; y < (row + 1) * size; y++) {
+      const center = y * width + seam;
+      for (let i = 0; i < span; i++) mix((center - 1 - i) * 4, (center + i) * 4, weights[i]);
+    }
+  }
+  for (let row = 1; row < floor.length; row++) for (let column = 0; column < floor[row].length; column++) {
+    if (floor[row - 1][column] !== open || floor[row][column] !== open) continue;
+    const seam = row * size;
+    for (let i = 0; i < span; i++) {
+      const above = (seam - 1 - i) * width, below = (seam + i) * width;
+      for (let x = column * size; x < (column + 1) * size; x++) mix((above + x) * 4, (below + x) * 4, weights[i]);
+    }
+  }
 }
 
 function face(ctx: CanvasRenderingContext2D, points: readonly (readonly [number, number])[], fill: string) {
@@ -138,20 +172,22 @@ const alphaShift = littleEndian ? 24 : 0;
 const white = littleEndian ? 0x00ffffff : 0xffffff00;
 
 function makeRaster(width: number, height: number): ReliefRaster {
-  const layer = surface(width, height);
+  const layer = surface(width, height, true);
   const pixels = layer.createImageData(width, height);
   return { layer, pixels, packed: new Uint32Array(pixels.data.buffer) };
 }
 
-export function createTerrainRelief(tiles: CanvasRenderingContext2D, details: CanvasRenderingContext2D, material = outpostStage.material) {
+export function createTerrainRelief(tiles: CanvasRenderingContext2D, details: CanvasRenderingContext2D, material = outpostStage.material,
+  blendFloor?: readonly (readonly boolean[])[]) {
   const normals = bakeTerrainNormals(tiles, details, material);
+  if (blendFloor) blendTileBoundaries(normals, blendFloor, true);
   const { width: columns, height: rows, data: normal } = normals;
   const scale = terrainTextureScale;
   let shader: ReturnType<typeof createReliefShader> | null;
   const stationary = new WeakMap<Light['origin'], ReliefRaster>();
   let scratch: ReliefRaster | undefined;
 
-  function shadeOnCanvas(bounds: Box, light: Light & { elevation?: number }, power: number, ax: number, ay: number, cone: number) {
+  function shadeOnCanvas(bounds: Box, light: Light & { elevation?: number }, power: number, ax: number, ay: number, cone: number, rasterScale: number) {
     const { origin, range, heading } = light;
     const minX = bounds.x, minY = bounds.y, maxX = minX + bounds.width, maxY = minY + bounds.height;
     const z = light.elevation ?? 33;
@@ -173,16 +209,17 @@ export function createTerrainRelief(tiles: CanvasRenderingContext2D, details: Ca
     if (raster.key === key) return layer.canvas;
     const range2 = range * range, z2 = z * z;
     const cone2 = cone * cone;
+    const sourceSpacing = scale / rasterScale;
     for (let y = minY; y < maxY; y++) {
-      const dy = origin.y - (y + .5) / scale, dy2 = dy * dy;
+      const dy = origin.y - (y + .5) / rasterScale, dy2 = dy * dy;
       const outputRow = (y - minY) * pixels.width;
-      const normalRow = y * columns;
+      const normalRow = Math.floor((y + .5) * sourceSpacing) * columns;
       packed.fill(0, outputRow, outputRow + bounds.width);
       for (let x = minX; x < maxX; x++) {
-        const id = (normalRow + x) * 4;
+        const id = (normalRow + Math.floor((x + .5) * sourceSpacing)) * 4;
         const nz = normal[id + 2];
         if (!normal[id + 3] || nz === 255 && normal[id] === 128 && normal[id + 1] === 128) continue;
-        const dx = origin.x - (x + .5) / scale;
+        const dx = origin.x - (x + .5) / rasterScale;
         const length2 = dx * dx + dy2;
         if (length2 >= range2) continue;
         const forward = -dx * ax - dy * ay;
@@ -219,20 +256,24 @@ export function createTerrainRelief(tiles: CanvasRenderingContext2D, details: Ca
     if (width <= 0 || height <= 0) return;
     const bounds = { x: minX, y: minY, width, height };
     const power = light.amount * strength * 3.9;
-    let sourceX = 0, sourceY = 0;
+    let sourceX = 0, sourceY = 0, reduction = 1;
     if (!light.stationary && shader === undefined) shader = createReliefShader(normals, scale, reliefContrast) ?? null;
     let image = light.stationary ? undefined : shader?.paint(bounds, light, power, ax, ay, cone);
     if (!image) {
-      const rasterBounds = light.stationary ? { x: left, y: top, width: right - left, height: bottom - top } : bounds;
-      image = shadeOnCanvas(rasterBounds, light, power, ax, ay, cone);
-      sourceX = minX - rasterBounds.x;
-      sourceY = minY - rasterBounds.y;
+      // Keep moving lights on the world grid. A software rasterizer only needs one lighting sample per world pixel.
+      const x = Math.floor(minX / scale), y = Math.floor(minY / scale);
+      const rasterBounds = light.stationary ? { x: left, y: top, width: right - left, height: bottom - top } :
+        { x, y, width: Math.ceil((minX + width) / scale) - x, height: Math.ceil((minY + height) / scale) - y };
+      reduction = light.stationary ? 1 : scale;
+      image = shadeOnCanvas(rasterBounds, light, power, ax, ay, cone, scale / reduction);
+      sourceX = minX / reduction - rasterBounds.x;
+      sourceY = minY / reduction - rasterBounds.y;
     }
     target.save(); target.translate(-view.x, -view.y); target.clip(clip);
     target.globalCompositeOperation = 'soft-light';
     target.imageSmoothingEnabled = true;
     target.imageSmoothingQuality = 'low';
-    target.drawImage(image, sourceX, sourceY, width, height, minX / scale, minY / scale, width / scale, height / scale);
+    target.drawImage(image, sourceX, sourceY, width / reduction, height / reduction, minX / scale, minY / scale, width / scale, height / scale);
     target.restore();
   }
   return Object.assign(paintRelief, { dispose: () => shader?.dispose() });

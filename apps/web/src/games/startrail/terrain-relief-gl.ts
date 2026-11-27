@@ -1,6 +1,7 @@
 import type { Box } from './outpost.ts';
 import type { Light } from './visibility.ts';
 import { fullscreenTriangle, linkWebGL2Program } from './webgl2-program.ts';
+import { usesSoftwareWebGL } from './webgl-context.ts';
 
 const fragment = `#version 300 es
 precision highp float;
@@ -37,8 +38,7 @@ export function createReliefShader(normals: ImageData, scale: number, contrast: 
   const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, depth: false, premultipliedAlpha: true,
     failIfMajorPerformanceCaveat: true, powerPreference: 'low-power' });
   if (!gl) return;
-  const driver = gl.getExtension('WEBGL_debug_renderer_info');
-  if (driver && /swiftshader|llvmpipe|software raster|microsoft basic render|\bwarp\b/i.test(gl.getParameter(driver.UNMASKED_RENDERER_WEBGL))) {
+  if (usesSoftwareWebGL(gl)) {
     gl.getExtension('WEBGL_lose_context')?.loseContext();
     return;
   }

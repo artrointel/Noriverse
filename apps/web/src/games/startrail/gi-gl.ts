@@ -1,5 +1,6 @@
 import { balance } from './outpost.ts';
 import { fullscreenTriangle, linkWebGL2Program } from './webgl2-program.ts';
+import { usesSoftwareWebGL } from './webgl-context.ts';
 
 const { albedoFloor, wallResponse, gain } = balance.indirect;
 
@@ -136,8 +137,10 @@ export function createRadianceRenderer() {
   const { width, height } = indirectSize;
   canvas.width = width;
   canvas.height = height;
-  const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false, powerPreference: 'high-performance' });
+  const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false,
+    failIfMajorPerformanceCaveat: true, powerPreference: 'high-performance' });
   if (!gl) return;
+  if (usesSoftwareWebGL(gl)) { gl.getExtension('WEBGL_lose_context')?.loseContext(); return; }
   let resources = initialize(gl);
   let gpuMs: number | undefined;
   let frame = 0;

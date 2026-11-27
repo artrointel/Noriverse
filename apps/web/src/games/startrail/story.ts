@@ -23,74 +23,73 @@ const panels = {
     { ko: ['돌아갈 길', '“관측 장비 전력을 비상 승강기로 돌리세요. 불이 바뀌면 주황색 비상등을 따라 함께 나오면 돼요.”'],
       en: ['The way home', '“Reroute power from the instruments to the emergency lift. When the lights change, follow the orange lamps together.”'] },
   ],
+  '1-3': [
+    { ko: ['다시 지표로', '비상 승강기가 설원에 닿았다. 구조한 주민은 옆 대피소로 옮겼지만, 셔틀은 아직 뜰 수 없었다.'],
+      en: ['Back on the surface', 'The lift reached the snowfield. The resident took shelter nearby, but the shuttle was still grounded.'] },
+    { ko: ['오로라 관제소', '오로라 아래 북쪽과 남쪽에 안테나가 있다. 갈라진 얼음 능선을 탐색해 두 기를 모두 연결하자.'],
+      en: ['The aurora station', 'Two antennas stand on opposite ridges. Explore the northern and southern paths and bring them both online.'] },
+    { ko: ['끊어진 항로', '“안테나를 켜면 관제탑에서 신호를 받을 수 있어요. 불빛 순서를 기억해 항로 주파수를 맞추세요.”'],
+      en: ['A broken flight path', '“Once the antennas are online, look for a signal at the tower. Repeat the pattern to calibrate the flight path.”'] },
+    { ko: ['마지막 교신', '항로 좌표가 전송되는 동안 관제탑을 지키자. 전송이 끝나면 문이 열리고 구조 셔틀에 탈 수 있다.'],
+      en: ['The final transmission', 'Defend the tower while it sends the coordinates. When the gate opens, make for the rescue shuttle.'] },
+  ],
+  '1-4': [
+    { ko: ['잔해 고리의 신호', '오로라 관제소에서 떠난 셔틀에 조난 신호가 잡혔다. 신호는 오래된 구조항에서 오고 있었다.'],
+      en: ['A signal in the wreck ring', 'The shuttle picked up a distress call after leaving Aurora Control. It came from an old rescue station.'] },
+    { ko: ['북쪽 온실', '“북쪽 온실의 순환기를 복구하면 예비 전력 셀을 쓸 수 있어요.” 파루미가 초록빛 통로를 가리켰다.'],
+      en: ['The north greenhouse', 'Parumi pointed toward the green passage. “Restart the circulation system to recover a reserve power cell.”'] },
+    { ko: ['남쪽 하역장', '남쪽 집게의 잠금을 풀면 중계기에 필요한 장비를 꺼낼 수 있다. 두 설비를 복구한 뒤 동쪽으로 가자.'],
+      en: ['The south salvage bay', 'Unlock the salvage clamp to free the relay equipment. Restore both systems before heading east.'] },
+    { ko: ['외곽 관측실', '관측실에서 잔해가 이동하는 경로를 미리 읽으면 전송 시간이 줄어든다. 신호를 보낸 뒤 동쪽 셔틀로 돌아가자.'],
+      en: ['The outer observatory', 'Survey the drifting wreckage to shorten the transmission. Send the coordinates, then board the shuttle to the east.'] },
+  ],
 } satisfies Record<ExpeditionMap['id'], { ko: [string, string]; en: [string, string] }[]>;
 
-const duration = 240;
 const font = (size: number) => `${size}px 'Sketch Jua', 'Malgun Gothic', sans-serif`;
 
 export class StoryIntro {
   private page = 0;
-  private turnedAt = -Infinity;
   private lastStill = '';
 
-  constructor(private readonly stage: ExpeditionMap, private readonly art: HTMLImageElement,
-    private readonly language: Language, private readonly reduceMotion: boolean) {}
+  constructor(private readonly stage: ExpeditionMap, private readonly art: HTMLImageElement, private readonly language: Language) {}
 
-  advance(time: number) {
-    if (time - this.turnedAt < (this.reduceMotion ? 100 : duration)) return false;
+  advance() {
     if (this.page + 1 === panels[this.stage.id].length) return true;
     this.page++;
-    this.turnedAt = time;
     return false;
   }
 
-  draw(output: CanvasRenderingContext2D, hud: CanvasRenderingContext2D, time: number) {
+  draw(output: CanvasRenderingContext2D, hud: CanvasRenderingContext2D, repaint: boolean) {
     const { width, height } = screen;
     const count = panels[this.stage.id].length;
-    const phase = this.reduceMotion ? 1 : Math.max(0, Math.min(1, (time - this.turnedAt) / duration));
-    const still = phase === 1 ? `${this.page}:${output.canvas.width}:${output.canvas.height}:${hud.canvas.width}:${hud.canvas.height}` : '';
-    if (still && this.lastStill === still) return;
+    const still = `${this.page}:${output.canvas.width}:${output.canvas.height}:${hud.canvas.width}:${hud.canvas.height}`;
+    if (!repaint && this.lastStill === still) return;
     this.lastStill = still;
-    const progress = 1 - (1 - phase) ** 3;
-    const offset = (1 - progress) * width;
     const artWidth = this.art.naturalWidth / 2, artHeight = this.art.naturalHeight / 2;
-    const drawCell = (page: number, x: number) => output.drawImage(this.art,
-      page % 2 * artWidth + 1, Math.floor(page / 2) * artHeight + 1, artWidth - 2, artHeight - 2, x, 0, width, height);
     output.resetTransform();
     output.setTransform(output.canvas.width / width, 0, 0, output.canvas.height / height, 0, 0);
     output.imageSmoothingEnabled = true;
-    if (this.page && phase < 1) drawCell(this.page - 1, offset - width);
-    drawCell(this.page, offset);
-    if (phase < 1) {
-      output.fillStyle = '#070f20'; output.fillRect(offset - 2, 0, 4, height);
-    }
+    output.drawImage(this.art, this.page % 2 * artWidth + 1, Math.floor(this.page / 2) * artHeight + 1,
+      artWidth - 2, artHeight - 2, 0, 0, width, height);
 
     hud.resetTransform(); hud.clearRect(0, 0, hud.canvas.width, hud.canvas.height);
     hud.setTransform(hud.canvas.width / width, 0, 0, hud.canvas.height / height, 0, 0);
     const shade = hud.createLinearGradient(0, 157, 0, height);
     shade.addColorStop(0, '#030a1600'); shade.addColorStop(.46, '#030a16c9'); shade.addColorStop(1, '#030a16');
     hud.fillStyle = shade; hud.fillRect(0, 157, width, height - 157);
-    const stage = this.language === 'ko' ? this.stage.title : this.stage.id === '1-1' ? 'Surface relay' : 'Observatory beneath the ice';
+    const stage = this.language === 'ko' ? this.stage.title : this.stage.titleEn;
     hud.save(); hud.textBaseline = 'middle'; hud.textAlign = 'left';
     hud.font = font(9); hud.fillStyle = '#9af1e3'; hud.fillText(`${this.stage.id}  /  ${stage}`, 20, 187);
-    const drawCopy = (page: number, opacity: number) => {
-      const [title, caption] = panels[this.stage.id][page][this.language];
-      hud.globalAlpha = opacity;
-      hud.font = font(19); hud.fillStyle = '#f2fcff'; hud.fillText(title, 20, 205);
-      hud.font = font(12); hud.fillStyle = '#deedf4';
-      let line = '', y = 224;
-      for (const word of caption.split(' ')) {
-        const next = line ? `${line} ${word}` : word;
-        if (hud.measureText(next).width <= width - 40) { line = next; continue; }
-        hud.fillText(line, 20, y); line = word; y += 13;
-      }
-      if (line) hud.fillText(line, 20, y);
-    };
-    if (phase < .5 && this.page) drawCopy(this.page - 1, 1 - phase * 2);
-    else {
-      drawCopy(this.page, Math.max(0, phase * 2 - 1));
+    const [title, caption] = panels[this.stage.id][this.page][this.language];
+    hud.font = font(19); hud.fillStyle = '#f2fcff'; hud.fillText(title, 20, 205);
+    hud.font = font(12); hud.fillStyle = '#deedf4';
+    let line = '', y = 224;
+    for (const word of caption.split(' ')) {
+      const next = line ? `${line} ${word}` : word;
+      if (hud.measureText(next).width <= width - 40) { line = next; continue; }
+      hud.fillText(line, 20, y); line = word; y += 13;
     }
-    hud.globalAlpha = 1;
+    if (line) hud.fillText(line, 20, y);
     for (let i = 0; i < count; i++) {
       hud.fillStyle = i === this.page ? '#9af1e3' : '#426075'; hud.fillRect(20 + i * 15, 253, 10, 2);
     }

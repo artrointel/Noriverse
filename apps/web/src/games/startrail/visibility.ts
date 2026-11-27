@@ -1,6 +1,7 @@
 import { balance, rayDistance, screen, world } from './outpost.ts';
 import type { Box, Point } from './outpost.ts';
 import type { IndirectField } from './gi.ts';
+import { indirectSize } from './gi-gl.ts';
 import { flareFalloff } from './support.ts';
 import type { TerrainRelief } from './terrain-material.ts';
 
@@ -9,6 +10,7 @@ const { width, height } = screen;
 const cell = 2;
 const edgeSample = 2;
 const bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+const opaqueBlack = new Uint8Array(Uint32Array.of(1).buffer)[0] === 1 ? 0xff000000 : 0xff;
 
 export function surface(w: number, h: number, read = false) {
   const canvas = document.createElement('canvas');
@@ -30,14 +32,14 @@ function occlusionPath(origin: Point, range: number, boxes: Box[], edge: 'front'
       Math.max(box.y - origin.y, origin.y - box.y - box.height, 0)) < range,
   );
   const angles = Array.from({ length: 96 }, (_, i) => TAU * i / 96);
-  const sampled = new Set<Point>();
+  const sampled = new Set<number>();
   for (const box of neighbors) {
     const corners = box.polygon?.vertices ?? [{ x: box.x, y: box.y }, { x: box.x + box.width, y: box.y },
       { x: box.x, y: box.y + box.height }, { x: box.x + box.width, y: box.y + box.height }];
     for (const point of corners) {
-      if (sampled.has(point)) continue;
-      sampled.add(point);
       const angle = angleOf(origin, point.x, point.y);
+      if (sampled.has(angle)) continue;
+      sampled.add(angle);
       for (const offset of [-.00006, 0, .00006]) angles.push((angle + offset + TAU) % TAU);
     }
   }
@@ -60,30 +62,35 @@ export type FlashLight = { from: Point; to: Point; color: string; radius: number
   passes?: number; emitter?: Point; opensFog?: boolean; spill?: number; additive?: boolean; source?: object; intensityScale?: number };
 type Headlamp = { origin: Point; heading: number };
 type LightPath = { x: number; y: number; path: Path2D };
+type FlashPath = LightPath & { reach: number };
 type IndirectMask = { image: HTMLCanvasElement; width: number; height: number };
 
 function projectLights(ctx: CanvasRenderingContext2D, camera: Box) {
-  ctx.scale(width / camera.width, height / camera.height);
+  ctx.scale(ctx.canvas.width / camera.width, ctx.canvas.height / camera.height);
   ctx.translate(-camera.x, -camera.y);
 }
 
-export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camera: Box) => void, terrainRelief?: TerrainRelief, bounds = world) {
+export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camera: Box) => void, terrainRelief: TerrainRelief, bounds: typeof world,
+  software: boolean) {
   const columns = bounds.width / cell;
   const rows = bounds.height / cell;
   const known = new Uint8Array(columns * rows);
   const current = surface(width / cell + 1, height / cell + 1, true);
-  const fog = surface(1, 1);
-  const unknown = surface(1, 1);
-  let fogPixels = fog.createImageData(1, 1);
-  let unknownPixels = unknown.createImageData(1, 1);
+  const fog = surface(1, 1, software);
+  const unknown = surface(1, 1, software);
+  let fogPixels: ImageData, unknownPixels: ImageData;
+  let fogAlpha: Uint32Array, unknownAlpha: Uint32Array;
+  let spanSamples: Int32Array, spanEnds: Int32Array;
   let samples = new Uint8Array(current.canvas.width * current.canvas.height);
   let remembered = new Uint8Array(samples.length);
-  const lighting = surface(width, height);
-  const beam = surface(width, height);
+  const lighting = surface(width, height, software);
+  const beam = surface(width, height, software);
   let incident: CanvasRenderingContext2D | undefined;
+  let incidentBeam: CanvasRenderingContext2D | undefined;
   let bounce: CanvasRenderingContext2D | undefined;
   let key = '';
   let blockerKey = '';
+  let previousBoxes: Box[] | undefined;
   let ambientPath: Path2D;
   let ambientIncidentPath: Path2D | undefined;
   let headlampPath: Path2D;
@@ -97,18 +104,22 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
   let flarePaths = new WeakMap<Point, LightPath>();
   let lightPaths = new WeakMap<Point, LightPath>();
   let incidentLightPaths = new WeakMap<Point, LightPath>();
-  let flashPaths = new WeakMap<FlashLight, Path2D>();
-  let indirectPaths = new WeakMap<FlashLight, Path2D>();
+  let flashPaths = new WeakMap<object, FlashPath>();
+  let indirectPaths = new WeakMap<object, FlashPath>();
   let flashMask: CanvasRenderingContext2D | undefined;
-  let combinedMask: CanvasRenderingContext2D | undefined;
+  let fogWithFlash: CanvasRenderingContext2D | undefined;
+  let unknownWithFlash: CanvasRenderingContext2D | undefined;
 
   function refresh(origin: Point, boxes: Box[]) {
-    const geometry = boxes.map(box => `${box.x},${box.y},${box.width},${box.height}`).join(';');
-    const signature = `${origin.x},${origin.y}:${geometry}`;
-    if (geometry !== blockerKey) {
-      lightPaths = new WeakMap(); flarePaths = new WeakMap(); incidentLightPaths = new WeakMap();
-      flashPaths = new WeakMap(); indirectPaths = new WeakMap(); blockerKey = geometry;
+    if (boxes !== previousBoxes) {
+      previousBoxes = boxes;
+      const geometry = boxes.map(box => `${box.x},${box.y},${box.width},${box.height}`).join(';');
+      if (geometry !== blockerKey) {
+        lightPaths = new WeakMap(); flarePaths = new WeakMap(); incidentLightPaths = new WeakMap();
+        flashPaths = new WeakMap(); indirectPaths = new WeakMap(); blockerKey = geometry;
+      }
     }
+    const signature = `${origin.x},${origin.y}:${blockerKey}`;
     if (signature !== key) {
       ambientPath = occlusionPath(origin, 39, boxes, 'back');
       ambientIncidentPath = undefined;
@@ -150,13 +161,16 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
       const light = wide ? { ...flash, radius: flash.radius * flashRadiusScale } : flash;
       if (flash.emitter) {
         const paths = wide ? indirectPaths : flashPaths;
-        let path = paths.get(flash);
-        if (!path) {
-          const reach = Math.max(Math.hypot(flash.to.x - flash.emitter.x, flash.to.y - flash.emitter.y), 40) + light.radius;
-          path = occlusionPath(flash.emitter, reach, boxes, wide || flash.opensFog ? 'front' : 'back', wide ? wallDepth : flash.opensFog ? 2 : 0);
-          paths.set(flash, path);
+        const source = flash.source ?? flash;
+        const { x, y } = flash.emitter;
+        const reach = Math.max(Math.hypot(flash.to.x - x, flash.to.y - y), 40) + light.radius;
+        let cached = paths.get(source);
+        if (!cached || cached.reach !== reach || cached.x !== x || cached.y !== y) {
+          cached = { x, y, reach, path: occlusionPath(flash.emitter, reach, boxes,
+            wide || flash.opensFog ? 'front' : 'back', wide ? wallDepth : flash.opensFog ? 2 : 0) };
+          paths.set(source, cached);
         }
-        ctx.clip(path);
+        ctx.clip(cached.path);
       }
       for (let i = 0; i < (flash.passes ?? 1); i++) transientLight(ctx, light, wide);
       ctx.restore();
@@ -169,9 +183,9 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
     const local = { origin, range: 39, amount: .52, color: '255,223,173' };
     const exposure = balance.indirect.inputExposure;
     if (captureIncident) {
-      incident ??= surface(width, height);
+      incident ??= surface(indirectSize.width, indirectSize.height, true);
       incident.globalCompositeOperation = 'source-over';
-      incident.fillStyle = '#000'; incident.fillRect(0, 0, width, height);
+      incident.fillStyle = '#000'; incident.fillRect(0, 0, indirectSize.width, indirectSize.height);
       incident.globalCompositeOperation = 'lighter';
       incident.save(); projectLights(incident, camera);
       incident.globalAlpha = exposure;
@@ -202,10 +216,11 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
       lighting.drawImage(beam.canvas, 0, 0);
       lighting.restore();
       if (captureIncident && incident) {
-        incident.save(); projectLights(incident, camera); incident.clip(headlampSurface(lamp, boxes));
-        incident.resetTransform();
+        incidentBeam ??= surface(indirectSize.width, indirectSize.height, true);
+        paintHeadlamp(incidentBeam, lamp, heading, camera, headlampPath, headlampSurface(lamp, boxes));
+        incident.save();
         incident.globalAlpha = exposure;
-        incident.drawImage(beam.canvas, 0, 0);
+        incident.drawImage(incidentBeam.canvas, 0, 0);
         incident.restore();
       }
     }
@@ -255,7 +270,7 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
   }
 
   function coverUnseen(ctx: CanvasRenderingContext2D, origin: Point, camera: Box, boxes: Box[], lights: Light[], pulses: readonly FlashLight[],
-    pixelStep: number, maskIndirect = false, lamp?: Headlamp) {
+    display: Pick<HTMLCanvasElement, 'width' | 'height'>, pixelStep: number, maskIndirect = false, lamp?: Headlamp) {
     const viewColumns = Math.ceil(camera.width / cell) + 1, viewRows = Math.ceil(camera.height / cell) + 1;
     const rgbaStride = viewColumns * 4;
     if (current.canvas.width !== viewColumns || current.canvas.height !== viewRows) {
@@ -265,14 +280,18 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
       remembered = new Uint8Array(samples.length);
       fogKey = '';
     }
-    const canvasWidth = ctx.canvas.width, canvasHeight = ctx.canvas.height;
+    const { width: canvasWidth, height: canvasHeight } = display;
     const gridWidth = Math.ceil(canvasWidth / pixelStep), gridHeight = Math.ceil(canvasHeight / pixelStep);
-    if (fog.canvas.width !== gridWidth || fog.canvas.height !== gridHeight) {
+    if (!spanSamples || fog.canvas.width !== gridWidth || fog.canvas.height !== gridHeight) {
       for (const { canvas } of [fog, unknown]) { canvas.width = gridWidth; canvas.height = gridHeight; }
       fogPixels = fog.createImageData(gridWidth, gridHeight);
       unknownPixels = unknown.createImageData(gridWidth, gridHeight);
+      fogAlpha = new Uint32Array(fogPixels.data.buffer);
+      unknownAlpha = new Uint32Array(unknownPixels.data.buffer);
+      spanSamples = new Int32Array(gridWidth);
+      spanEnds = new Int32Array(gridWidth);
       ditherKey = '';
-      flashMask = combinedMask = undefined;
+      flashMask = fogWithFlash = unknownWithFlash = undefined;
     }
     const offsetX = Math.floor(camera.x / cell), offsetY = Math.floor(camera.y / cell);
     const x0 = offsetX * cell, y0 = offsetY * cell;
@@ -344,28 +363,49 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
     const dotWidth = camera.width * pixelStep / canvasWidth, dotHeight = camera.height * pixelStep / canvasHeight;
     const nextDither = `${camera.x},${camera.y},${dotWidth},${dotHeight},${pixelStep},${canvasWidth},${canvasHeight}`;
     if (nextDither !== ditherKey) {
-      const pixels = fogPixels.data, blackout = unknownPixels.data;
       // Sample the center of each output block, including any clipped block at the right or bottom edge.
-      const xSamples = Int32Array.from({ length: gridWidth }, (_, x) =>
-        Math.floor((camera.x + Math.min(x + .5, (canvasWidth / pixelStep + x) / 2) * dotWidth) / cell) - offsetX);
+      let spans = 0;
+      for (let x = 0; x < gridWidth; x++) {
+        const sample = Math.floor((camera.x + Math.min(x + .5, (canvasWidth / pixelStep + x) / 2) * dotWidth) / cell) - offsetX;
+        if (spans === 0 || sample !== spanSamples[spans - 1]) spanSamples[spans++] = sample;
+        spanEnds[spans - 1] = x + 1;
+      }
       for (let y = 0; y < gridHeight; y++) {
         const worldY = camera.y + Math.min(y + .5, (canvasHeight / pixelStep + y) / 2) * dotHeight;
         const row = (Math.floor(worldY / cell) - offsetY) * viewColumns;
         const patternRow = (y & 3) * 4;
-        let alpha = (y * gridWidth) * 4 + 3;
-        for (let x = 0; x < gridWidth; x++, alpha += 4) {
-          const sample = row + xSamples[x];
-          const hidden = samples[sample] <= bayer[patternRow + (x & 3)];
-          pixels[alpha] = hidden ? 255 : 0;
-          blackout[alpha] = hidden && !remembered[sample] ? 255 : 0;
+        const pixelRow = y * gridWidth;
+        let from = 0;
+        for (let span = 0; span < spans;) {
+          const sample = row + spanSamples[span];
+          const coverage = samples[sample], explored = remembered[sample];
+          // Open and black areas normally cover most of each row. Fill whole runs and dither only the edges.
+          let end = spanEnds[span++];
+          while (span < spans) {
+            const next = row + spanSamples[span];
+            if (samples[next] !== coverage || remembered[next] !== explored) break;
+            end = spanEnds[span++];
+          }
+          if (coverage === 0 || coverage === 16) {
+            const alpha = coverage === 0 ? opaqueBlack : 0;
+            fogAlpha.fill(alpha, pixelRow + from, pixelRow + end);
+            if (hasRememberedGround) unknownAlpha.fill(explored ? 0 : alpha, pixelRow + from, pixelRow + end);
+          } else {
+            for (let x = from; x < end; x++) {
+              const alpha = coverage <= bayer[patternRow + (x & 3)] ? opaqueBlack : 0;
+              fogAlpha[pixelRow + x] = alpha;
+              if (hasRememberedGround) unknownAlpha[pixelRow + x] = explored ? 0 : alpha;
+            }
+          }
+          from = end;
         }
       }
       fog.putImageData(fogPixels, 0, 0);
-      unknown.putImageData(unknownPixels, 0, 0);
+      if (hasRememberedGround) unknown.putImageData(unknownPixels, 0, 0);
       ditherKey = nextDither;
     }
     if (pulses.length) {
-      flashMask ??= surface(gridWidth, gridHeight);
+      flashMask ??= surface(gridWidth, gridHeight, software);
       flashMask.clearRect(0, 0, gridWidth, gridHeight);
       flashMask.save(); flashMask.scale(1 / dotWidth, 1 / dotHeight); flashMask.translate(-camera.x, -camera.y);
       flashMask.globalCompositeOperation = 'lighter';
@@ -375,7 +415,7 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
     function frameMask(mask: CanvasRenderingContext2D) {
       if (!pulses.length || !flashMask) return mask.canvas;
       // A pulse only exposes the current frame and never changes the exploration grid.
-      const result = combinedMask ??= surface(gridWidth, gridHeight);
+      const result = mask === fog ? fogWithFlash ??= surface(gridWidth, gridHeight, software) : unknownWithFlash ??= surface(gridWidth, gridHeight, software);
       result.clearRect(0, 0, gridWidth, gridHeight);
       result.globalCompositeOperation = 'source-over';
       result.drawImage(mask.canvas, 0, 0);
@@ -384,12 +424,13 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
       return result.canvas;
     }
     const maskWidth = gridWidth * dotWidth, maskHeight = gridHeight * dotHeight;
+    const fogImage = frameMask(fog);
     ctx.save();
     if (hasRememberedGround) {
       // Use the coarse grid only as a mask. Previously explored surfaces retain the same terrain detail.
       ctx.imageSmoothingEnabled = false;
       ctx.globalCompositeOperation = 'destination-out';
-      ctx.drawImage(frameMask(fog), 0, 0, maskWidth, maskHeight);
+      ctx.drawImage(fogImage, 0, 0, maskWidth, maskHeight);
       ctx.globalCompositeOperation = 'destination-over';
       ctx.globalAlpha = memoryLight;
       drawGround(ctx, camera);
@@ -398,14 +439,14 @@ export function makeVisibility(drawGround: (ctx: CanvasRenderingContext2D, camer
     }
     ctx.globalCompositeOperation = 'source-over';
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(frameMask(unknown), 0, 0, maskWidth, maskHeight);
+    ctx.drawImage(hasRememberedGround ? frameMask(unknown) : fogImage, 0, 0, maskWidth, maskHeight);
     ctx.restore();
-    if (maskIndirect) return { image: frameMask(fog), width: maskWidth, height: maskHeight };
+    if (maskIndirect) return { image: fogImage, width: maskWidth, height: maskHeight };
   }
 
   function addIndirect(ctx: CanvasRenderingContext2D, camera: Box, radiance: IndirectField, mask: IndirectMask, strength: number) {
     const { width: gridWidth, height: gridHeight } = mask.image;
-    if (bounce?.canvas.width !== gridWidth || bounce.canvas.height !== gridHeight) bounce = surface(gridWidth, gridHeight);
+    if (bounce?.canvas.width !== gridWidth || bounce.canvas.height !== gridHeight) bounce = surface(gridWidth, gridHeight, software);
     bounce.save();
     bounce.clearRect(0, 0, gridWidth, gridHeight);
     bounce.globalCompositeOperation = 'source-over';
@@ -459,9 +500,10 @@ export function peripheralLight(origin: Point, heading: number, point: Point, fl
   return 1 - angularShade * distanceShade * peripheralDarkness;
 }
 
-function paintHeadlamp(ctx: CanvasRenderingContext2D, origin: Point, heading: number, camera: Box, clip: Path2D) {
-  ctx.clearRect(0, 0, width, height);
+function paintHeadlamp(ctx: CanvasRenderingContext2D, origin: Point, heading: number, camera: Box, clip: Path2D, wallSurface?: Path2D) {
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   ctx.save(); projectLights(ctx, camera); ctx.clip(clip);
+  if (wallSurface) ctx.clip(wallSurface);
   const spread = balance.beam.halfAngle / Math.PI;
   const cone = ctx.createConicGradient(heading - balance.beam.halfAngle, origin.x, origin.y);
   for (const [fraction, opacity] of [[0, 0], [.13, .22], [.3, .66], [.5, .98], [.7, .66], [.87, .22], [1, 0]]) {

@@ -108,6 +108,7 @@ export function piecePuzzle(image: CanvasImageSource, size: number, title: strin
     cancelDrag() { drag = undefined; },
     draw(ctx, time) {
       ctx.save();
+      const opacity = ctx.globalAlpha;
       ctx.fillStyle = '#020c1990'; ctx.fillRect(0, 0, screen.width, screen.height);
       const panel = new Path2D();
       panel.roundRect(64, 27, 361, 218, 9);
@@ -120,9 +121,9 @@ export function piecePuzzle(image: CanvasImageSource, size: number, title: strin
       label(ctx, '조각을 빈칸에 끌어 놓으세요', 257, 195, 9, '#b3d4d9');
       label(ctx, '수리 중에도 공격받을 수 있어요', 257, 210, 8, '#ffd896');
       ctx.fillStyle = '#040f1c'; ctx.fillRect(board.x - 2, board.y - 2, board.width + 4, board.height + 4);
-      ctx.globalAlpha = .23;
+      ctx.globalAlpha = .23 * opacity;
       ctx.drawImage(image, board.x, board.y, board.width, board.height);
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = opacity;
       for (let i = 0; i < layout.count; i++) {
         if (layout.isPlaced(i)) continue;
         ctx.strokeStyle = '#7cb5c26b'; ctx.lineWidth = .65;
@@ -139,9 +140,9 @@ export function piecePuzzle(image: CanvasImageSource, size: number, title: strin
       }
       if (feedback && time - feedback.at < .4) {
         const path = piecePath(size, feedback.cell, forCell(feedback.cell), cell);
-        ctx.globalAlpha = 1 - (time - feedback.at) / .4;
+        ctx.globalAlpha = opacity * (1 - (time - feedback.at) / .4);
         ctx.strokeStyle = feedback.correct ? '#92ffbb' : '#ff8d81';
-        ctx.lineWidth = 2; ctx.stroke(path); ctx.globalAlpha = 1;
+        ctx.lineWidth = 2; ctx.stroke(path); ctx.globalAlpha = opacity;
       }
       if (drag) drawPiece(ctx, drag.piece, { x: drag.cursor.x - cell / 2, y: drag.cursor.y - cell / 2 }, cell, '#baf8ee');
       ctx.restore();

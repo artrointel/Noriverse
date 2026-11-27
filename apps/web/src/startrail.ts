@@ -60,8 +60,8 @@ const explorer = document.querySelector<HTMLSelectElement>('#explorer')!;
 const expeditionAlly = document.querySelector<HTMLInputElement>('#expedition-ally')!;
 const trainingDummy = document.querySelector<HTMLInputElement>('#training-dummy')!;
 launch.addEventListener('click', () => {
+  if (!scene.startExpedition(explorer.value === 'kommi' ? 'kommi' : 'solori', expeditionAlly.checked, trainingDummy.checked)) return;
   launch.disabled = true;
-  scene.startExpedition(explorer.value === 'kommi' ? 'kommi' : 'solori', expeditionAlly.checked, trainingDummy.checked);
   game.canvas?.focus({ preventScroll: true });
 });
 

@@ -1,15 +1,111 @@
 import type { ExpeditionMap } from './expedition-maps.ts';
-import { blockerClearance, distance, rayDistance, tileSize } from './outpost.ts';
+import { balance, blockerClearance, distance, rayDistance, tileSize, waves } from './outpost.ts';
 import type { Box, EnemyKind, Point } from './outpost.ts';
 
-export const encounters = {
-  '1-1': { cap: 22, interval: 3.2, alertInterval: 2, packSize: 3, firstAt: 1.5,
-    roster: ['mite', 'spore', 'grub', 'mite', 'scout', 'boar'] },
-  '1-2': { cap: 28, interval: 2.6, alertInterval: 1.8, packSize: 4, firstAt: 1,
-    roster: ['mite', 'grub', 'scout', 'spore', 'mite', 'boar', 'sentinel'] },
-} as const satisfies Record<ExpeditionMap['id'], {
+type EncounterTable = {
   cap: number; interval: number; alertInterval: number; packSize: number; firstAt: number; roster: readonly EnemyKind[];
-}>;
+};
+export const encounters = {
+  '1-1': { cap: 19, interval: 3.8, alertInterval: 3.1, packSize: 4, firstAt: 1.3,
+    roster: ['starTick', 'starTick', 'coralHopper', 'mite', 'rimeSkitter', 'spore', 'starTick', 'scout', 'coralHopper', 'boar'] },
+  '1-2': { cap: 18, interval: 4.2, alertInterval: 4.2, packSize: 4, firstAt: 1.5,
+    roster: ['rimeSkitter', 'starTick', 'mite', 'coralHopper', 'scout', 'rimeSkitter', 'spore', 'starTick', 'grub'] },
+  '1-3': { cap: 24, interval: 4.1, alertInterval: 3.3, packSize: 5, firstAt: 1.3,
+    roster: ['coralHopper', 'rimeSkitter', 'starTick', 'grub', 'coralHopper', 'scout', 'starTick', 'spore', 'rimeSkitter', 'sentinel'] },
+  '1-4': { cap: 27, interval: 4.25, alertInterval: 3.5, packSize: 6, firstAt: 1.15,
+    roster: ['starTick', 'coralHopper', 'rimeSkitter', 'scout', 'coralHopper', 'grub', 'starTick', 'rimeSkitter', 'boar', 'sentinel'] },
+} as const satisfies Record<ExpeditionMap['id'], EncounterTable>;
+
+const escortEncounter: EncounterTable = { cap: 8, interval: 6.5, alertInterval: 6.5, packSize: 3, firstAt: 3,
+  roster: ['starTick', 'rimeSkitter', 'coralHopper', 'mite'] };
+export const escortChase = { dangerRadius: 42, followSpeed: 3.15, spawnClearance: 126 } as const;
+export const arrivalRadius = 126;
+export const companionCombatWeight = .35;
+
+const partyPressure = [
+  { enemies: .72, cadence: 1.22 },
+  { enemies: 1, cadence: 1 },
+  { enemies: 1.25, cadence: .86 },
+  { enemies: 1.5, cadence: .75 },
+] as const;
+
+export function partyEncounter(stage: ExpeditionMap['id'], explorers: number, escort = false) {
+  const table = escort ? escortEncounter : encounters[stage];
+  const index = Math.min(4, Math.max(1, explorers)) - 1;
+  const lower = partyPressure[Math.floor(index)], upper = partyPressure[Math.ceil(index)];
+  const fraction = index % 1;
+  const enemies = lower.enemies + (upper.enemies - lower.enemies) * fraction;
+  const cadence = lower.cadence + (upper.cadence - lower.cadence) * fraction;
+  return { ...table, enemies, cap: Math.round(table.cap * enemies), packSize: Math.round(table.packSize * enemies),
+    interval: table.interval * cadence, alertInterval: table.alertInterval * cadence };
+}
+
+export function partyOutsideArrival(landing: Point, party: readonly Point[]) {
+  return party.length > 0 && party.every(point => distance(point, landing) >= arrivalRadius);
+}
+
+export class EncounterDirector {
+  private started = false;
+  private readyAt?: number;
+  private rosterIndex = 0;
+  private pending: EnemyKind[] = [];
+
+  updateArrival(now: number, allOutside: boolean, firstAt: number) {
+    if (!allOutside) { this.readyAt = undefined; return false; }
+    this.readyAt ??= now + firstAt;
+    if (this.started) return false;
+    this.started = true;
+    return true;
+  }
+
+  queue(now: number, kinds: readonly EnemyKind[]) {
+    this.pending.push(...kinds);
+    if (this.readyAt !== undefined) this.readyAt = now;
+  }
+
+  beginEscort(now: number, firstAt: number) {
+    this.pending.length = 0;
+    this.rosterIndex = 0;
+    if (this.readyAt !== undefined) this.readyAt = now + firstAt;
+  }
+
+  isReady(now: number) { return this.readyAt !== undefined && now + 1e-7 >= this.readyAt; }
+
+  spawnWave(now: number, alive: number, table: EncounterTable, alert: boolean, spawn: (kind: EnemyKind) => boolean) {
+    if (!this.isReady(now)) return;
+    const limit = Math.min(table.cap - alive, table.packSize);
+    let count = 0;
+    for (; count < limit; count++) {
+      const queued = this.pending[0];
+      if (!spawn(queued ?? table.roster[this.rosterIndex % table.roster.length])) break;
+      if (queued) this.pending.shift();
+      else this.rosterIndex++;
+    }
+    this.readyAt = now + (limit > 0 && count === 0 ? .65 : alert ? table.alertInterval : table.interval);
+  }
+}
+
+export function scaledPatrols<T>(patrols: readonly T[], fraction: number) {
+  if (fraction >= 1) return patrols;
+  return patrols.filter((_, index) => Math.round((index + 1) * fraction) > Math.round(index * fraction));
+}
+
+type Defense = { duration: number; waves: readonly { at: number; kinds: readonly EnemyKind[] }[] };
+export const stageDefense: Partial<Record<ExpeditionMap['id'], Defense>> = {
+  '1-1': { duration: balance.relay.duration, waves },
+  '1-3': { duration: 18, waves: [
+    { at: 1, kinds: ['mite', 'grub', 'scout'] },
+    { at: 6, kinds: ['boar', 'spore', 'sentinel'] },
+    { at: 12, kinds: ['grub', 'mite', 'scout', 'spore'] },
+  ] },
+  '1-4': { duration: 24, waves: [
+    { at: 1, kinds: ['mite', 'grub', 'scout'] },
+    { at: 7, kinds: ['sentinel', 'spore', 'mite'] },
+    { at: 14, kinds: ['boar', 'scout', 'grub', 'mite'] },
+    { at: 21, kinds: ['spore', 'grub', 'sentinel'] },
+  ] },
+};
+export const observationScan = { duration: 6, radius: 82, defenseDiscount: 8 };
 
 export const encounterRange = { approach: 280, alert: 350, pursuitBuffer: 110, safe: 148, retire: 490 };
 const margin = 40;

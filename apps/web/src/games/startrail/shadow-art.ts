@@ -13,6 +13,9 @@ export const enemyGroundRatio = {
   sentinel: { upright: 19 / 99, falling: 25 / 84 },
   spore: { upright: 26 / 100, falling: 25 / 85 },
   grub: { upright: 13 / 70, falling: 17 / 69 },
+  starTick: { upright: .22, falling: .27 },
+  coralHopper: { upright: .21, falling: .28 },
+  rimeSkitter: { upright: .25, falling: .30 },
 } satisfies Record<EnemyKind, { upright: number; falling: number }>;
 
 export const fixtureGroundRatio = {

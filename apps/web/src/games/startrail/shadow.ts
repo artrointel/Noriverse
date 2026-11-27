@@ -232,7 +232,7 @@ export function createSpriteShadows() {
   const casters: Caster[] = [];
   const frameCache = new WeakMap<ShadowTexture, Map<number, SourceFrame>>();
   let probe: CanvasRenderingContext2D | undefined;
-  let fallback: CanvasRenderingContext2D | undefined;
+  const fallback = new WeakMap<SourceFrame, HTMLCanvasElement>();
   let blendLayer: CanvasRenderingContext2D | undefined;
   let pairLayer: CanvasRenderingContext2D | undefined;
   let pairBlendLayer: CanvasRenderingContext2D | undefined;
@@ -299,7 +299,7 @@ export function createSpriteShadows() {
     const size = spriteCellSize;
     const x = Math.floor(bounds[0] * size), y = Math.floor(bounds[1] * size);
     const w = Math.ceil((bounds[0] + bounds[2]) * size) - x, h = Math.ceil((bounds[1] + bounds[3]) * size) - y;
-    const pair = pairLayer ??= surface(w, h);
+    const pair = pairLayer ??= surface(w, h, true);
     if (pair.canvas.width < w) pair.canvas.width = w;
     if (pair.canvas.height < h) pair.canvas.height = h;
     pair.imageSmoothingEnabled = false;
@@ -323,7 +323,7 @@ export function createSpriteShadows() {
       return;
     }
 
-    const blend = pairBlendLayer ??= surface(w, h);
+    const blend = pairBlendLayer ??= surface(w, h, true);
     if (blend.canvas.width < w) blend.canvas.width = w;
     if (blend.canvas.height < h) blend.canvas.height = h;
     blend.clearRect(0, 0, w, h);
@@ -338,7 +338,6 @@ export function createSpriteShadows() {
 
   function drawWithCanvas(target: CanvasRenderingContext2D, draws: ShadowDraw[]) {
     const size = spriteCellSize;
-    const tint = fallback ??= surface(size, size);
     for (const draw of draws) {
       const { frame } = draw;
       const { origin, horizontal, vertical, crossfade } = draw.footprint;
@@ -349,34 +348,44 @@ export function createSpriteShadows() {
         target.restore();
         continue;
       }
-      tint.clearRect(0, 0, size, size);
-      tint.globalCompositeOperation = 'source-over';
-      tint.drawImage(draw.source, frame.x, frame.y, frame.w, frame.h, 0, 0, size, size);
-      tint.globalCompositeOperation = 'source-in';
-      tint.fillStyle = '#020916'; tint.fillRect(0, 0, size, size);
+      if (draw.source === solid && !crossfade) {
+        target.fillStyle = '#020916'; target.fillRect(0, 0, size, size);
+        target.restore();
+        continue;
+      }
+      let tint = fallback.get(frame);
+      if (!tint) {
+        const mask = surface(size, size, true);
+        mask.drawImage(draw.source, frame.x, frame.y, frame.w, frame.h, 0, 0, size, size);
+        mask.globalCompositeOperation = 'source-in';
+        mask.fillStyle = '#020916'; mask.fillRect(0, 0, size, size);
+        tint = mask.canvas;
+        fallback.set(frame, tint);
+      }
       if (crossfade) {
         const { weight, anchorX, shear, bounds: [left, top, width, height] } = crossfade;
         const x = Math.floor(left * size), y = Math.floor(top * size);
         const w = Math.ceil((left + width) * size) - x, h = Math.ceil((top + height) * size) - y;
-        const layer = blendLayer ??= surface(w, h);
-        if (layer.canvas.width !== w) layer.canvas.width = w;
-        if (layer.canvas.height !== h) layer.canvas.height = h;
+        const layer = blendLayer ??= surface(w, h, true);
+        if (layer.canvas.width < w) layer.canvas.width = Math.ceil(w / 32) * 32;
+        if (layer.canvas.height < h) layer.canvas.height = Math.ceil(h / 32) * 32;
         layer.resetTransform();
         layer.clearRect(0, 0, w, h);
         layer.imageSmoothingEnabled = false;
         layer.globalCompositeOperation = 'lighter';
         layer.globalAlpha = 1 - weight;
-        layer.drawImage(tint.canvas, -x, -y);
+        layer.drawImage(tint, -x, -y);
         layer.globalAlpha = weight;
         layer.setTransform(-1, -shear, 0, 1, 2 * anchorX * size - x, shear * anchorX * size - y);
-        layer.drawImage(tint.canvas, 0, 0);
-        target.drawImage(layer.canvas, x, y);
-      } else target.drawImage(tint.canvas, 0, 0);
+        layer.drawImage(tint, 0, 0);
+        target.drawImage(layer.canvas, 0, 0, w, h, x, y, w, h);
+      } else target.drawImage(tint, 0, 0);
       target.restore();
     }
   }
 
   return {
+    accelerated: Boolean(gpu),
     sprite(source: ShadowTexture, point: Point, size: number, frame?: FrameSource, pose: ShadowPose = {}) {
       casters.push({ source, point, size: { x: size, y: size }, frame, pose });
     },
@@ -385,7 +394,7 @@ export function createSpriteShadows() {
         pose: base.pose, attachment: { socket: base.socket, sprite } });
     },
     rectangle,
-    paint(target: CanvasRenderingContext2D, camera: Box, lights: readonly ShadowLight[], blockers: Box[], mode: ShadowMode = 'auto') {
+    paint(target: CanvasRenderingContext2D, camera: Box, lights: readonly ShadowLight[], blockers: Box[], mode: ShadowMode, pixelStep: number) {
       const draws: ShadowDraw[] = [];
       const { width, height } = camera;
       const toView = (p: Point) => ({ x: p.x - camera.x, y: p.y - camera.y });
@@ -416,9 +425,13 @@ export function createSpriteShadows() {
       }
       casters.length = 0;
       if (!draws.length) return;
-      const layer = gpu?.paint(draws, target.canvas.width, target.canvas.height, camera);
-      if (layer) target.drawImage(layer, 0, 0, width, height);
-      else drawWithCanvas(target, draws);
+      const layer = gpu?.paint(draws, target.canvas.width, target.canvas.height, camera, pixelStep);
+      if (layer) {
+        target.save();
+        target.imageSmoothingEnabled = true;
+        target.drawImage(layer, 0, 0, width, height);
+        target.restore();
+      } else drawWithCanvas(target, draws);
     },
     dispose() { gpu?.dispose(); },
   };

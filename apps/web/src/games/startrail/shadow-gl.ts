@@ -1,5 +1,6 @@
 import type { Box } from './outpost.ts';
 import type { ShadowDraw } from './shadow.ts';
+import { usesSoftwareWebGL } from './webgl-context.ts';
 
 const vertexSource = `
 attribute vec2 aCorner;
@@ -109,8 +110,10 @@ function prepare(gl: WebGLRenderingContext) {
 
 export function createShadowShader() {
   const canvas = document.createElement('canvas');
-  const gl = canvas.getContext('webgl', { alpha: true, antialias: false, depth: false, premultipliedAlpha: true, powerPreference: 'low-power' });
+  const gl = canvas.getContext('webgl', { alpha: true, antialias: false, depth: false, premultipliedAlpha: true,
+    failIfMajorPerformanceCaveat: true, powerPreference: 'low-power' });
   if (!gl) return;
+  if (usesSoftwareWebGL(gl)) { gl.getExtension('WEBGL_lose_context')?.loseContext(); return; }
   const context = gl;
   let resources = prepare(context);
   const lost = (event: Event) => { event.preventDefault(); resources = undefined; };
@@ -139,11 +142,11 @@ export function createShadowShader() {
   }
 
   return {
-    paint(draws: ShadowDraw[], width: number, height: number, view: Box) {
+    paint(draws: ShadowDraw[], width: number, height: number, view: Box, pixelStep: number) {
       const state = resources;
       if (!state || context.isContextLost() || !width || !height) return;
       // A single small GPU layer is enough for soft edges even at high display density.
-      const density = Math.min(1, 1280 / width);
+      const density = Math.min(1 / pixelStep, 768 / width);
       const w = Math.max(1, Math.round(width * density)), h = Math.max(1, Math.round(height * density));
       if (canvas.width !== w) canvas.width = w;
       if (canvas.height !== h) canvas.height = h;

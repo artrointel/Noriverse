@@ -13,9 +13,14 @@ import { activeStatuses, applyStatus, rollCombatStatus, shortenStatuses, statusM
 import type { Statuses } from '../apps/web/src/games/startrail/status.ts';
 import { gunArt, heldPose, projectBarrelPoint, supportPose, turretArt, turretBaseCenter } from '../apps/web/src/games/startrail/weapon-pose.ts';
 import { flashlightLevel } from '../apps/web/src/games/startrail/visibility.ts';
-import { observatoryStage, outpostStage } from '../apps/web/src/games/startrail/expedition-maps.ts';
-import { concealed, encounterRange, EnemyFlow, openPath } from '../apps/web/src/games/startrail/encounters.ts';
+import { auroraStage, debrisStage, nextStage, observatoryStage, outpostStage, requiredStationsRemaining } from '../apps/web/src/games/startrail/expedition-maps.ts';
+import { arrivalRadius, companionCombatWeight, concealed, EncounterDirector, encounterRange, encounters, EnemyFlow,
+  openPath, partyEncounter, partyOutsideArrival, scaledPatrols } from '../apps/web/src/games/startrail/encounters.ts';
+import { LayerFade, SceneFade } from '../apps/web/src/games/startrail/scene-fade.ts';
+import { pilots, simulateExpedition, simulationStages } from '../scripts/startrail-balance.ts';
+import { blendTileBoundaries, terrainTextureScale } from '../apps/web/src/games/startrail/terrain-material.ts';
 import { powerTransfer } from '../apps/web/src/games/startrail/power-transfer.ts';
+import { routeSignal } from '../apps/web/src/games/startrail/route-signal.ts';
 
 const cell = (point: Point) => [Math.floor(point.x / tileSize), Math.floor(point.y / tileSize)] as const;
 const label = (x: number, y: number) => `${x}:${y}`;
@@ -117,8 +122,8 @@ test('the observatory is about thirty percent larger and both routes reach the s
   }
 });
 
-test('both landing areas can supply reachable reinforcements concealed from the player', () => {
-  for (const stage of [outpostStage, observatoryStage]) {
+test('each landing area can supply reachable reinforcements concealed from the player', () => {
+  for (const stage of [outpostStage, observatoryStage, auroraStage, debrisStage]) {
     const flow = new EnemyFlow(stage);
     const walls = [...stage.obstacles, stage.gate];
     const blockers = [...walls];
@@ -137,6 +142,187 @@ test('both landing areas can supply reachable reinforcements concealed from the 
     assert.ok(distance(stage.landing, point) >= encounterRange.safe);
     assert.ok(distance(stage.landing, point) <= encounterRange.approach);
   }
+});
+
+test('party pressure keeps the two-explorer baseline and reduces solo waves and patrols', () => {
+  for (const stage of [outpostStage, observatoryStage, auroraStage, debrisStage]) {
+    const solo = partyEncounter(stage.id, 1), pair = partyEncounter(stage.id, 2);
+    const base = encounters[stage.id];
+    assert.deepEqual(pair, { ...base, enemies: 1 });
+    assert.ok(solo.cap < pair.cap && solo.packSize < pair.packSize);
+    assert.ok(solo.interval > pair.interval && solo.alertInterval > pair.alertInterval);
+    assert.equal(scaledPatrols(stage.patrols, solo.enemies).length, Math.round(stage.patrols.length * solo.enemies));
+    assert.equal(scaledPatrols(stage.patrols, pair.enemies), stage.patrols);
+    const accompanied = partyEncounter(stage.id, 1 + companionCombatWeight);
+    assert.ok(accompanied.enemies > solo.enemies && accompanied.enemies < pair.enemies);
+  }
+});
+
+test('patrol activation and waves wait for everyone, including after a return to the landing area', () => {
+  const director = new EncounterDirector();
+  const table = partyEncounter('1-1', 1);
+  const outside = { x: landing.x + arrivalRadius + 1, y: landing.y };
+  assert.equal(partyOutsideArrival(landing, [outside, landing]), false);
+  assert.equal(partyOutsideArrival(landing, [outside, outside]), true);
+  const spawned: string[] = [];
+  const spawn = (kind: string) => { spawned.push(kind); return true; };
+  assert.equal(director.updateArrival(60, false, table.firstAt), false);
+  director.queue(60, ['mite']);
+  director.spawnWave(120, 0, table, false, spawn);
+  assert.deepEqual(spawned, []);
+  assert.equal(director.updateArrival(120, true, table.firstAt), true);
+  director.spawnWave(120, 0, table, false, spawn);
+  assert.equal(spawned.length, 0);
+  director.spawnWave(120 + table.firstAt, 0, table, false, spawn);
+  assert.equal(spawned[0], 'mite');
+  assert.equal(spawned.length, table.packSize);
+  director.updateArrival(122, false, table.firstAt);
+  director.spawnWave(130, 0, table, false, spawn);
+  assert.equal(spawned.length, table.packSize);
+  assert.equal(director.updateArrival(130, true, table.firstAt), false);
+});
+
+test('escort cancels queued heavy enemies and applies its own capacity and cadence', () => {
+  const director = new EncounterDirector();
+  const normal = partyEncounter('1-2', 1), escort = partyEncounter('1-2', 1, true);
+  assert.ok(escort.cap < normal.cap && escort.interval > normal.interval);
+  director.updateArrival(0, true, normal.firstAt);
+  director.queue(1, ['sentinel']);
+  director.beginEscort(1, escort.firstAt);
+  const spawned: string[] = [];
+  const spawn = (kind: string) => { spawned.push(kind); return true; };
+  director.spawnWave(2, 0, escort, true, spawn);
+  assert.equal(spawned.length, 0);
+  director.spawnWave(4, escort.cap, escort, true, spawn);
+  assert.equal(spawned.length, 0);
+  director.spawnWave(4 + escort.alertInterval, escort.cap - 1, escort, true, spawn);
+  assert.deepEqual(spawned, ['starTick']);
+});
+
+test('scene swaps once at full opacity and overlay fades keep the outgoing view until hidden', () => {
+  const fade = new SceneFade();
+  fade.advance(240, false);
+  let swapped = 0;
+  assert.equal(fade.opacity, 0);
+  assert.equal(fade.switchTo(() => swapped++), true);
+  fade.advance(120, false);
+  assert.equal(fade.opacity, .5);
+  assert.equal(swapped, 0);
+  assert.equal(fade.switchTo(() => { throw new Error('duplicate swap'); }), false);
+  fade.advance(120, false);
+  assert.equal(swapped, 1);
+  assert.equal(fade.opacity, 1);
+  fade.advance(240, false);
+  assert.equal(fade.active, false);
+  const layer = new LayerFade<'panel' | 'overlay'>();
+  layer.advance('panel', 150, false);
+  layer.advance('overlay', 75, false);
+  assert.deepEqual(layer.layer, { content: 'panel', opacity: .5 });
+  layer.advance('overlay', 75, false);
+  assert.equal(layer.layer, undefined);
+  layer.advance('overlay', 75, false);
+  assert.deepEqual(layer.layer, { content: 'overlay', opacity: .5 });
+});
+
+test('the balance simulation clears the escort and shows sustained combat across the later stages', () => {
+  const run = simulateExpedition(observatoryStage, pilots.deliberate, 2, 4);
+  assert.deepEqual(run, simulateExpedition(observatoryStage, pilots.deliberate, 2, 4));
+  assert.ok(run.cleared && run.escortKills > 0 && run.escortDamage < 30);
+  for (const stage of simulationStages) {
+    const skilled = simulateExpedition(stage, pilots.practiced, 1, 4);
+    assert.ok(skilled.cleared && skilled.kills > 20, stage.id);
+  }
+});
+
+test('both aurora routes reach the transmitter while the launch gate protects the shuttle', () => {
+  const stage = auroraStage;
+  assert.equal(nextStage['1-2'], stage);
+  assert.equal(nextStage['1-3'], debrisStage);
+  const gateClosed = (x: number, y: number) => x === Math.floor(stage.gate.x / tileSize) && y >= 15 && y <= 17;
+  const northRoute = explore(stage.landing, (x, y) => gateClosed(x, y) || x === 16 && y >= 23, stage.floor);
+  const southRoute = explore(stage.landing, (x, y) => gateClosed(x, y) || y === 18 && x >= 9 && x <= 13, stage.floor);
+  assert.ok(northRoute.has(at(stage.stations[0])) && northRoute.has(at(stage.relayAccess)));
+  assert.ok(southRoute.has(at(stage.stations[1])) && southRoute.has(at(stage.relayAccess)));
+  assert.ok(!northRoute.has(at(stage.lift)) && !southRoute.has(at(stage.lift)));
+  assert.ok(explore(stage.relayAccess, () => false, stage.floor).has(at(stage.lift)));
+  for (const point of [...stage.stations, stage.relayAccess, stage.lift, ...stage.patrols, ...stage.caches, ...stage.weaponPickups]) {
+    assert.ok(stage.walkable(point), JSON.stringify(point));
+  }
+});
+
+test('the debris ring extends the main route and gives each objective two approaches', () => {
+  const stage = debrisStage;
+  assert.equal(nextStage['1-4'], undefined);
+  assert.ok(Math.abs(stage.world.width / auroraStage.world.width - 1.3) < .01);
+  assert.ok(Math.abs((stage.lift.x - stage.landing.x) / (auroraStage.lift.x - auroraStage.landing.x) - 1.3) < .01);
+  const gateClosed = (x: number, y: number) => x === Math.floor(stage.gate.x / tileSize) && y >= 16 && y <= 18;
+  const blockEntry = [(x: number, y: number) => y === 13 && x >= 14 && x <= 17,
+    (x: number, y: number) => y === 21 && x >= 21 && x <= 26, (x: number, y: number) => y === 12 && x >= 34 && x <= 37];
+  for (const [i, point] of stage.stations.entries()) {
+    const reached = explore(stage.landing, (x, y) => gateClosed(x, y) || blockEntry[i](x, y), stage.floor);
+    assert.ok(reached.has(at(point)) && reached.has(at(stage.relayAccess)) && !reached.has(at(stage.lift)), point.name);
+    assert.ok(stage.walkable(point));
+  }
+  assert.ok(explore(stage.relayAccess, () => false, stage.floor).has(at(stage.lift)));
+  const [greenhouse, salvage, scan] = stage.stations;
+  assert.equal(requiredStationsRemaining(stage.stations, new Set([scan])), 2);
+  assert.equal(requiredStationsRemaining(stage.stations, new Set([greenhouse, scan])), 1);
+  assert.equal(requiredStationsRemaining(stage.stations, new Set([greenhouse, salvage])), 0);
+  assert.ok(stage.scenery.every(item => stage.walkable(item) && stage.obstacles.includes(item.bounds)));
+  for (const { polygon } of stage.obstacles) {
+    if (!polygon) continue;
+    const points = polygon.vertices;
+    const turns = points.map((a, i) => {
+      const b = points[(i + 1) % points.length], c = points[(i + 2) % points.length];
+      return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    });
+    assert.ok(Number.isFinite(polygon.center.x) && turns.every(turn => turn < 1e-6), 'wall should be a convex Matter body');
+  }
+});
+
+test('the debris ring halves the chance that two floor cells show the same base tile', () => {
+  const duplicationRate = (stage: typeof auroraStage | typeof debrisStage) => {
+    const counts = new Map<number, number>();
+    let total = 0;
+    for (const [y, row] of stage.floor.entries()) for (const [x, open] of row.entries()) {
+      if (!open) continue;
+      const { cell } = stage.material(x, y);
+      counts.set(cell, (counts.get(cell) ?? 0) + 1);
+      total++;
+    }
+    return [...counts.values()].reduce((sum, count) => sum + count * (count - 1), 0) / (total * (total - 1));
+  };
+  assert.ok(duplicationRate(debrisStage) <= duplicationRate(auroraStage) * .5);
+});
+
+test('tile seams blend both directions without changing the tile centers or erasing their alpha', () => {
+  const size = tileSize * terrainTextureScale, width = size * 2, height = size * 2;
+  const data = new Uint8ClampedArray(width * height * 4);
+  const index = (x: number, y: number) => (y * width + x) * 4;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const i = index(x, y);
+    data[i] = x < size ? 35 : 215;
+    data[i + 1] = y < size ? 50 : 180;
+    data[i + 3] = 255;
+  }
+  blendTileBoundaries({ data, width, height } as ImageData, [[true, true], [true, true]], true);
+  assert.ok(Math.abs(data[index(size - 1, 20)] - data[index(size, 20)]) <= 2);
+  assert.ok(Math.abs(data[index(20, size - 1) + 1] - data[index(20, size) + 1]) <= 2);
+  assert.deepEqual(Array.from(data.slice(index(20, 20), index(20, 20) + 4)), [35, 50, 0, 255]);
+});
+
+test('aurora signal waits for playback and repeats the full pattern after a wrong input', () => {
+  const panel = routeSignal(10);
+  const press = (x: number, time: number) => panel.pointerDown(1, { x, y: 139 }, time);
+  assert.equal(press(240, 11), undefined);
+  assert.equal(press(240, 14), 'placed');
+  assert.equal(press(368, 14.1), 'miss');
+  assert.equal(press(240, 16), undefined);
+  assert.equal(press(240, 18), 'placed');
+  assert.equal(press(112, 18.2), 'placed');
+  assert.equal(press(368, 18.4), 'placed');
+  assert.equal(press(240, 18.6), 'solved');
+  assert.equal(panel.solved, true);
 });
 
 test('reinforcements avoid open lines and illuminated cells in the view and can pursue around a wall', () => {
@@ -204,8 +390,8 @@ test('partial reload replaces the whole magazine and resupply restores loaded an
     refillMagazine(gun, stats);
     assert.equal(gun.spare + 1, stats.magazines);
   }
-  assert.equal(weapons.eagle.magazines, 5);
-  assert.equal(weapons.pulse.magazines, 4);
+  assert.equal(weapons.eagle.magazines, 6);
+  assert.equal(weapons.pulse.magazines, 6);
 });
 
 test('support equipment limits deployments and blocks shots through walls', () => {

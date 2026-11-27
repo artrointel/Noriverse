@@ -8,6 +8,7 @@ import diagonalMonstersUrl from '../../assets/startrail/monsters-diagonal.png';
 import enemyDirectionsUrl from '../../assets/startrail/enemy-directions.png';
 import enemiesUrl from '../../assets/startrail/outpost-enemies.png';
 import fallenUrl from '../../assets/startrail/outpost-fallen.png';
+import swarmUrl from '../../assets/startrail/swarm.png';
 import setpiecesUrl from '../../assets/startrail/outpost-setpieces.png';
 import outpostUrl from '../../assets/startrail/outpost.png';
 import floorTilesUrl from '../../assets/startrail/outpost-floor.jpg';
@@ -26,15 +27,28 @@ import observatoryComicUrl from '../../assets/startrail/comic-observatory.jpg';
 import observatoryTilesUrl from '../../assets/startrail/observatory-tiles.jpg';
 import residentUrl from '../../assets/startrail/observatory-resident.png';
 import observatorySetpiecesUrl from '../../assets/startrail/observatory-setpieces.png';
+import auroraComicUrl from '../../assets/startrail/comic-aurora.jpg';
+import auroraTilesUrl from '../../assets/startrail/aurora-tiles.jpg';
+import auroraSetpiecesUrl from '../../assets/startrail/aurora-setpieces.png';
+import debrisComicUrl from '../../assets/startrail/comic-debris.jpg';
+import debrisTilesUrl from '../../assets/startrail/debris-tiles.jpg';
+import debrisSetpiecesUrl from '../../assets/startrail/debris-setpieces.png';
+import debrisSceneryUrl from '../../assets/startrail/debris-scenery.png';
+import greenhouseUrl from '../../assets/startrail/debris-greenhouse.jpg';
+import salvageUrl from '../../assets/startrail/debris-salvage.jpg';
+import observationUrl from '../../assets/startrail/debris-observation.jpg';
 import { dispersedHeading, finishReload, knife, knifeSwingDirection, makeGun, medical, refillMagazine, reloadStages, slots, startReload, swapDuration, weapons } from './gear.ts';
 import type { Bullet, BulletSpec, Gun, Impact, Slot, SpentMetal, WeaponSwap } from './gear.ts';
-import { balance, blockerClearance, defaultPixelStep, distance, maxPixelStep, onRay, pulseLightDuration, rayDistance, screen, waves } from './outpost.ts';
+import { balance, blockerClearance, defaultPixelStep, distance, maxPixelStep, onRay, pulseLightDuration, rayDistance, screen } from './outpost.ts';
 import type { Box, EnemyKind, ExplorerKind, MapMode, Point } from './outpost.ts';
-import { observatoryStage, outpostStage } from './expedition-maps.ts';
-import type { ExpeditionMap } from './expedition-maps.ts';
-import { concealed, encounterRange, encounters, EnemyFlow, openPath } from './encounters.ts';
+import { nextStage, outpostStage, requiredStationsRemaining } from './expedition-maps.ts';
+import type { ExpeditionMap, StageStation } from './expedition-maps.ts';
+import { arrivalRadius, companionCombatWeight, concealed, EncounterDirector, encounterRange, EnemyFlow, escortChase, observationScan,
+  openPath, partyEncounter, partyOutsideArrival, scaledPatrols, stageDefense } from './encounters.ts';
 import { StoryIntro } from './story.ts';
+import { LayerFade, SceneFade } from './scene-fade.ts';
 import { powerTransfer } from './power-transfer.ts';
+import { routeSignal } from './route-signal.ts';
 import { makeOutpostRenderer, restartArea } from './render.ts';
 import { cameraView, maxCameraSpan, playerHitFeedback, projectToScreen, projectToWorld } from './camera.ts';
 import { createIndirectLighting } from './gi.ts';
@@ -78,8 +92,25 @@ type Roll = { stage: 'moving'; heading: number; origin: Point; startedAt: number
 type Resident = { body: Body; state: ResidentArt['state']; hiding: boolean; moving: boolean; trail: Point[] };
 type ExpeditionProgress = { time: number; kills: number };
 
+const stageTextures = {
+  '1-1': { tiles: floorTilesUrl, comic: outpostComicUrl },
+  '1-2': { tiles: observatoryTilesUrl, comic: observatoryComicUrl, fixtures: observatorySetpiecesUrl },
+  '1-3': { tiles: auroraTilesUrl, comic: auroraComicUrl, fixtures: auroraSetpiecesUrl },
+  '1-4': { tiles: debrisTilesUrl, comic: debrisComicUrl, fixtures: debrisSetpiecesUrl },
+};
+const greenhousePower = {
+  title: '온실 순환 복구', labels: ['흡입', '순환', '정화'],
+  instruction: '흡입 밸브부터 정화 장치까지 물길을 연결하세요.',
+  hint: '온실의 예비 전력 셀이 중계기에 연결됩니다.',
+};
+const cargoClamp = {
+  title: '하역장 집게 조작', labels: ['레일', '집게', '센서'], sequence: [2, 0, 1, 2],
+  input: '점등 순서대로 눌러 집게의 안전 잠금장치를 푸세요.',
+};
+
 const airFriction = .11;
-const enemyColors = { mite: '#9af2e1', boar: '#c6bcff', scout: '#ffb28a', sentinel: '#c9e786', spore: '#a6e9ff', grub: '#ccd3ff' } as const;
+const enemyColors = { mite: '#9af2e1', boar: '#c6bcff', scout: '#ffb28a', sentinel: '#c9e786', spore: '#a6e9ff', grub: '#ccd3ff',
+  starTick: '#ffe384', coralHopper: '#ffab98', rimeSkitter: '#c5d9ff' } as const;
 
 function mouseSlot(button: number): Slot | undefined {
   return button === 0 ? 'primary' : button === 2 ? 'sidearm' : undefined;
@@ -115,8 +146,15 @@ export class OutpostScene extends Phaser.Scene {
   private previousStage?: ExpeditionProgress;
   private story?: StoryIntro;
   private showIntro = true;
-  private transitioning = false;
+  private readonly fade = new SceneFade();
+  private readonly mapFade = new LayerFade<Exclude<MapMode, 'off'>>();
+  private readonly challengeFade = new LayerFade<InteractionChallenge>();
+  private fadeWasVisible = false;
+  private restartQueued = false;
+  private get transitioning() { return this.fade.active || this.restartQueued; }
   private resident?: Resident;
+  private completedStations = new Set<StageStation>();
+  private scan?: { point: StageStation; time: number };
   private notice?: { text: string; until: number };
   private explorer: ExplorerKind = 'solori';
   private bringAlly = false;
@@ -132,9 +170,7 @@ export class OutpostScene extends Phaser.Scene {
   private props: Prop[] = [];
   private enemies: Enemy[] = [];
   private enemyFlow!: EnemyFlow;
-  private nextReinforcementsAt = 0;
-  private encounterIndex = 0;
-  private pendingReinforcements: EnemyKind[] = [];
+  private encounters = new EncounterDirector();
   private securityGate?: ReturnType<Phaser.Physics.Matter.Factory['rectangle']>;
   private traces: Trace[] = [];
   private sparks: Spark[] = [];
@@ -198,17 +234,22 @@ export class OutpostScene extends Phaser.Scene {
     this.load.image('enemy-directions', enemyDirectionsUrl);
     this.load.image('outpost-enemies', enemiesUrl);
     this.load.image('outpost-fallen', fallenUrl);
+    this.load.image('outpost-swarm', swarmUrl);
     this.load.image('outpost-setpieces', setpiecesUrl);
     this.load.image('outpost', outpostUrl);
-    if (this.stage.id === '1-1') {
-      this.load.image('floor-tiles', floorTilesUrl);
-      this.load.image('mural', muralUrl);
-      this.load.image('comic-1-1', outpostComicUrl);
-    } else {
-      this.load.image('observatory-tiles', observatoryTilesUrl);
-      this.load.image('comic-1-2', observatoryComicUrl);
-      this.load.image('resident', residentUrl);
-      this.load.image('observatory-setpieces', observatorySetpiecesUrl);
+    const id = this.stage.id;
+    const art = stageTextures[id];
+    this.load.image(`tiles-${id}`, art.tiles);
+    this.load.image(`comic-${id}`, art.comic);
+    if ('fixtures' in art) this.load.image(`fixtures-${id}`, art.fixtures);
+    if (id === '1-1') this.load.image('mural', muralUrl);
+    if (id === '1-2') this.load.image('resident', residentUrl);
+    if (id === '1-4') {
+      if (!this.textures.exists('fixtures-1-3')) this.load.image('fixtures-1-3', auroraSetpiecesUrl);
+      this.load.image('debris-scenery', debrisSceneryUrl);
+      this.load.image('debris-greenhouse', greenhouseUrl);
+      this.load.image('debris-salvage', salvageUrl);
+      this.load.image('debris-observation', observationUrl);
     }
     this.load.image('weapons', weaponsUrl);
     this.load.image('armory', armoryUrl);
@@ -240,11 +281,11 @@ export class OutpostScene extends Phaser.Scene {
       this.pointerSeen = this.pointerInside = true;
       this.game.canvas.focus({ preventScroll: true });
       this.audio.unlock();
+      if (this.transitioning) return;
       if (this.story) {
         if (pointer.button === 0 || pointer.wasTouch) this.turnStoryPage();
         return;
       }
-      if (this.transitioning) return;
       if (this.finished()) {
         const button = restartArea;
         const point = this.pointerPosition(pointer);
@@ -305,17 +346,21 @@ export class OutpostScene extends Phaser.Scene {
 
     const { gameContext } = this.game.renderer as Phaser.Renderer.Canvas.CanvasRenderer;
     const stage = this.stage;
-    const { obstacles, gate, crates, crystals, landing, patrols } = stage;
+    const { obstacles, gate, crates, crystals, landing } = stage;
     const surfaceStage = stage.id === '1-1';
     this.renderOutpost = makeOutpostRenderer(gameContext, this.hud, {
       crew: this.texture('crew'), locomotion: this.texture('solori-locomotion'), verticalSolori: this.texture('solori-vertical'),
-      verticalMonsters: this.texture('monsters-vertical'), outpost: this.texture('outpost'), tiles: this.texture(surfaceStage ? 'floor-tiles' : 'observatory-tiles'),
+      verticalMonsters: this.texture('monsters-vertical'), outpost: this.texture('outpost'), tiles: this.texture(`tiles-${stage.id}`),
       diagonalSolori: this.texture('solori-diagonal'), enemies: this.texture('outpost-enemies'), fallen: this.texture('outpost-fallen'), setpieces: this.texture('outpost-setpieces'),
-      diagonalMonsters: this.texture('monsters-diagonal'), enemyDirections: this.texture('enemy-directions'),
+      diagonalMonsters: this.texture('monsters-diagonal'), enemyDirections: this.texture('enemy-directions'), swarm: this.texture('outpost-swarm'),
       mural: surfaceStage ? this.texture('mural') : undefined, gear: this.texture('weapons'), armory: this.texture('armory'), hands: this.texture('explorer-hands'),
       kommi: this.texture('kommi'), soloriArmed: this.texture('solori-armed'), kommiArmed: this.texture('kommi-armed'), devices: this.texture('devices'),
-      dummy: this.texture('medical-dummy'), resident: surfaceStage ? undefined : this.texture('resident'),
-      observatory: surfaceStage ? undefined : this.texture('observatory-setpieces'),
+      dummy: this.texture('medical-dummy'), resident: stage.id === '1-2' ? this.texture('resident') : undefined,
+      fixtures: surfaceStage ? undefined : this.texture(`fixtures-${stage.id}`),
+      debris: stage.id === '1-4' ? {
+        shuttle: this.texture('fixtures-1-3'), scenery: this.texture('debris-scenery'),
+        greenhouse: this.texture('debris-greenhouse'), salvage: this.texture('debris-salvage'), observation: this.texture('debris-observation'),
+      } : undefined,
     }, this.shadows, this.indirectLighting, stage);
     for (const box of obstacles) this.addBarrier(box);
     this.securityGate = this.addBarrier(gate);
@@ -336,11 +381,11 @@ export class OutpostScene extends Phaser.Scene {
       this.resident = { body, state: 'waiting', hiding: false, moving: false, trail: [] };
       this.showNotice('파루미 · 물소리가 갈리는 곳에서 대피실의 주황빛을 찾아요.');
     }
-    for (const point of patrols) this.spawn(point.kind, point);
+    if (stage.id === '1-4') this.showNotice('파루미 · 북쪽 온실과 남쪽 하역장에 중계기용 부품이 있어요.');
     this.follow(1);
     this.previousCamera = { ...this.cameraPosition };
     this.events.on(Phaser.Scenes.Events.RENDER, this.paint, this);
-    this.story = this.showIntro ? new StoryIntro(stage, this.texture(`comic-${stage.id}`), this.storyLanguage, this.reducedMotion.matches) : undefined;
+    this.story = this.showIntro ? new StoryIntro(stage, this.texture(`comic-${stage.id}`), this.storyLanguage) : undefined;
     this.game.canvas.style.cursor = this.story ? 'pointer' : '';
     this.onReady(stage);
   }
@@ -349,10 +394,11 @@ export class OutpostScene extends Phaser.Scene {
     this.indirectLighting.reset();
     this.props = []; this.enemies = []; this.traces = []; this.sparks = []; this.bullets = []; this.spentMetal = [];
     this.enemyFlow = new EnemyFlow(this.stage);
-    this.nextReinforcementsAt = encounters[this.stage.id].firstAt;
-    this.encounterIndex = 0; this.pendingReinforcements = [];
+    this.encounters = new EncounterDirector();
     this.fallen = []; this.bolts = []; this.rings = []; this.supplies = new Set(this.stage.caches);
-    this.transitioning = false; this.resident = undefined; this.notice = undefined; this.story = undefined;
+    this.fade.enter(); this.restartQueued = false; this.resident = undefined; this.notice = undefined; this.story = undefined;
+    this.mapFade.reset(); this.challengeFade.reset();
+    this.completedStations.clear(); this.scan = undefined;
     this.ally = undefined; this.trainingDummy = undefined; this.playerStatuses = {}; this.actionTime = 0; this.flashlightOn = true;
     this.medicalBeam = undefined; this.medicalWaver = undefined; this.muzzleLights = [];
     this.flareBodies.clear(); this.turretDeploy = undefined;
@@ -393,20 +439,36 @@ export class OutpostScene extends Phaser.Scene {
   setVolume(value: number) { this.audio.setVolume(value); }
 
   startExpedition(explorer: ExplorerKind, withAlly: boolean, withDummy = false) {
-    this.explorer = explorer;
-    this.bringAlly = withAlly;
-    this.useTrainingDummy = withDummy;
-    this.stage = outpostStage; this.previousStage = undefined; this.showIntro = true; this.transitioning = true;
     this.audio.unlock();
+    return this.transition(() => {
+      this.explorer = explorer;
+      this.bringAlly = withAlly;
+      this.useTrainingDummy = withDummy;
+      this.stage = outpostStage; this.previousStage = undefined; this.showIntro = true;
+      this.restartScene();
+    });
+  }
+
+  private transition(swap: () => void) {
+    if (this.restartQueued || !this.fade.switchTo(swap)) return false;
+    this.clearInput();
+    return true;
+  }
+
+  private restartScene() {
+    this.restartQueued = true;
     this.scene.restart();
   }
 
   private turnStoryPage() {
-    if (!this.story?.advance(this.time.now)) return;
-    this.story = undefined;
-    this.showIntro = false;
-    this.game.canvas.style.cursor = '';
-    this.clearInput();
+    if (this.transitioning || !this.story) return;
+    this.transition(() => {
+      if (!this.story?.advance()) return;
+      this.story = undefined;
+      this.showIntro = false;
+      this.game.canvas.style.cursor = '';
+      this.clearInput();
+    });
   }
 
   private showNotice(text: string) { this.notice = { text, until: this.elapsed + 4.7 }; }
@@ -462,6 +524,8 @@ export class OutpostScene extends Phaser.Scene {
 
   private finished() { return this.phase === 'defeated' || this.phase === 'cleared'; }
 
+  private get encounterPartySize() { return 1 + (this.ally && this.ally.hp > 0 ? companionCombatWeight : 0); }
+
   private walls() { return this.securityGate ? [...this.stage.obstacles, this.stage.gate] : this.stage.obstacles; }
 
   private blockerBoxes(): Box[] { return [...this.walls(), ...this.props.map(prop => boxFor(prop))]; }
@@ -485,6 +549,14 @@ export class OutpostScene extends Phaser.Scene {
     this.activeChallenge?.game.cancelDrag();
     this.activeChallenge = undefined;
     this.stopFiring();
+  }
+
+  private openChallenge(game: InteractionChallenge, location: Point, reach: number, solve: () => void) {
+    this.activeChallenge = { game, location, reach, solve };
+    this.mapMode = 'off';
+    this.slash = undefined;
+    this.stopFiring();
+    this.audio.play('swap');
   }
 
   private follow(weight: number) {
@@ -879,31 +951,13 @@ export class OutpostScene extends Phaser.Scene {
         this.showNotice('주민 · 비상 승강기가 멈췄어요. 동쪽 배전실에서 전력을 돌릴 수 있어요.');
       } else if (this.resident.state === 'ready') {
         this.resident.state = 'following';
+        this.encounters.beginEscort(this.elapsed, partyEncounter(this.stage.id, this.encounterPartySize, true).firstAt);
         this.showNotice('파루미 · 주황색 비상등을 따라 함께 승강기까지 가요.');
       }
       this.audio.play('swap');
     }
-    if (option?.kind === 'relay') {
-      this.relayPuzzle ??= this.stage.id === '1-1' ? piecePuzzle(this.texture('relay-puzzle'), balance.relay.puzzleSize, '발전기 · 회로 복구') : powerTransfer();
-      this.activeChallenge = {
-        game: this.relayPuzzle, location: option.point, reach: balance.relay.radius + 35,
-        solve: () => {
-          if (this.stage.id === '1-1') this.phase = 'defense';
-          else if (this.resident?.state === 'sheltered' && 'alertReinforcements' in this.stage) {
-            this.resident.state = 'ready';
-            this.openGate();
-            this.showNotice('파루미 · 비상 전력이 들어왔어요. 주민을 데리러 돌아가세요.');
-            this.audio.play('turretDetect', option.point, this.player, .7, .76);
-            this.callReinforcements(this.stage.alertReinforcements);
-          }
-          this.audio.play('power');
-        },
-      };
-      this.mapMode = 'off';
-      this.slash = undefined;
-      this.stopFiring();
-      this.audio.play('swap');
-    }
+    if (option?.kind === 'station') this.useStation(option.point);
+    if (option?.kind === 'relay') this.useRelay(option.point);
     if (option?.kind === 'supply') {
       this.hp = Math.min(balance.player.health, this.hp + 35);
       this.showHealthBar();
@@ -923,12 +977,75 @@ export class OutpostScene extends Phaser.Scene {
     }
   }
 
+  private useStation(point: StageStation) {
+    if (point.kind === 'antenna') { this.finishStation(point); return; }
+    if (point.kind === 'observation') {
+      this.scan = { point, time: 0 };
+      this.audio.play('swap');
+      this.showNotice('파루미 · 스캔이 끝날 때까지 관측실 안에서 가까이 있어 주세요.');
+      return;
+    }
+    const game = point.kind === 'greenhouse' ? powerTransfer(greenhousePower) : routeSignal(this.elapsed, cargoClamp);
+    this.openChallenge(game, point, 65, () => this.finishStation(point));
+  }
+
+  private finishStation(point: StageStation) {
+    const stage = this.stage;
+    if (!('stations' in stage)) return;
+    this.completedStations.add(point);
+    this.audio.play('power');
+    if (!point.required) {
+      this.showNotice('파루미 · 표류 경로를 확인했어요. 중계기 방어 시간이 줄어들어요.');
+    } else if (!requiredStationsRemaining(stage.stations, this.completedStations)) {
+      this.showNotice(stage.id === '1-3' ? '파루미 · 두 안테나가 연결됐어요. 관제탑에서 항로를 교정하세요.'
+        : '파루미 · 전력 셀과 하역 장치를 확보했어요. 동쪽 중계기로 가세요.');
+    } else {
+      this.showNotice(`파루미 · ${point.name} 복구. 다른 필수 설비를 찾아 주세요.`);
+    }
+  }
+
+  private useRelay(point: Point) {
+    const stage = this.stage;
+    if (stage.id === '1-4') {
+      this.beginDefense('파루미 · 구조 신호 전송 중이에요. 주황색 경계 안에서 중계기를 지켜 주세요.');
+      return;
+    }
+    if (stage.id === '1-3') this.relayPuzzle = routeSignal(this.elapsed);
+    else this.relayPuzzle ??= stage.id === '1-1' ?
+      piecePuzzle(this.texture('relay-puzzle'), balance.relay.puzzleSize, '발전기 · 회로 복구') : powerTransfer();
+    this.openChallenge(this.relayPuzzle, point, balance.relay.radius + 35, () => {
+      if (stage.id !== '1-2') {
+        this.beginDefense(stage.id === '1-3' ? '파루미 · 항로 전송 중이에요. 끝날 때까지 관제탑을 지켜 주세요.' : undefined);
+      } else if (this.resident?.state === 'sheltered') {
+        this.resident.state = 'ready';
+        this.openGate();
+        this.showNotice('파루미 · 비상 전력이 들어왔어요. 주민을 데리러 돌아가세요.');
+        this.audio.play('turretDetect', point, this.player, .7, .76);
+        this.audio.play('power');
+      }
+    });
+  }
+
+  private beginDefense(notice?: string) {
+    this.phase = 'defense';
+    if (notice) this.showNotice(notice);
+    this.audio.play('power');
+  }
+
   private selection(): StageInteraction | undefined {
     if (this.controlsLocked || this.finished()) return;
     const nearby: StageInteraction[] = [];
     const { relayAccess } = this.stage;
-    if (this.phase === 'approach' && (this.stage.id === '1-1' || this.resident?.state === 'sheltered') &&
+    const canUseRelay = this.stage.id === '1-1' || this.resident?.state === 'sheltered' ||
+      'stations' in this.stage && !requiredStationsRemaining(this.stage.stations, this.completedStations);
+    if (this.phase === 'approach' && canUseRelay &&
       distance(this.player, relayAccess) < balance.relay.radius) nearby.push({ kind: 'relay', point: relayAccess });
+    if (this.phase === 'approach' && 'stations' in this.stage) {
+      for (const point of this.stage.stations) {
+        if (point !== this.scan?.point && !this.completedStations.has(point) && distance(this.player, point) < 39 &&
+          openPath(this.player, point, this.walls().filter(box => box !== point.bounds))) nearby.push({ kind: 'station', point });
+      }
+    }
     const resident = this.resident;
     if (resident && (resident.state === 'waiting' || resident.state === 'ready') && distance(this.player, resident.body) < 37) {
       nearby.push({ kind: 'resident', point: resident.body });
@@ -1004,7 +1121,9 @@ export class OutpostScene extends Phaser.Scene {
     const speed = statusModifiers(ally.statuses, this.elapsed).speed;
     const reach = distance(this.player, ally.body);
     if (!ally.hp || !speed || reach < 47) { this.steer(ally.body, ally.aim, 0, .32); return; }
-    const heading = Math.atan2(this.player.y - ally.body.y, this.player.x - ally.body.x);
+    const target = openPath(ally.body, this.player, blockers, balance.player.radius * .45) ? this.player :
+      this.enemyFlow.waypoint(ally.body, blockers, balance.player.radius) ?? this.player;
+    const heading = Math.atan2(target.y - ally.body.y, target.x - ally.body.x);
     for (const turn of [0, .83, -.83, 1.4, -1.4]) {
       const angle = heading + turn;
       if (rayDistance(ally.body, Math.cos(angle), Math.sin(angle), 20, blockers) < 19) continue;
@@ -1054,7 +1173,7 @@ export class OutpostScene extends Phaser.Scene {
     const range = ('kind' in target ? supportSpecs[target.kind].radius : balance.player.radius) + stats.radius;
     const heading = Math.atan2(target.y - body.y, target.x - body.x);
     const sight = openPath(body, target, blockers);
-    const attack = kind === 'mite' ? undefined : balance.attacks[kind];
+    const attack = kind in balance.attacks ? balance.attacks[kind as keyof typeof balance.attacks] : undefined;
     if (enemy.state === 'windup' && attack && time >= enemy.stateUntil) {
       if (attack.style === 'dash') {
         enemy.state = 'dash'; enemy.stateUntil = time + attack.duration;
@@ -1159,10 +1278,12 @@ export class OutpostScene extends Phaser.Scene {
   }
 
   private complete(phase: 'cleared' | 'defeated') {
-    this.phase = phase; this.closeChallenge(); this.mapMode = 'off';
-    this.rollRequested = false;
+    if (this.transitioning || this.finished()) return;
     this.audio.end();
-    this.audio.play(phase === 'cleared' ? 'win' : 'loss');
+    this.transition(() => {
+      this.phase = phase; this.closeChallenge(); this.mapMode = 'off';
+      this.audio.play(phase === 'cleared' ? 'win' : 'loss');
+    });
   }
 
   private openGate() {
@@ -1170,43 +1291,67 @@ export class OutpostScene extends Phaser.Scene {
     this.securityGate = undefined; this.phase = 'evacuate'; this.gateOpenedAt = this.elapsed; this.audio.play('gate');
   }
 
-  private descend() {
-    this.previousStage = { time: this.elapsed, kills: this.defeated };
-    this.stage = observatoryStage;
-    this.showIntro = this.transitioning = true;
-    this.scene.restart();
+  private advanceStage(stage: ExpeditionMap) {
+    this.previousStage = { time: (this.previousStage?.time ?? 0) + this.elapsed, kills: (this.previousStage?.kills ?? 0) + this.defeated };
+    this.transition(() => {
+      this.stage = stage;
+      this.showIntro = true;
+      this.restartScene();
+    });
   }
 
   private updateRelay() {
     const { relayAccess, lift } = this.stage;
-    if (this.phase === 'defense') {
+    const defense = stageDefense[this.stage.id];
+    if (this.phase === 'defense' && defense) {
       if (distance(this.player, relayAccess) <= balance.relay.defenseRadius) this.relayTime += timestep;
-      const wave = waves[this.wave];
+      const wave = defense.waves[this.wave];
       if (wave && this.relayTime >= wave.at) {
         this.callReinforcements(wave.kinds);
         this.wave++;
       }
-      if (this.relayTime >= balance.relay.duration) this.openGate();
+      if (this.relayTime + 1e-7 >= this.defenseDuration()) this.openGate();
     }
     if (this.phase !== 'evacuate' || distance(this.player, lift) >= 23) return;
-    if (this.stage.id === '1-1') this.descend();
-    else if (this.resident?.state === 'following' && distance(this.resident.body, lift) < 37) {
-      this.complete('cleared');
-    }
+    if (this.stage.id === '1-2' && (this.resident?.state !== 'following' || distance(this.resident.body, lift) >= 37)) return;
+    const next = nextStage[this.stage.id];
+    if (next) this.advanceStage(next);
+    else this.complete('cleared');
+  }
+
+  private defenseDuration() {
+    const duration = stageDefense[this.stage.id]?.duration ?? 1;
+    return this.stage.id === '1-4' && this.completedStations.has(this.stage.stations[2]) ? duration - observationScan.defenseDiscount : duration;
+  }
+
+  private advanceScan() {
+    const scan = this.scan;
+    if (!scan || this.phase !== 'approach' || distance(this.player, scan.point) > observationScan.radius ||
+      !openPath(this.player, scan.point, this.walls().filter(box => box !== scan.point.bounds))) return;
+    scan.time += timestep;
+    if (scan.time + 1e-7 < observationScan.duration) return;
+    this.scan = undefined;
+    this.finishStation(scan.point);
   }
 
   private aggroRange() { return this.phase === 'approach' ? encounterRange.approach : encounterRange.alert; }
 
   private callReinforcements(kinds: readonly EnemyKind[]) {
-    this.pendingReinforcements.push(...kinds);
-    this.nextReinforcementsAt = this.elapsed;
+    this.encounters.queue(this.elapsed, scaledPatrols(kinds, partyEncounter(this.stage.id, this.encounterPartySize).enemies));
   }
 
   private reinforce(blockers: Box[]) {
     const walls = this.walls();
     this.enemyFlow.update(this.player, !!this.securityGate, walls);
-    if (this.elapsed < this.nextReinforcementsAt) return;
-    const table = encounters[this.stage.id];
+    const escort = this.resident?.state === 'following';
+    const table = partyEncounter(this.stage.id, this.encounterPartySize, escort);
+    const party = this.ally && this.ally.hp > 0 ? [this.player, this.ally.body] : [this.player];
+    const outside = partyOutsideArrival(this.stage.landing, party);
+    if (this.encounters.updateArrival(this.elapsed, outside, table.firstAt)) {
+      const patrols = this.stage.patrols.filter(point => distance(point, this.stage.landing) >= arrivalRadius);
+      for (const point of scaledPatrols(patrols, table.enemies)) this.spawn(point.kind, point);
+    }
+    if (!this.encounters.isReady(this.elapsed)) return;
     const camera = this.displayCamera();
     const lampReach = rayDistance(this.player, Math.cos(this.facing), Math.sin(this.facing), 8, blockers);
     const lamp = onRay(this.player, this.facing, Math.max(0, lampReach - .15));
@@ -1224,24 +1369,18 @@ export class OutpostScene extends Phaser.Scene {
       enemy.body.destroy();
       return false;
     });
-    const limit = Math.min(table.cap - this.enemies.length, table.packSize);
-    let count = 0;
-    for (; count < limit; count++) {
-      const pending = this.pendingReinforcements[0];
-      const kind = pending ?? table.roster[this.encounterIndex % table.roster.length];
+    this.encounters.spawnWave(this.elapsed, this.enemies.length, table, this.phase !== 'approach', kind => {
       const radius = balance[kind].radius;
       const site = this.enemyFlow.spawnPoint(this.player, encounterRange.safe, this.aggroRange(), point =>
-        (!this.ally || distance(point, this.ally.body) > 80) &&
-        (!this.resident || distance(point, this.resident.body) > 104) &&
+        distance(point, this.stage.landing) >= arrivalRadius &&
+        (party.length === 1 || distance(point, party[1]) > 96) &&
+        (!this.resident || distance(point, this.resident.body) > escortChase.spawnClearance) &&
         this.enemies.every(enemy => distance(point, enemy.body) > radius + balance[enemy.kind].radius + 14) &&
         blockers.every(box => blockerClearance(point, box) > radius + 2) && hidden(point));
-      if (!site) break;
+      if (!site) return false;
       this.spawn(kind, site, true);
-      if (pending) this.pendingReinforcements.shift();
-      else this.encounterIndex++;
-    }
-    const interval = this.phase === 'approach' ? table.interval : table.alertInterval;
-    this.nextReinforcementsAt = this.elapsed + (count < limit ? .65 : interval);
+      return true;
+    });
   }
 
   private advanceResident(blockers: Box[]) {
@@ -1255,7 +1394,7 @@ export class OutpostScene extends Phaser.Scene {
       const direction = Math.atan2(point.y - body.y, point.x - body.x);
       return rayDistance(body, Math.cos(direction), Math.sin(direction), span, blockers) >= span;
     };
-    resident.hiding = this.enemies.some(enemy => distance(body, enemy.body) < 67 && openLine(enemy.body));
+    resident.hiding = this.enemies.some(enemy => distance(body, enemy.body) < escortChase.dangerRadius && openLine(enemy.body));
     resident.moving = false;
     this.previousPositions.set(body, { x: body.x, y: body.y });
     if (resident.hiding) return;
@@ -1268,7 +1407,7 @@ export class OutpostScene extends Phaser.Scene {
     const span = distance(body, target);
     if (span < 3) { trail.shift(); return; }
     const heading = Math.atan2(target.y - body.y, target.x - body.x);
-    const step = onRay(body, heading, Math.min(span, 2.9));
+    const step = onRay(body, heading, Math.min(span, escortChase.followSpeed));
     if (!this.stage.walkable(step)) return;
     body.setPosition(step.x, step.y);
     resident.moving = true;
@@ -1284,6 +1423,7 @@ export class OutpostScene extends Phaser.Scene {
     const cursor = this.aimPoint();
     if (!this.activeChallenge && !this.slash) this.facing = Math.atan2(cursor.y - (this.player.y - 12), cursor.x - this.player.x);
     if (this.activeChallenge && distance(this.player, this.activeChallenge.location) > this.activeChallenge.reach) this.closeChallenge();
+    this.advanceScan();
     this.updateRelay();
     if (this.finished() || this.transitioning) return;
     this.advanceWeaponSwap();
@@ -1348,12 +1488,13 @@ export class OutpostScene extends Phaser.Scene {
     this.audio.syncDevices(turret && this.elapsed >= turret.readyAt ? turret : undefined,
       drone && this.elapsed >= drone.readyAt ? drone : undefined, this.player);
     this.advanceBolts(blockers);
+    if (this.transitioning) return;
     this.advanceAlly(blockers);
     if (this.trainingDummy) this.trainingDummy.hp = tickStatuses(this.trainingDummy.statuses, this.elapsed, this.trainingDummy.hp, balance.player.health);
     this.rings = this.rings.filter(ring => (ring.life -= timestep) > 0);
     this.fallen = this.fallen.filter(enemy => this.elapsed - enemy.at < balance.fallen.duration);
     for (const enemy of [...this.enemies]) {
-      if (this.finished()) break;
+      if (this.finished() || this.transitioning) break;
       this.advanceEnemy(enemy, blockers);
     }
     const before = { x: this.player.x, y: this.player.y };
@@ -1392,12 +1533,23 @@ export class OutpostScene extends Phaser.Scene {
   }
 
   private paint() {
-    if (this.transitioning) return;
+    const opacity = this.restartQueued ? 1 : this.fade.opacity;
     if (this.story) {
       const { gameContext } = this.game.renderer as Phaser.Renderer.Canvas.CanvasRenderer;
-      this.story.draw(gameContext, this.hud, this.time.now);
-      return;
+      this.story.draw(gameContext, this.hud, opacity > 0 || this.fadeWasVisible);
+    } else this.paintExpedition();
+    if (opacity > 0) {
+      this.hud.save();
+      this.hud.resetTransform();
+      this.hud.globalAlpha = opacity;
+      this.hud.fillStyle = '#020409';
+      this.hud.fillRect(0, 0, this.hud.canvas.width, this.hud.canvas.height);
+      this.hud.restore();
     }
+    this.fadeWasVisible = opacity > 0;
+  }
+
+  private paintExpedition() {
     const hit = this.hitFeedback();
     const camera = this.displayCamera(hit);
     const props = this.props.map(prop => {
@@ -1410,7 +1562,7 @@ export class OutpostScene extends Phaser.Scene {
     const actors: ActorArt[] = this.enemies.map(enemy => {
       const { body, aim, state } = enemy;
       const point = this.visualPosition(body);
-      const attack = enemy.kind === 'mite' ? undefined : balance.attacks[enemy.kind];
+      const attack = enemy.kind in balance.attacks ? balance.attacks[enemy.kind as keyof typeof balance.attacks] : undefined;
       if (state === 'windup' && attack) {
         const fill = Phaser.Math.Clamp(1 - (enemy.stateUntil - enemy.clock) / attack.windup, 0, 1);
         const color = enemyColors[enemy.kind];
@@ -1459,8 +1611,10 @@ export class OutpostScene extends Phaser.Scene {
         stride: Math.hypot(velocity.x, velocity.y), pose: recoil > .4 ? 3 : undefined, statuses: activeStatuses(this.playerStatuses, this.elapsed) },
       actors, props, ally: allyArt, dummy,
       resident: resident ? { ...this.visualPosition(resident.body), state: resident.state, hiding: resident.hiding, moving: resident.moving } : undefined,
+      completedStations: this.completedStations,
+      scan: this.scan && this.phase === 'approach' ? { point: this.scan.point, progress: Math.min(1, this.scan.time / observationScan.duration) } : undefined,
       notice: this.notice && this.elapsed < this.notice.until ? this.notice.text : undefined,
-      blockers, warnings, aim: this.screenAim(camera), mapMode: this.mapMode, flashlightOn: this.flashlightOn,
+      blockers, warnings, aim: this.screenAim(camera), mapMode: this.mapMode, mapLayer: this.mapFade.layer, flashlightOn: this.flashlightOn,
       phase: this.phase, hp: this.hp, hitTint: hit?.tint ?? 0, showHealth: !!this.healthBar, roll: rollPose, walkFrame: this.walkFrame,
       blockedStatus: this.blockedStatus, reducedMotion: this.reducedMotion.matches,
       selected: this.selected, guns: this.guns, groundArms: this.groundArms, pointerInside: this.pointerInside, knifeEquipped: this.knifeEquipped,
@@ -1471,11 +1625,12 @@ export class OutpostScene extends Phaser.Scene {
         settle: Math.max(0, (this.actionTime - this.slash.startedAt - knife.duration) / knife.recovery) } : undefined,
       reload: this.reloadProgress(held),
       gateTravel: this.gateOpenedAt ? Phaser.Math.Clamp((this.elapsed - this.gateOpenedAt) / .36, 0, 1) : 0,
-      charge: Math.min(1, this.relayTime / balance.relay.duration),
+      charge: Math.min(1, this.relayTime / this.defenseDuration()),
       time: this.elapsed, sparks: this.sparks, traces: this.traces, selection: this.selection(),
       missionTime: (this.previousStage?.time ?? 0) + this.elapsed, missionKills: (this.previousStage?.kills ?? 0) + this.defeated,
       bullets: this.bullets, spentMetal: this.spentMetal, bolts: this.bolts, rings: this.rings,
-      supplies: this.supplies, challenge: this.activeChallenge?.game, support: this.support, turretHold: this.turretHold / supportSpecs.turret.pickup,
+      supplies: this.supplies, challenge: this.activeChallenge?.game, challengeLayer: this.challengeFade.layer,
+      support: this.support, turretHold: this.turretHold / supportSpecs.turret.pickup,
       turretDeploy: turretDeploy ? { ...turretSite(this.player, turretDeploy.heading, blockers, turretDeploy.point, this.stage.walkable),
         heading: turretDeploy.heading, progress: turretDeploy.time / supportSpecs.turret.deploy } : undefined,
       medicalBeam: beam ? { point: this.visualPosition(beam.target === 'self' ? this.player : beam.target.body), enemy: beam.enemy, self: beam.target === 'self' } : undefined,
@@ -1484,13 +1639,18 @@ export class OutpostScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number) {
+    const frameMs = Math.min(delta, 50);
+    const reduced = this.reducedMotion.matches;
+    if (!this.restartQueued) this.fade.advance(frameMs, reduced);
+    this.mapFade.advance(this.mapMode === 'off' ? undefined : this.mapMode, frameMs, reduced);
+    this.challengeFade.advance(this.activeChallenge?.game, frameMs, reduced);
     if (this.story || this.transitioning) return;
     const justDown = Phaser.Input.Keyboard.JustDown;
     if (isPageControl(document.activeElement)) this.clearInput();
     if (this.finished()) {
       if (this.restartRequested || justDown(this.keyboard.ENTER)) {
         if (this.phase === 'cleared') this.startExpedition(this.explorer, this.bringAlly, this.useTrainingDummy);
-        else { this.transitioning = true; this.scene.restart(); }
+        else this.transition(() => this.restartScene());
       }
       return;
     }
